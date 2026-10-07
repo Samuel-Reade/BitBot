@@ -1,0 +1,76 @@
+# electron-builder (BITBOT_SPEC.md §3, §5.3). For now this makes only LOCAL, ad-hoc-signed, unpacked
+# macOS builds for the §12 Spike B permission tests (which app macOS attributes Input Monitoring /
+# Accessibility to in a packaged build). Distribution signing, notarization and auto-update are Phase 4.
+#
+#   NO_UPDATE_NOTIFIER=1 bash scripts/with-build-lock.sh "npm run package:dir"
+#     → dist/mac-arm64/Bitbot.app (current arch)   [package:dir = build:helper + electron-vite build + electron-builder --mac --dir]
+#
+# Zero network (§2) at build time too: electronDist copies the locally installed Electron instead of
+# downloading one, npmRebuild is off (no Electron header download), `timestamp: none` (no timestamp
+# server; ad-hoc signatures cannot be timestamped anyway), and NO_UPDATE_NOTIFIER=1 skips
+# electron-builder's own npm-registry update check (it runs before this file is read).
+
+# PLACEHOLDER: choose the real reverse-DNS id before any release. macOS TCC records permission grants
+# under the bundle id plus the code signature's designated requirement, so changing it later means the
+# user grants Input Monitoring again.
+appId: com.bitbot.desktop
+productName: Bitbot
+
+directories:
+  output: dist
+
+files:
+  - out/**
+  - package.json
+  # three.js is bundled into the renderer by Vite; the main process never requires it (saves ~22 MB).
+  - "!**/node_modules/three/**"
+  # uiohook-napi loads prebuilds/darwin-<arch>/uiohook-napi.node through node-gyp-build; its C sources
+  # and the Linux/Windows prebuilds are dead weight in a macOS app.
+  - "!**/node_modules/uiohook-napi/{src,libuiohook}/**"
+  - "!**/node_modules/uiohook-napi/prebuilds/{linux,win32}-*/**"
+
+asar: true
+# uiohook-napi's prebuilt native module must be a real file on disk to be dlopen()ed.
+asarUnpack:
+  - "**/*.node"
+
+# bitbot-helper is executed directly, so it lives outside app.asar, in Contents/Resources
+# (src/main/helper/paths.ts resolveHelperPath). helper/build-helper.sh builds it (package:dir runs it).
+extraResources:
+  - from: build/helper/bitbot-helper
+    to: bitbot-helper
+
+electronDist: node_modules/electron/dist
+npmRebuild: false
+
+# Electron fuses (flipped in the packaged binary only, right before signing; dev Electron is untouched).
+# Bitbot will hold Input Monitoring: with the stock fuses any process could run its own code AS Bitbot
+# (ELECTRON_RUN_AS_NODE=1, NODE_OPTIONS=--require …, --inspect, an unpacked `app` folder or an edited
+# app.asar) and so inherit that grant. Spike B also found that `open` passes the caller's environment
+# to the app on macOS 15: launched from a VS Code terminal (ELECTRON_RUN_AS_NODE=1) the stock build ran
+# as plain Node ("bad option: --spike=windows"). grantFileProtocolExtraPrivileges stays at Electron's
+# default (on) while the renderer pages are loaded from file:// as ES modules.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+  enableEmbeddedAsarIntegrityValidation: true
+  enableCookieEncryption: false
+
+mac:
+  target:
+    - target: dir
+  # Ad-hoc signature (electron-builder 26 supports identity "-"). Its designated requirement is the
+  # cdhash, which changes whenever the code or Info.plist changes (identical sources rebuild to the same
+  # cdhash): TCC grants do NOT carry over to an updated app. A stable Developer ID (Phase 4) is what
+  # makes grants survive updates.
+  identity: "-"
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  timestamp: none
+  extendInfo:
+    # Agent app (§3): no Dock icon, no menu bar of its own, even before app.dock.hide() runs.
+    # No usage-description key exists for Input Monitoring (ListenEvent) or Accessibility: their
+    # prompts are worded by macOS and name the app, so none is added.
+    LSUIElement: true

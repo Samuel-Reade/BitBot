@@ -1,0 +1,37 @@
+{
+  "name": "bitbot",
+  "productName": "Bitbot",
+  "version": "0.1.0",
+  "description": "A macOS desktop pet that is fed by how you use your computer.",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
+    "build": "electron-vite build",
+    "start": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
+    "electron": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "snapshot": "electron-vite build && env -u ELECTRON_RUN_AS_NODE electron . --snapshot=build/snapshots/pet.png",
+    "build:helper": "bash helper/build-helper.sh",
+    "typecheck": "tsc --noEmit --composite false -p tsconfig.node.json && tsc --noEmit --composite false -p tsconfig.web.json",
+    "test": "vitest run && bash helper/test-helper.sh",
+    "test:watch": "vitest",
+    "package:dir": "npm run build:helper && electron-vite build && NO_UPDATE_NOTIFIER=1 npm_config_update_notifier=false electron-builder --mac --dir",
+    "test:unit": "vitest run",
+    "test:helper": "bash helper/test-helper.sh"
+  },
+  "dependencies": {
+    "three": "^0.186.1",
+    "uiohook-napi": "^1.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "@types/three": "^0.186.0",
+    "electron": "^44.6.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.7",
+    "vitest": "^5.0.3"
+  }
+}
