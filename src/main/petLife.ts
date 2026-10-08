@@ -131,6 +131,11 @@ export class PetLife {
     if (kind === 'drag' || kind === 'command') this.deps.brain.interrupt()
   }
 
+  /** §15.1 the pet just hatched: it celebrates. */
+  hatched(): void {
+    this.deps.brain.celebrate(this.deps.clock.now())
+  }
+
   /** The mode or the hangout spot changed (§10.3): the brain drops its plan and chooses again under the new rules. */
   modeChanged(): void {
     this.deps.brain.interrupt()

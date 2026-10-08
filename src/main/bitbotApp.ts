@@ -46,6 +46,7 @@ import { PetVisibility, type VisibilityChange } from './visibility'
 import type { AppSettings, PetIdentity } from '../shared/settings'
 import { Autosaver } from './persistence/autosave'
 import { SettingsWindow } from './windows/settingsWindow'
+import { OnboardingWindow } from './windows/onboardingWindow'
 import { SummaryBubble } from './summaryBubble'
 import { knownAppsView, modesView, type SettingsAppView, type SettingsChange, type SettingsNotice } from '../shared/settingsProtocol'
 import { nodeSaveFs } from './persistence/nodeFs'
@@ -227,6 +228,8 @@ export class BitbotApp {
   private hotkeysPausedAt: number | null = null
   /** A dev save action replaced the save and Bitbot relaunches: nothing more is written. */
   private savesStopped = false
+  /** §15.1 first-launch onboarding (shown while the save's meta.onboardingComplete is false). */
+  private readonly onboarding: OnboardingWindow
   /** §9.4 the daily summary bubble (made after the economy; PetInteraction asks it through `this.summary?`). */
   private summary: SummaryBubble | null = null
   private readonly tray: BitbotTray
@@ -341,6 +344,27 @@ export class BitbotApp {
     this.settings = settingsOf(this.save)
     this.modes = new ModeState(behaviorOf(this.save))
     this.hotkeys = new Hotkeys(globalShortcut, this.settings.hotkeys)
+    this.onboarding = new OnboardingWindow({
+      requestInputAccess: async () => {
+        await this.helper?.requestInputAccess()
+      },
+      inputGranted: () => this.inputTap.isCounting,
+      openInputPane: () => {
+        void shell.openExternal(INPUT_MONITORING_PANE).catch((err: unknown) => this.log(`[bitbot] could not open System Settings: ${errorText(err)}`))
+      },
+      relaunch: () => {
+        this.log('[bitbot] onboarding: relaunching for the Input Monitoring grant')
+        app.relaunch()
+        void this.quit('relaunch from onboarding')
+      },
+      onFinish: (identity) => this.hatch(identity),
+      onClosedEarly: () => {
+        this.log('[bitbot] onboarding closed before the hatch: Nibs comes out anyway; onboarding shows again next launch')
+        this.showPet('onboarding closed')
+      },
+      log: (line) => this.log(line),
+      warn: (key, line) => this.throttled.log(key, line),
+    })
     this.settingsWindow = new SettingsWindow({
       view: () => this.settingsView(),
       apply: (change) => this.applySetting(change),
@@ -643,7 +667,15 @@ export class BitbotApp {
       void this.quit('app.quit() from outside Bitbot, e.g. logging out')
     })
     app.on('will-quit', () => this.hotkeys.unregisterAll())
+    // §15.1 first launch: the pet stays in its egg (hidden) until onboarding hatches it.
+    const firstLaunch = !this.save.meta.onboardingComplete
+    if (firstLaunch) this.visibility.set('user', true)
     this.petWindow.create()
+    if (firstLaunch) {
+      // The one time Bitbot brings itself forward (§2): the user just launched it, and onboarding needs typing.
+      app.focus({ steal: true })
+      this.guarded('onboarding', () => this.onboarding.open())
+    }
     this.log(
       `[bitbot] running (${this.dev ? 'dev' : 'packaged'} build, Electron ${process.versions.electron}): display ${display.id} ` +
         `${fmtRect(display.bounds)}, work area ${fmtRect(display.workArea)}`,
@@ -756,6 +788,7 @@ export class BitbotApp {
     await this.stopHelper()
     this.guarded('quit: dev panel', () => this.devPanel?.destroy())
     this.guarded('quit: settings', () => this.settingsWindow.destroy())
+    this.guarded('quit: onboarding', () => this.onboarding.destroy())
     this.guarded('quit: summary', () => this.summary?.dispose())
     this.guarded('quit: windows', () => this.petWindow.destroy())
     this.cleanedUp = true
@@ -952,6 +985,24 @@ export class BitbotApp {
     this.autosaver?.changed()
     this.tray.refresh()
     if (this.dev) this.log(`[bitbot] mode: ${why}`)
+  }
+
+  /** §15.1 the egg hatched: the chosen name and colour, the pet out near the bottom centre, celebrating; saved. */
+  private hatch(identity: PetIdentity): void {
+    this.identity = { ...identity }
+    this.petWindow.setLook(identity.size, identity.paletteId)
+    this.worldDriver.setParams(worldParamsFor(tuning.render.bodyHeightPt[identity.size], process.pid))
+    this.save.meta.onboardingComplete = true
+    const loco = this.loco
+    if (loco) {
+      this.pendingSend = null
+      loco.teleport(this.defaultHome(loco.area))
+    }
+    this.showPet('hatched')
+    this.life.hatched()
+    this.tray.refresh()
+    this.autosaver?.flush()
+    this.log(`[bitbot] hatched: ${identity.name} (${identity.paletteId})`)
   }
 
   // ───────────────────────────── settings (§15.4) ─────────────────────────────
