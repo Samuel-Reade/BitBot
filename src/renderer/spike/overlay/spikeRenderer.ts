@@ -1,7 +1,9 @@
 import { Box3, Vector3 } from 'three'
-import { IPC, type PetHoverMsg, type PetPointerMsg } from '../../../shared/ipc'
+import { IPC } from '../../../shared/ipc'
 import {
   SPIKE_OVERLAY_IPC,
+  type SpikeHoverMsg,
+  type SpikePointerMsg,
   isOverlayStateMsg,
   sampleBuffer,
   type OverlayConfig,
@@ -252,7 +254,7 @@ export class SpikeRenderer {
     this.setHover(this.hitTest(e.clientX, e.clientY))
   }
 
-  private sendPointer(msg: PetPointerMsg): void {
+  private sendPointer(msg: SpikePointerMsg): void {
     window.bitbot.send(IPC.petPointer, msg)
   }
 
@@ -260,7 +262,7 @@ export class SpikeRenderer {
     if (over === this.hoverOver) return
     this.hoverOver = over
     this.hoverMsgsSent++
-    window.bitbot.send(IPC.petHover, { over } satisfies PetHoverMsg)
+    window.bitbot.send(IPC.petHover, { over } satisfies SpikeHoverMsg)
   }
 
   /** Page point (CSS px) → is it over the pet? */

@@ -1,5 +1,5 @@
 import { Menu, type BrowserWindow } from 'electron'
-import type { PetPointerMsg } from '../../../shared/ipc'
+import type { SpikePointerMsg } from '../../../shared/spikeOverlay'
 import type { FocusMonitor } from './focus'
 import { releaseVelocity, type OverlaySim, type Point, type TimedSample } from './sim'
 
@@ -88,7 +88,7 @@ interface HeldState {
   maxMove: number
 }
 
-export function isPetPointerMsg(value: unknown): value is PetPointerMsg {
+export function isPetPointerMsg(value: unknown): value is SpikePointerMsg {
   if (typeof value !== 'object' || value === null) return false
   const v = value as Record<string, unknown>
   const coords = typeof v['screenX'] === 'number' && typeof v['screenY'] === 'number'
@@ -162,7 +162,7 @@ export class InteractionController {
     if (this.deps.interactive) this.deps.log(`hover ${over ? 'on -> mouse events ON' : 'off -> click-through ON'}`)
   }
 
-  handlePointer(msg: PetPointerMsg): void {
+  handlePointer(msg: SpikePointerMsg): void {
     if (this.stopped) return
     // SPEC-DEVIATION: §12 has drag/toss/pet/right-click in interactive mode; the other modes only count
     // pointer messages, so a stray click cannot change a benchmark run (keeps runs deterministic).

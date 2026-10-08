@@ -85,6 +85,82 @@ export const tuning = {
     },
   },
 
+  /** Fixed-step simulation in main (§5.1). */
+  sim: {
+    /** Simulation rate, Hz. Higher = smoother physics and tighter dragging, more main-process wake-ups. */
+    hz: 30,
+    /** A wake that owes more steps than this drops the excess time instead of replaying it in a burst (after a stall or sleep). */
+    maxStepsPerWake: 5,
+    /**
+     * Steps are computed up to this many ms before their nominal time, so main-process timer lateness below it never
+     * starves the overlay, which renders one step behind real time. SPEC-DEVIATION (§5.1 computes a step once its
+     * time has passed): measured in Spike A, see src/main/sim/loop.ts.
+     */
+    leadMs: 8,
+  },
+
+  /** The overlay renderer (approach B, docs/decisions/overlay.md). */
+  overlay: {
+    /** Newest simulation states kept for interpolation. */
+    stateBufferSize: 8,
+    /** After a drop, the pet stays drawn at the drop point until main's snap state arrives, at most this long, ms. */
+    dropHoldMs: 250,
+    /** A frame this many ms past the newest state counts as starved (nothing newer to interpolate toward). */
+    starveToleranceMs: 0.5,
+    /**
+     * After a mouse event from the grab area, the overlay ignores main's cursor samples (pet:cursor) this long, ms:
+     * the native events are newer. ~2 simulation steps. Higher = fewer stale re-hit-tests, slower to notice the pet
+     * moving out from under a cursor that just stopped.
+     */
+    cursorQuietMs: 70,
+    /** Dev check stats: a frame interval above this counts as long (a visible hitch at 60 Hz), ms. */
+    longFrameMs: 20,
+    /** Dev check stats: most samples kept per list. */
+    debugSampleCap: 20_000,
+    /** Contact shadow (§6.1 "fades with height"): full strength on the ground, gone at this height, pt. Higher = it lingers as the pet lifts off. */
+    shadowFadePt: 24,
+    /** Display changes arrive in bursts; the overlay is re-laid out this long after the last one, ms. */
+    displayChangeDebounceMs: 100,
+    /** A crashed overlay renderer is recreated after this long, ms. */
+    recreateDelayMs: 1000,
+    /** Main gives up waiting for the overlay's first frame after this long, ms (then recreates it). */
+    readyTimeoutMs: 20_000,
+  },
+
+  /**
+   * The grab area (hit window): a small invisible window that takes the pet's clicks, shown only while the cursor is
+   * near the pet (docs/decisions/overlay.md). Everywhere else clicks reach the apps underneath.
+   */
+  hitArea: {
+    /** It appears when the cursor comes within this many pt of the pet's box. */
+    nearMarginPt: 32,
+    /** …and goes away once the cursor is farther than this, pt (> nearMarginPt, so it doesn't flicker at the edge). */
+    farMarginPt: 56,
+    /** Its window is the pet's box grown by this much on each side, pt. Bigger = fewer window moves while the pet moves, but a larger area a stalled app could block. */
+    slackPt: 48,
+    /** It moves once the pet's box comes within this many pt of its edge. */
+    innerMarginPt: 4,
+    /** Safety net: mouse events on but the cursor this far outside the pet's box, pt → click-through is forced back on. */
+    safetyMarginPt: 8,
+    /** While the cursor is near the pet, re-ask the helper this often whether the overlay is on screen (not on a fullscreen Space), ms. */
+    onScreenRecheckMs: 500,
+    /** The cursor is re-sent to the overlay for a fresh hit test when it or the pet moved more than this, pt. */
+    cursorStreamMinMovePt: 0.5,
+    /** A press that moves less than this is a click, not a drag: the pet is put back where it was, pt (§10.4 petting is M4). */
+    clickMaxMovePt: 4,
+    /**
+     * After the active Space changes, the overlay may still be animating off screen: the grab area stays hidden this
+     * long before the helper is asked again, ms (the spike measured the native transition at ~0.7 s).
+     */
+    spaceSettleMs: 700,
+    /**
+     * false: while the grab area is click-through, it gets no mouse moves at all; main's cursor samples (pet:cursor,
+     * once per simulation step) make it clickable over the pet. true: Electron also forwards mouse moves to it
+     * (clickable a step sooner), but its page then sets the cursor shape over the apps underneath (flicker; unverified).
+     */
+    forwardMouseMoves: false,
+  },
+
   move: {
     /** pt/s. Higher walk speed reads as busier/more anxious. */
     walkSpeed: 120,
@@ -99,6 +175,8 @@ export const tuning = {
     flingThreshold: 1800,
     /** Movement speed multiplier while stuffed (§9.3). */
     stuffedSpeedFactor: 0.6,
+    /** A pet this close above the ground (pt) counts as standing on it: released or placed there, it doesn't fall. */
+    groundSnapPt: 0.5,
   },
 
   world: {
@@ -108,6 +186,12 @@ export const tuning = {
     minWindowSize: { w: 160, h: 120 },
     /** Edge-coincidence tolerance in pt for occlusion tests (§8.3). */
     occlusionTolerance: 2,
+    /**
+     * A hidden (auto-hide) Dock still keeps a thin strip of the display out of the work area. A work-area edge at most
+     * this many pt inside the display edge counts as the display edge (§8.1: with an auto-hiding Dock the ground is
+     * the display bottom). The menu bar side never does.
+     */
+    dockHiddenInsetPt: 5,
     /** Windows owned by these bundles are never surfaces (§8.2). */
     excludedBundleIds: [
       'com.apple.dock',

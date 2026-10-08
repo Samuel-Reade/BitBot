@@ -40,6 +40,17 @@ export const SPIKE_OVERLAY_IPC = {
   log: 'spike:overlay:log',
 } as const
 
+/** The spike's hover message on the shared 'pet:hover' channel (production: PetHoverMsg in petProtocol.ts). */
+export interface SpikeHoverMsg {
+  over: boolean
+}
+
+/** The spike's pointer message on the shared 'pet:pointer' channel (production: PetPointerMsg in petProtocol.ts). */
+export type SpikePointerMsg =
+  | { kind: 'down'; button: number; screenX: number; screenY: number }
+  | { kind: 'up'; button: number; screenX: number; screenY: number }
+  | { kind: 'contextmenu'; screenX: number; screenY: number }
+
 export interface Rect {
   x: number
   y: number

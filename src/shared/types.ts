@@ -69,3 +69,34 @@ export const BASE_PARTS: readonly PartId[] = [
 
 export type Currency = 'crumbs' | 'pellets' | 'treats' | 'mileage' | 'sparks'
 export type Price = Partial<Record<Currency, number>>
+
+/** Behavior states (§10.1). The state machine (M6) owns transitions; M1 uses idle, held and fall. */
+export const BEHAVIOR_STATES = [
+  'idle',
+  'walk',
+  'run',
+  'jump',
+  'climb',
+  'sit',
+  'sleep',
+  'eat',
+  'fall',
+  'land',
+  'held',
+  'celebrate',
+  'peek',
+  'greet',
+] as const
+export type BehaviorState = (typeof BEHAVIOR_STATES)[number]
+
+export function isBehaviorState(value: unknown): value is BehaviorState {
+  return typeof value === 'string' && (BEHAVIOR_STATES as readonly string[]).includes(value)
+}
+
+/** The pet's place in the world (§16 `pet.position`): ground-contact point in global screen points, y down. */
+export interface PetPosition {
+  displayId: number
+  x: number
+  y: number
+  facing: 1 | -1
+}
