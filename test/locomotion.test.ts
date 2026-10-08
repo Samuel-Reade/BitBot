@@ -813,6 +813,23 @@ describe('Locomotion: riding and falling (§8.5)', () => {
     expect(loco.drainEvents()).toEqual([])
   })
 
+  it('a speed factor (§9.3 stuffed) slows walking and climbing, not falling', () => {
+    const time = (factor: number): number => {
+      const loco = make({ x: 300, y: 1022 })
+      loco.setSpeedFactor(factor)
+      loco.goTo({ x: 600, y: 1022 })
+      let steps = 0
+      for (; steps < 3000 && loco.goal; steps++) loco.step(DT, null)
+      return steps
+    }
+    const normal = time(1)
+    const stuffed = time(tuning.move.stuffedSpeedFactor)
+    expect(stuffed / normal).toBeCloseTo(1 / tuning.move.stuffedSpeedFactor, 1)
+    const falling = make({ x: 600, y: 400 })
+    falling.setSpeedFactor(0.1)
+    expect(fallToRest(falling).length).toBe(fallToRest(make({ x: 600, y: 400 })).length)
+  })
+
   describe('tossing (§10.4)', () => {
     /** Held at y 500 moving at vx pt/s (and vy) for half a second, then let go where the drag is. */
     const tossed = (vx: number, vy = 0, steps = 15): Locomotion => {

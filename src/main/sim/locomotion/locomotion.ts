@@ -146,6 +146,8 @@ export class Locomotion {
   private events: LocomotionEvent[] = []
   /** Where the pet was when grabbed (a click puts it back there: on its wall too). */
   private grabbedFrom: PetPlace | null = null
+  /** Walking, running and climbing speed multiplier (§9.3 stuffed: tuning.move.stuffedSpeedFactor); jumps and falls keep their physics. */
+  private speedFactor = 1
 
   /**
    * `start` (default: spawnPoint(world.area); also when it is not a finite point) is clamped into the area; the pet
@@ -338,6 +340,11 @@ export class Locomotion {
     this.fallWith(v.x * k, v.y * k)
     if (this.flight) this.flight.tossSpeed = speed * k
     this.events.push({ kind: 'toss', vx: v.x * k, vy: v.y * k })
+  }
+
+  /** §9.3 "slower movement" while stuffed: walking, running and climbing go at `factor` of their speed (1: normal). */
+  setSpeedFactor(factor: number): void {
+    this.speedFactor = Number.isFinite(factor) && factor > 0 ? factor : 1
   }
 
   /** The events since the last call (tosses, landings), oldest first. */
@@ -545,7 +552,7 @@ export class Locomotion {
     const remaining = Math.abs(toX - s.x)
     const behavior = this.walkBehavior(remaining)
     this.ensure(behavior)
-    const speed = behavior === 'run' ? this.params.runSpeed : this.params.walkSpeed
+    const speed = (behavior === 'run' ? this.params.runSpeed : this.params.walkSpeed) * this.speedFactor
     const dir = toX >= s.x ? 1 : -1
     const stepPt = Math.min(remaining, speed * dtS)
     s.x = remaining <= speed * dtS ? toX : s.x + dir * stepPt
@@ -567,7 +574,7 @@ export class Locomotion {
     }
     const remaining = Math.abs(mv.toY - s.y)
     const dir = mv.toY >= s.y ? 1 : -1
-    const speed = this.params.climbSpeed
+    const speed = this.params.climbSpeed * this.speedFactor
     s.y = remaining <= speed * dtS ? mv.toY : s.y + dir * speed * dtS
     s.vx = 0
     s.vy = dir * speed
