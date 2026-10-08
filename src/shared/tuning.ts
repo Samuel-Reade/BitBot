@@ -932,7 +932,119 @@ export const tuning = {
   /** Throwaway values for the §12 Spike A harness. Removed with the harness. */
   /** §15.1 first-launch onboarding (M8). */
   onboarding: {
-    // (M8: filled in by the onboarding work.)
+    /** The window's content size, pt (§15.1 "~520×600"). Not resizable; the page is laid out for exactly this. */
+    window: { width: 520, height: 600 },
+    /**
+     * While the permission step is shown, main reads the grant this often, ms (it comes from the app's input tap, which
+     * re-checks it every tuning.app.inputAccessPollS). Lower = the step notices a little sooner, more wake-ups.
+     */
+    permissionPollMs: 500,
+    /**
+     * "Allow Input Monitoring" pressed this long ago and the grant still not seen: offer "Relaunch Bitbot", ms. Keep it
+     * well above tuning.app.inputAccessPollS (plus starting the tap), so a grant that works without a relaunch shows
+     * first. Lower = the button shows sooner (and more often needlessly).
+     */
+    relaunchHintMs: 15_000,
+    /** The grant seen on the permission step: "Input Monitoring is on" shows this long, then Name & color, ms. */
+    grantedAdvanceMs: 1200,
+    /** The page's cross-fade between steps, ms (none with reduced motion). */
+    stepFadeMs: 180,
+    /** After the hatch's hello the page fades out for this long before onboarding:finish, ms (none with reduced motion). */
+    leaveFadeMs: 260,
+    /**
+     * The hatch also finishes on a timer this long after its planned end, ms, in case its frames stop (window hidden:
+     * no animation frames run then).
+     */
+    hatchFinishSlackMs: 500,
+    /** Opacity of the soft glow behind the stage, in the palette's primary, light / dark appearance (0..1). */
+    glowAlpha: { light: 0.4, dark: 0.18 },
+    /** A frame may come this much early and still count (a 60 Hz display then really gives `fps` 30), ms. */
+    frameSlackMs: 2,
+    /**
+     * Most frames per second of the 3D stages (welcome egg, Name & color preview; hatch: hatchFps). Nothing is drawn
+     * on the other steps, while a stage holds still, or while the window is hidden. Lower = cheaper, choppier.
+     */
+    fps: 30,
+    hatchFps: 60,
+    /** The pet and egg's size on the stages (tuning.render.bodyHeightPt; the stage canvas sets the room around them). */
+    stageSize: 'L' as PetSize,
+    /**
+     * Height of each step's stage (the picture above the text), CSS px; it spans the window's width. The welcome egg's,
+     * the privacy and permission pictures' (shorter: those steps have more to say), the Name & color preview's, the
+     * hatch's (taller: the top of the shell flies up).
+     */
+    stageHeight: { egg: 290, picture: 200, preview: 290, hatch: 360 },
+    /** Name & color preview: the turntable's speed, rad/s (0.6 ≈ a turn every 10 s). */
+    previewSpinRadPerS: 0.6,
+    /**
+     * The egg (src/renderer/pet/character/egg.ts), scene units unless noted (the pet is ~2.4 tall). Its outline is an
+     * egg curve: polar angle φ from the bottom, y = −cos φ·height/2, r = radius·sin φ·(1 + taper·cos φ) (taper 0 = an
+     * ellipsoid; more = fatter below, pointier on top).
+     */
+    egg: {
+      height: 1.75,
+      radius: 0.64,
+      taper: 0.13,
+      /**
+       * Mesh resolution: columns around (a multiple of 2 × seam.teeth, so the teeth fall on columns), rows per half; sides
+       * of the crack tube; segments round the shadow disc.
+       */
+      segments: { around: 64, along: 24, crackSides: 5, shadowAround: 40 },
+      /** The zigzag seam it cracks along: its middle (φ, rad; π/2 = the equator), teeth around, tooth half-height (rad). */
+      seam: { angle: 1.72, teeth: 8, amplitude: 0.11 },
+      /** Shell: cream mixed toward the palette's primary (0 = cream, 1 = primary), lower and upper half; its finish. */
+      cream: '#FFF8EC',
+      tint: { lower: 0.6, upper: 0.16 },
+      roughness: 0.45,
+      metalness: 0.03,
+      /**
+       * Pixel speckles (the "CRT" touch): square tiles on the shell, per half; edge and thickness, standing `raise` of
+       * their thickness out of the shell; the pseudo-random seed of their spots, spread evenly round with up to `jitter`
+       * of the spacing at random; kept clear of the seam by seamGap and of the poles by poleGap (rad); their finish.
+       */
+      pixels: { perHalf: 11, size: 0.08, depth: 0.02, raise: 0.2, seed: 11, jitter: 0.8, seamGap: 0.1, poleGap: 0.42, roughness: 0.5 },
+      /**
+       * The crack line: tube radius, its centre `raise` × radius off the shell; the share of crack(0..1) spent drawing
+       * it before the halves part.
+       */
+      crack: { radius: 0.02, raise: 0.35, drawUntil: 0.45 },
+      /** Parting: the top half flies up `lift` and sideways `side` (units) turning `tilt` rad; the lower half tips `lowerTilt`. */
+      part: { lift: 1.7, side: 0.95, tilt: 1.7, lowerTilt: 0.22 },
+      /**
+       * Its soft shadow on the ground: radius, the opacity at its centre, rings of the disc, how fast it fades outward
+       * (exponent: higher = a smaller dark core), lifted `lift` above the ground so nothing z-fights it.
+       */
+      shadow: { radius: 0.85, opacity: 0.2, rings: 8, falloff: 1.6, lift: 0.002 },
+    },
+    /**
+     * The egg's wobble: rocking about its bottom, `amplitude` rad at `hz`. On the welcome step it comes in bursts of
+     * burstS every periodS (still in between: nothing is drawn then). Larger amplitude = livelier, sillier.
+     */
+    wobble: { amplitude: 0.15, hz: 2.4, burstS: 1.2, periodS: 3 },
+    /**
+     * The hatch, s: it wobbles harder for wobbleS (up to maxIntensity × wobble.amplitude), cracks for crackS (still
+     * wobbling, from crackWobble × maxIntensity down to still), then the pop, popS: the shell parts over its first
+     * partShare and fades between fadeFrom and fadeUntil of it, and the pet grows out of it from growFrom on (from
+     * popFrom of its size, with a hop of popHop units). Then it celebrates and the page says hello for holdS, then the
+     * window says goodbye. With reduced motion: no wobble, no hop, the crack and parting take reducedCrackS and the
+     * hello reducedHoldS.
+     */
+    hatch: {
+      wobbleS: 1.4,
+      maxIntensity: 1.7,
+      crackS: 0.9,
+      crackWobble: 0.5,
+      popS: 0.8,
+      partShare: 0.5,
+      fadeFrom: 0.3,
+      fadeUntil: 0.75,
+      growFrom: 0.2,
+      popFrom: 0.3,
+      popHop: 0.5,
+      holdS: 2.6,
+      reducedCrackS: 0.5,
+      reducedHoldS: 1.8,
+    },
   },
   spikeOverlay: {
     /** Cursor-follow max speed, pt/s (§12). */
