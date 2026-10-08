@@ -1,7 +1,9 @@
 // Unit tests for bitbot-helper's logic (helper/Sources/Helper.swift). Run: bash helper/test-helper.sh
 //
 // Compiled together with Helper.swift but without main.swift, so nothing starts: no stdin reader,
-// no notifications, no hello. Input events are synthesized CGEvents that are never posted, no tap is
+// no hello. Only the Space-change check registers the workspace observers; it posts the Space-change
+// notification itself, in-process: no Space is switched, and with the run loop never running no
+// system notification arrives. Input events are synthesized CGEvents that are never posted, no tap is
 // ever created (the Input Monitoring preflight is injected as "not granted"), and nothing here can
 // show a permission prompt. Window titles are never read.
 
@@ -42,6 +44,30 @@ enum HelperTests {
         Set(dictionary.allKeys.compactMap { $0 as? String })
     }
 
+    /// The protocol lines `body` writes to stdout (redirected into a pipe meanwhile). `body` must not
+    /// print and must write less than a pipe buffer (16 KiB), since the pipe is read afterwards.
+    static func stdoutLines(during body: () -> Void) -> [String] {
+        fflush(stdout)
+        var ends: [Int32] = [-1, -1]
+        guard pipe(&ends) == 0 else { return [] }
+        let saved = dup(STDOUT_FILENO)
+        guard saved >= 0 else { return [] } // stdout stays where it was; the caller's check fails
+        dup2(ends[1], STDOUT_FILENO)
+        close(ends[1])
+        body()
+        dup2(saved, STDOUT_FILENO) // closes the pipe's last write end, so the read below ends
+        close(saved)
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = read(ends[0], &buffer, buffer.count)
+            if count <= 0 { break }
+            data.append(contentsOf: buffer[0..<count])
+        }
+        close(ends[0])
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").map(String.init)
+    }
+
     static func main() {
         jsonEncoding()
         commandParsing()
@@ -53,6 +79,7 @@ enum HelperTests {
         inputLines()
         replies()
         environment()
+        spaceChange() // last: it registers the workspace observers
         print(failures == 0 ? "ALL \(checks) CHECKS PASSED" : "\(failures) OF \(checks) CHECKS FAILED")
         exit(failures == 0 ? 0 : 1)
     }
@@ -326,5 +353,35 @@ enum HelperTests {
         check(!displays.isEmpty && displays.allSatisfy { $0.topInset >= 0 && $0.topInset < $0.bounds.height / 4 }, "active displays with sane insets: \(displays.map { "\($0.id) \($0.bounds) inset \($0.topInset)" })")
         check(displayCache.refresh() == displays, "the display cache refreshes to the same displays")
         check(readWindowList() != nil, "the window list is readable")
+    }
+
+    static func spaceChange() {
+        print("== Space change (one in-process notification; no Space is switched)")
+        /// Exactly {"type":"spaceChanged","ts":…}, with ts (unix seconds) within from...to.
+        func isSpaceChanged(_ json: NSDictionary?, from: Double, to: Double) -> Bool {
+            guard let json, keys(json) == ["type", "ts"], (json["type"] as? String) == "spaceChanged" else { return false }
+            guard let ts = number(json, "ts") else { return false }
+            return ts >= from && ts <= to
+        }
+        let before = unixNow()
+        let line = spaceChangedLine()
+        check(isSpaceChanged(object(line), from: before, to: unixNow()),
+              "spaceChanged: exactly type and ts, the unix time in seconds: \(line)")
+
+        // The real observer, driven by the notification it listens for. The global fullscreen monitor
+        // has reported nothing in this process yet, so its immediate re-check reports the initial state.
+        observeWorkspace()
+        let posted = unixNow()
+        let lines = stdoutLines {
+            let center = NSWorkspace.shared.notificationCenter
+            center.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: NSWorkspace.shared)
+        }
+        let done = unixNow()
+        check(isSpaceChanged(lines.first.flatMap(object), from: posted, to: done),
+              "a Space change sends spaceChanged first, stamped with the time of the change: \(lines.first ?? "nothing")")
+        let rest = lines.dropFirst().map(object)
+        let reCheck = rest.count == 1 ? rest[0] : nil
+        check(reCheck.map { ($0["type"] as? String) == "frontmostFullscreen" && $0["id"] == nil } == true,
+              "...then the fullscreen re-check still runs: \(Array(lines.dropFirst()))")
     }
 }

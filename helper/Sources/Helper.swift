@@ -1,9 +1,9 @@
 // bitbot-helper: Bitbot's window / app sidecar (BITBOT_SPEC.md §5.3), plus global input capture.
 // SPEC-DEVIATION: §3, §7.1 and §10.4 assign global input to uiohook-napi. uiohook-napi needs
 // Accessibility, installs an active event tap and translates key presses to text, so input capture
-// is proposed here instead: a listen-only tap that needs only Input Monitoring and never sees
-// characters (docs/decisions/input-and-helper.md). Pending the user's approval; until then the
-// tap is only used by the Spike B harness.
+// lives here instead: a listen-only tap that needs only Input Monitoring and never sees characters
+// (docs/decisions/input-and-helper.md). The user decided this on 2026-10-07 and uiohook-napi is gone
+// from the repo; M5's activity ingest uses this tap (until then only the Spike B harness starts it).
 //
 // This file holds everything except process startup (helper/Sources/main.swift), so the Swift unit
 // tests (helper/Tests, run by helper/test-helper.sh) can compile it on its own.
@@ -45,7 +45,7 @@ import Foundation
 // limits from tuning.helper. The waits below (tap-thread stop, exit grace, stdout back-pressure)
 // and the timer leeways in Poller and FullscreenMonitor are likewise implementation details
 // (shutdown safety, wakeup coalescing), not behaviour.
-let protocolVersion = 2
+let protocolVersion = 3
 /// Longest accepted command line (bytes). Commands are tiny; anything longer is corrupt input.
 let maxCommandBytes = 64 * 1024
 /// setPollRate is clamped to this range (Hz). The client clamps lower (tuning.helper.maxPollHz).
@@ -615,8 +615,9 @@ func rectsMatch(_ a: CGRect, _ b: CGRect, tolerance: CGFloat) -> Bool {
 /// the whole display: its full bounds (not its visible frame), or, on a display with a camera
 /// housing, the full area below the housing; each within ±tolerance.
 // SPEC-DEVIATION: §5.3 also says "or the active Space is a fullscreen Space"; no public API tells
-// a fullscreen Space apart, so this window test stands in for it, and Space changes only trigger an
-// immediate re-check plus a follow-up. On a display with a camera housing (this M4 Air: safe-area
+// a fullscreen Space apart, so this window test stands in for it. A Space change only triggers an
+// immediate re-check plus a follow-up, and tells main (spaceChanged), which then checks for itself
+// whether its overlay is still on screen. On a display with a camera housing (this M4 Air: safe-area
 // top inset 33 pt of 1107), macOS places a native-fullscreen window below the housing, so it would
 // not equal the full bounds; hence the second accepted rectangle. NOT VERIFIED ON DEVICE: entering
 // native fullscreen switches the user's Space, so no real native-fullscreen window has been
@@ -1262,6 +1263,18 @@ func appEventLine(type: String, app: NSRunningApplication) -> String {
     return json.finish()
 }
 
+/// {"type":"spaceChanged","ts":…}: unsolicited, on every change of the active Space (Mission Control,
+/// ⌃←/→, a fullscreen app or Split View coming or going). It names no Space or display, and no public
+/// API says whether the new Space is fullscreen (see fullscreenDisplayIds): main hides the pet's grab
+/// area on it until it has checked again (the grab area is an Electron panel, which joins every
+/// Space, fullscreen ones included).
+func spaceChangedLine() -> String {
+    var json = JSONObject(capacity: 48)
+    json.string("type", "spaceChanged")
+    json.number("ts", unixNow())
+    return json.finish()
+}
+
 func observeWorkspace() {
     let center = NSWorkspace.shared.notificationCenter
     func app(_ note: Notification) -> NSRunningApplication? {
@@ -1292,6 +1305,9 @@ func observeWorkspace() {
     }
     center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { _ in
         autoreleasepool {
+            // First, ahead of the resync's LaunchServices round trips and the window-server query of
+            // the re-check, so main hears about the switch as early as possible.
+            output.send(spaceChangedLine())
             frontmost.resync()
             fullscreen.checkSoon()
         }

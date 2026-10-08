@@ -92,7 +92,7 @@ describe('LineSplitter', () => {
 describe('parseHelperMessage: valid messages', () => {
   it('hello', () => {
     expect(parseHelperMessage(line({ type: 'hello', version: 1, pid: 42 }))).toEqual({ type: 'hello', version: 1, pid: 42 })
-    expect(HELPER_PROTOCOL_VERSION).toBe(2)
+    expect(HELPER_PROTOCOL_VERSION).toBe(3)
   })
 
   it('snapshot (pushed and replied), preserving window order', () => {
@@ -176,6 +176,14 @@ describe('parseHelperMessage: valid messages', () => {
     })
   })
 
+  it('spaceChanged: only a timestamp, and never an id, so it can never be taken for a reply', () => {
+    const pushed = { type: 'spaceChanged', ts: 1791336000.125 }
+    expect(parseHelperMessage(line(pushed))).toEqual(pushed)
+    const stray = parseHelperMessage(line({ type: 'spaceChanged', id: 4, ts: 2, displayId: 1 }))
+    expect(stray).toEqual({ type: 'spaceChanged', ts: 2 })
+    expect(Object.keys(stray ?? {})).toEqual(['type', 'ts'])
+  })
+
   it('app events', () => {
     for (const type of ['appLaunched', 'appActivated', 'appTerminated'] as const) {
       const event = { type, bundleId: 'com.apple.calculator', pid: 123, appName: 'Calculator', ts: 1791336000.5 }
@@ -252,6 +260,11 @@ describe('parseHelperMessage: malformed input returns null', () => {
     ['frontmostFullscreen with non-array displayIds', line({ type: 'frontmostFullscreen', value: true, bundleId: null, displayIds: 1 })],
     ['frontmostFullscreen with a fractional display id', line({ type: 'frontmostFullscreen', value: true, bundleId: null, displayIds: [1.5] })],
     ['frontmostFullscreen with a null display id', line({ type: 'frontmostFullscreen', value: true, bundleId: null, displayIds: [null] })],
+    ['spaceChanged without ts', line({ type: 'spaceChanged' })],
+    ['spaceChanged with string ts', line({ type: 'spaceChanged', ts: '1791336000.5' })],
+    ['spaceChanged with null ts (the helper writes a non-finite time as null)', line({ type: 'spaceChanged', ts: null })],
+    ['spaceChanged with boolean ts', line({ type: 'spaceChanged', ts: true })],
+    ['spaceChanged with an overflowing ts', '{"type":"spaceChanged","ts":1e999}'],
     ['app event without pid', line({ type: 'appLaunched', bundleId: 'x', appName: 'X', ts: 1 })],
     ['app event with string ts', line({ type: 'appTerminated', bundleId: 'x', pid: 1, appName: 'X', ts: 'now' })],
     ['error without message', line({ type: 'error', id: 1 })],
@@ -281,7 +294,7 @@ describe('parseHelperMessage: malformed input returns null', () => {
     }
     const values: unknown[] = [null, true, 0, -1, 1e308, 'x', [], {}, [null], { type: null }, { type: 'snapshot', windows: [[]] }]
     for (const value of values) {
-      const types: string[] = [...Object.values(RESPONSE_TYPE), 'hello', 'input', 'appLaunched', 'error']
+      const types: string[] = [...Object.values(RESPONSE_TYPE), 'hello', 'input', 'spaceChanged', 'appLaunched', 'error']
       for (const type of types) {
         expect(() => parseHelperMessage(line({ type, id: value, windows: value, displays: value, kind: value, ts: value }))).not.toThrow()
       }
