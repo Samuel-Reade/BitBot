@@ -157,6 +157,14 @@ export const tuning = {
     recreateMaxDelayMs: 300_000,
     /** Main gives up waiting for the overlay's first frame after this long, ms (then recreates it). */
     readyTimeoutMs: 20_000,
+    /**
+     * §8.6 hiding for a fullscreen app or the locked screen: the overlay page fades out over fadeMs (an opacity
+     * transition the compositor runs; no renders meanwhile) and back in when the pet is shown again. The user's own
+     * hide (⌥⌘B, tray, menu) stays instant, and so does everything under prefers-reduced-motion. Longer = a softer,
+     * slower exit; fadeEasing is a CSS timing function.
+     */
+    fadeMs: 300,
+    fadeEasing: 'ease-in-out',
   },
 
   /**
@@ -692,6 +700,20 @@ export const tuning = {
      * (0.5: the middle of the Dock, where the pet first appears).
      */
     homeX: 0.5,
+    /**
+     * §15.4 the restlessness setting (0..1; settings.restlessness): asTuned keeps every number above exactly as tuned
+     * (the settings default). Each scale is a multiplier [at 0, at 1], 1 at asTuned, linear on each side:
+     * pauseScale multiplies decisionS and the sit and peek durations (restless = shorter pauses between choices);
+     * temperatureScale multiplies temperature (restless = a little more random); movementScale multiplies the weights
+     * of explore, climb, peek and approachCursor (restless = moves about more). Eating, napping and sleeping are never
+     * scaled. Kept modest and calm-leaning: idle is calm by default, 1 is busier, never frantic.
+     */
+    restlessness: {
+      asTuned: 0.5,
+      pauseScale: [1.6, 0.55] as readonly [number, number],
+      temperatureScale: [0.8, 1.4] as readonly [number, number],
+      movementScale: [0.6, 1.5] as readonly [number, number],
+    },
   },
 
   /** bitbot-helper process management (§5.3). */

@@ -3,7 +3,8 @@
 // with a compositor transform, animates it (character/animator.ts), renders WebGL only when something visible changed
 // (§11 render on demand) and sleeps on a timer until the animation's next change, and takes the pet's mouse input
 // through the grab area it opens (hitWindow.ts). The decisions are OverlayModel's (placement.ts); this file wires them
-// to the DOM, three.js and IPC.
+// to the DOM, three.js and IPC. pet:visible hides it (no frames, grab-area state reset) and fades the page out or in
+// (§8.6, fade.ts).
 //
 // Fail closed: a malformed configuration starts nothing (no grab area, no pet:ready, so main recreates the page); a
 // grab area that did not open never reports a hover, so main never makes it clickable.
@@ -13,11 +14,12 @@
 
 import { IPC } from '../../shared/ipc'
 import type { Box, Point, Rect } from '../../shared/geometry'
-import { isPetPingMsg, type PetLogMsg, type PetPongMsg, type PetReadyMsg } from '../../shared/petProtocol'
+import { isPetPingMsg, isPetVisibleMsg, type PetLogMsg, type PetPongMsg, type PetReadyMsg } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
 import type { PaletteId, PetSize } from '../../shared/types'
 import { isDebugWorldMsg, type DebugWorldMsg } from '../../shared/world'
 import { Animator } from './character/animator'
+import { visibilityStyle, type FadeStyle } from './fade'
 import { openGrabArea, type GrabArea } from './hitWindow'
 import { OverlayModel, STANDING_SHADOW, type ContactShadowParams } from './placement'
 import type { PetScene } from './scene'
@@ -147,6 +149,8 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
   bridge.on(IPC.petVisible, (msg) =>
     guarded('pet:visible', () => {
       model.onVisible(msg)
+      // §8.6: the whole page fades (fullscreen, lock) or goes at once (fade.ts); a malformed message changes nothing.
+      if (isPetVisibleMsg(msg)) applyFade(visibilityStyle(msg.visible, msg.fade === true, reducedMotion()))
       if (!model.visible) {
         // Hidden: no frames until shown again.
         if (rafId !== null) cancelAnimationFrame(rafId)
@@ -322,6 +326,18 @@ class WorldDebugView {
     this.layer = { canvas, ctx, box }
     return this.layer
   }
+}
+
+/** The page's show / hide fade (fade.ts) on everything it draws. */
+function applyFade(style: FadeStyle): void {
+  const body = document.body.style
+  body.transition = style.transition
+  body.opacity = style.opacity
+}
+
+/** The user's "reduce motion" setting: no fades. */
+function reducedMotion(): boolean {
+  return matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
 function pixelRatio(): number {

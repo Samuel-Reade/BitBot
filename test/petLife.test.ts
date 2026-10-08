@@ -164,4 +164,25 @@ describe('PetLife', () => {
     expect(Object.keys(s.needs).sort()).toEqual(['boredom', 'dust', 'energy', 'fullness', 'hunger'])
     expect(s.asleep).toBe(false)
   })
+
+  it('passes the restlessness setting to the brain (restless: the first choice comes sooner; absent: as tuned)', () => {
+    /** Life-clock seconds until the brain's first decision. */
+    const firstDecisionS = (restlessness: number | undefined): number => {
+      const t = setup()
+      const extras = restlessness === undefined ? t.extras : { ...t.extras, restlessness }
+      let ms = 0
+      while (t.brain.scores === null && ms < 60_000) {
+        t.pass(33)
+        ms += 33
+        t.life.tickBrain(t.loco, extras)
+      }
+      return ms / 1000
+    }
+    const calm = firstDecisionS(0)
+    const asTuned = firstDecisionS(undefined)
+    const restless = firstDecisionS(1)
+    expect(firstDecisionS(tuning.brain.restlessness.asTuned)).toBe(asTuned)
+    expect(restless).toBeLessThan(asTuned)
+    expect(asTuned).toBeLessThan(calm)
+  })
 })

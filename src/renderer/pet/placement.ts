@@ -425,7 +425,7 @@ export class OverlayModel {
     return this.config?.debug ?? false
   }
 
-  /** Shown by the user (pet:visible). */
+  /** Shown (pet:visible: not hidden by the user, macOS, a fullscreen app or the locked screen). */
   get visible(): boolean {
     return this.shown
   }

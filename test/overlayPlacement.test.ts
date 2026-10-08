@@ -850,6 +850,21 @@ describe('OverlayModel: shown, hidden, configuration and context loss', () => {
     expect(plans[0]?.transform).toBe(transformAt({ x: 900, y: GROUND }))
   })
 
+  it('a fading hide (§8.6 fullscreen, lock) stops frames and drops hover and press at once, like the user’s hide', () => {
+    const d = placed()
+    d.down(ON_PET, T)
+    d.model.onVisible({ visible: false, epoch: 5, fade: true })
+    expect(d.model.visible).toBe(false)
+    expect(d.model.pressed).toBe(false)
+    expect(d.model.hovering).toBe(false)
+    expect(d.model.epoch).toBe(5)
+    expect(d.frame(T + 1)).toEqual({ transform: null, render: null, reveal: false, again: false, wakeAt: null })
+    const requests = d.frameRequests
+    d.model.onVisible({ visible: true, epoch: 5, fade: true })
+    expect(d.model.visible).toBe(true)
+    expect(d.frameRequests).toBe(requests + 1)
+  })
+
   it('pet:config-changed: new overlay origin and area, hit tests off until re-placed, then pet:drawn', () => {
     const d = placed()
     d.move(ON_PET, T)
