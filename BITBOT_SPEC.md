@@ -57,6 +57,8 @@ The user can let it roam, tell it to stay put, or give it a home spot ("hangout"
 
 The app is an **agent app**: no Dock icon (`app.dock.hide()`), lives in the menu bar (Tray) plus the pet overlay.
 
+> **Decided 2026-10-07:** global input (keys, clicks, scrolls) comes from a listen-only event tap inside `bitbot-helper`, which needs only Input Monitoring. `uiohook-napi` is not used: it needs Accessibility and installs an active tap. See [docs/decisions/input-and-helper.md](docs/decisions/input-and-helper.md).
+
 ---
 
 ## 4. Phased roadmap
@@ -133,6 +135,8 @@ The app is an **agent app**: no Dock icon (`app.dock.hide()`), lives in the menu
 
 **The simulation is authoritative and lives in the main process.** The renderer is a view: it receives a compact state message (position is handled by window placement; renderer gets facing direction, animation state, mood, face state, need levels for cosmetic cues, and events like "eat" or "land") and renders/animates it. All game logic must be pure TypeScript modules with no Electron imports so they can be unit-tested.
 
+> **Decided 2026-10-07 (approach B, hardened):** the overlay window never moves. The renderer moves the pet's small canvas itself, interpolating main's 30 Hz states, so "position is handled by window placement" no longer applies. Input from `bitbot-helper` replaces uiohook-napi in ActivityIngest. See [docs/decisions/overlay.md](docs/decisions/overlay.md) and [docs/decisions/input-and-helper.md](docs/decisions/input-and-helper.md).
+
 ### 5.2 Overlay window approach
 
 Two candidate approaches — **evaluate in Spike A (§12)** and pick one:
@@ -146,6 +150,8 @@ Common window settings either way:
 - `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })`
 - `setIgnoreMouseEvents(true, { forward: true })` by default. The renderer hit-tests the pet (raycast against a simplified collision mesh or the rendered alpha) on forwarded mousemove and asks main to toggle `setIgnoreMouseEvents(false)` while the cursor is over the pet, and back to `true` when it leaves.
 - Never call `focus()` on the overlay. Dragging the pet must not activate Bitbot or change the frontmost app.
+
+> **Decided 2026-10-07: approach B, hardened.** One display-sized transparent overlay (a normal window, not a panel) draws the pet and never takes mouse input: `setIgnoreMouseEvents(true)` without forwarding. A small invisible "grab area" window (a non-activating panel opened from the overlay's page, sharing its renderer process) takes the pet's clicks. It is shown only while the cursor is near the pet and the overlay is on screen. See [docs/decisions/overlay.md](docs/decisions/overlay.md).
 
 ### 5.3 Swift helper protocol
 
@@ -177,6 +183,8 @@ Implementation notes:
 - App events from `NSWorkspace.shared.notificationCenter` (`didLaunchApplicationNotification`, `didActivateApplicationNotification`, `didTerminateApplicationNotification`). Requires a running RunLoop.
 - Fullscreen heuristic: frontmost app has a layer-0 window whose bounds equal its display's full bounds (not just the visible frame), or the active Space is a fullscreen Space. Emit changes only.
 - The helper may also push snapshots on its own at the requested poll rate; main will request **4 Hz normally, 15 Hz while the pet is standing on or climbing a window**, and 1 Hz while the pet is asleep.
+
+> **Decided 2026-10-07:** while the pet is on a window, poll at 4 Hz and switch to 15 Hz only while that window is actually moving, back after about 1 s of stillness (15 Hz all the time costs the helper 0.7–0.9% CPU). The helper also pushes `spaceChanged` when the active Space changes (protocol 3). See [docs/decisions/input-and-helper.md](docs/decisions/input-and-helper.md).
 
 ### 5.4 Suggested repo layout
 
@@ -263,6 +271,8 @@ All rounded boxes are made by extruding a rounded-rectangle `Shape` with `Extrud
 
 Feet are parented to the root (not the bobbing body) so the body can bob and squash above planted feet.
 
+> **Decided 2026-10-07:** the arms hang down at rest. The base rotation sign is flipped (x = ±1 → z ±0.5), with the same size, centre and tilt magnitude (`BASE_FORM.arms.rotZ = −0.5`; renders in `docs/images/`).
+
 Lighting: hemisphere light (sky white, ground #88aaa5, 0.75), key directional light from upper-right-front (0.9), cool rim light from back-left (#bff5ee, 0.6). Renderer: `alpha: true`, `antialias: true`, sRGB output, pixel ratio capped at 2.
 
 Camera: perspective, FOV 32°, slight top-down angle (camera at y +0.5 relative to target). The pet faces 3/4 toward the viewer by default and turns to face its walking direction (rotate root around Y, eased).
@@ -342,6 +352,8 @@ Also design `buildBitbot.ts` to take a `CharacterSpec` (form id, palette, parts 
 | Wake / unlock / session | `powerMonitor` `resume`, `unlock-screen`; idle from `getSystemIdleTime()` | none |
 
 **If Input Monitoring is not granted**, the app still works in a degraded mode: mileage, treats, and sparks still flow; crumbs and pellets don't. Show a gentle reminder in the tray menu and settings, never a nag popup.
+
+> **Decided 2026-10-07:** keys, clicks and scrolls come from `bitbot-helper`'s listen-only tap (Input Monitoring), not uiohook-napi. Without Input Monitoring, nothing is counted from keys, clicks or scrolls, and ⌥⌘-click send-to-point is unavailable (the Come here hotkey still works). Scroll-tick rules for trackpads are in [docs/decisions/input-and-helper.md](docs/decisions/input-and-helper.md) §6.
 
 ### 7.2 The five currencies
 
@@ -546,6 +558,7 @@ Measure with Activity Monitor and `process.getCPUUsage()` in the dev panel. Targ
 - **Memory:** < 300 MB total.
 - **Render rate:** 60 fps while moving/being dragged, 30 fps idle, 10 fps asleep, 0 when hidden or fully idle off-screen. Implement an adaptive render loop (render on demand; animate only when something changes).
 - **Snapshot polling:** 4 Hz default, 15 Hz attached to a window, 1 Hz asleep. Helper must be cheap (< 0.5% CPU).
+  > **Decided 2026-10-07:** adaptive, 15 Hz only while the ridden window moves (see §5.3).
 - **Battery:** pause the cursor-distance poll and drop to sleep rates when on battery and the pet is asleep.
 - The face canvas only redraws when its state changes or during animated faces.
 

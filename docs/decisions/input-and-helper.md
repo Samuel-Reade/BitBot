@@ -1,9 +1,9 @@
 # Decision record: global input capture and the Swift helper (Spike B)
 
-- **Status:** **proposed.**
-  - Automated checks are done.
-  - Waiting on your decisions (§6) and the manual tests (§7). Nothing has been run against real keyboard or mouse input yet.
-- **Date:** 2026-10-06
+- **Status:** **decided 2026-10-07**, except decisions 3 and 5 in §6, which wait until M5.
+  - The input source is decided: `uiohook-napi` was removed in Milestone 1. Snapshot polling and the degraded mode are decided too.
+  - The manual tests (§7) are still to run. Nothing has been run against real keyboard input yet.
+- **Dates:** spike 2026-10-06; decisions 2026-10-07. The spec carries dated "Decided" notes at §3, §5.1, §5.3, §7.1 and §11.
 - **Spec:** §3, §5.1, §5.3, §5.4, §7.1–§7.3, §8.6, §10.4, §11, §12 (Spike B), §15.1
 - **Test machine:** Apple M4 (MacBook Air), macOS 15.6, one built-in Retina display (1710×1107 pt @2x, camera housing), Electron 44.6. Intel Macs and macOS 13–14 were not tested.
 
@@ -14,7 +14,7 @@
   - it installs an **active** event tap, holding each key press while it waits on the app's main thread;
   - it turns every key press into a character in memory.
 
-  **Recommendation:** capture input with a listen-only tap inside `bitbot-helper`, which needs only Input Monitoring. *Needs your approval: §3, §5.1, §5.4, §7.1, §10.4 and §15.1 change.*
+  **Decided (2026-10-07):** capture input with a listen-only tap inside `bitbot-helper`, which needs only Input Monitoring. `uiohook-napi` was removed from the repo in Milestone 1.
 - **The helper's window data matches Electron's to the point** for Bitbot's own windows. Z-order and window layers are right, and app launch and quit events arrive.
   - Not exercised: `appActivated`, fullscreen detection, and multiple displays.
   - Not inspected by eye: other apps' outlines.
@@ -32,7 +32,7 @@
 
 ## 1. What `uiohook-napi` 1.5.5 actually does on macOS
 
-From its bundled libuiohook sources (`node_modules/uiohook-napi/libuiohook/src/darwin/`). The module was never loaded on this Mac: the harness only checked that it resolves inside the packaged app.
+From its bundled libuiohook sources (`node_modules/uiohook-napi/libuiohook/src/darwin/` of uiohook-napi 1.5.5; the package was removed in Milestone 1). The module was never loaded on this Mac: the harness only checked that it resolved inside the packaged app.
 
 | Spec assumption (§3, §7.1) | Reality | Evidence |
 |---|---|---|
@@ -56,7 +56,7 @@ Implemented in `helper/Sources/Helper.swift` (`InputTap`) and marked `SPEC-DEVIA
 
   Never characters, and no keyboard-layout APIs anywhere. Key codes cross only the stdout pipe and are never logged.
 - **Permission:** only Input Monitoring (`kTCCServiceListenEvent`). The helper checks the grant with `CGPreflightListenEventAccess` and **won't create a tap without it**, so the only prompt ever shown is onboarding's `requestInputAccess` (`CGRequestListenEventAccess`).
-- **What it removes:** a native Node module, its per-architecture prebuilds and its asar-unpack rule. It ships N-API prebuilds, so Electron ABI rebuilds were never an issue.
+- **What it removed (Milestone 1):** a native Node module, its per-architecture prebuilds and its asar-unpack rule.
 - **Verified:** 130 Swift checks, using synthesized events that are never posted. They cover the tap masks, the grant gate, the line shapes, and that a location is sent only with ⌥⌘.
 - **Not verified:** a real tap on real input. There is no Input Monitoring grant on this Mac, and I ran nothing that could prompt. That is §7, test 1.
 - **Things to know:**
@@ -122,7 +122,9 @@ The helper's `diag` reports its *responsible process* (`responsibility_get_pid_r
 - **`NSScreen`** (needed for that inset) registers the helper with LaunchServices as a background app. It has no UI. No throttling was seen in a 180 s dev run (unsaved). **App Nap in the packaged app while the pet is hidden is unchecked**, and that is exactly when fullscreen-exit detection matters.
 - **Other dev Electron instances** report as `com.github.Electron`. Main ignores its own process.
 
-### Protocol v2 (additions to §5.3, reflected in `src/main/helper/protocol.ts`)
+### Protocol v2 and v3 (additions to §5.3, reflected in `src/main/helper/protocol.ts`)
+
+- **v3 (Milestone 1):** the unsolicited `{"type":"spaceChanged","ts":…}`, sent when the active Space changes. Main hides the pet's grab area at once (docs/decisions/overlay.md). Whether macOS delivers that notification to the helper hasn't been observed on device yet; dev builds log each one.
 
 - **New commands:** `ping`, `displays`, `frontmost`, `appInfo`, `fullscreenState`, `diag`, `quit`, plus the input group: `inputAccess`, `requestInputAccess`, `startInputTap` (keys and mouse both false = stop), `stopInputTap`.
 - **New unsolicited messages:**
@@ -138,31 +140,24 @@ The helper's `diag` reports its *responsible process* (`responsibility_get_pid_r
 - **Command-line flags** carry the `tuning.helper` values.
 - **Client:** `HelperClient` restarts the helper with exponential backoff, re-applies the poll rate and tap after a restart, and runs a heartbeat watchdog.
 
-## 6. Decisions for you
+## 6. Decisions (2026-10-07)
 
-1. **Input source** *(blocks M5; recommended: yes).* Replace `uiohook-napi` with the helper's listen-only tap.
-   - Update §3, §5.1, §5.4, §7.1, §10.4 and §15.1 to match.
-   - Remove `uiohook-napi` from `package.json` and the electron-builder rules (it currently ships inside the packaged app).
-2. **Snapshot rate while the pet is on a window** *(blocks M3).* The options:
-   - **(a)** accept 0.7–0.9% (over budget, possibly for hours);
-   - **(b)** the private `SLSGetWindowBounds` for the ridden window (≈0.3%, unsaved estimate; private API that could break in a macOS update);
-   - **(c)** 10 Hz (≈0.56%, still over);
-   - **(d)** adaptive: 4 Hz while attached, switching to 15 Hz on the first observed move of the attached window or a mouse-down on it, and back after about 1 s of stillness.
-
-   *Recommended: (d).* It meets the budget almost all the time and needs no private API.
-3. **Scroll ticks** *(blocks M5).* §7.2 pays per "scroll tick" but doesn't define one for trackpads. Proposed rule, with constants going in `tuning.ts`:
+1. **Input source: decided, done.** The helper's listen-only tap replaces `uiohook-napi`, which was removed from `package.json`, the lockfile, the Spike B harness and the electron-builder rules in Milestone 1. The spec has dated notes at §3, §5.1 and §7.1; §10.4's "observed via uiohook" now means the helper's tap.
+2. **Snapshot rate while the pet is on a window: decided, (d) adaptive** (built in M3). Poll at 4 Hz while attached, switch to 15 Hz on the first observed move of the attached window, and go back after about 1 s of stillness.
+   - Rejected alternatives: (a) a constant 15 Hz costs 0.7–0.9%; (b) a private API; (c) 10 Hz is still over budget.
+3. **Scroll ticks: open, decide before M5.** Proposed rule, with its constants going in `tuning.ts`:
    - notched wheel: |lines| ticks;
    - continuous (trackpad): accumulate |px| into ticks of N pt;
    - ignore momentum and zero-delta gesture edges;
    - cap per second, like §7.3.
-4. **Degraded mode without Input Monitoring** *(blocks M5).*
-   - **Pellets.** Keep §7.1 as written: no clicks or scrolls counted. *Recommended:* counting through a permission-free path after the user declined would undercut the onboarding promise. Whether macOS would even allow it is untested.
-   - **⌥⌘-click send-to-point (§10.4).** With no tap at all, it's unavailable without the grant; the "Come here" hotkey still works. *Recommended:* accept that.
-5. **Signing and bundle ID** *(before any grant you mean to keep).* Choose the real bundle ID, and say whether you want the self-signed dev certificate set up.
+4. **Degraded mode without Input Monitoring: decided as recommended.**
+   - No clicks or scrolls are counted through any permission-free path.
+   - ⌥⌘-click send-to-point is unavailable without the grant; the "Come here" hotkey still works.
+5. **Signing and bundle ID: partly decided.** Keep the placeholder `com.bitbot.desktop` for now; choose the real one before any Input Monitoring grant you mean to keep (M5). The self-signed "Bitbot Dev" certificate is not decided.
 
 ## 7. Manual tests
 
-Exact steps: `spikes/README-input-helper.md`. Use the packaged app, launched with `open`; it was rebuilt with the final code. **Don't grant VS Code Input Monitoring.**
+Exact steps: `spikes/README-input-helper.md`. Use the packaged app, launched with `open`. **Rebuild it first with `npm run package:dir`**: the copy in `dist/` predates Milestone 1 and still contains uiohook-napi. **Don't grant VS Code Input Monitoring.**
 
 1. **Helper tap with Input Monitoring** *(about 5 min).*
    - Does the prompt name "Bitbot"?
@@ -182,11 +177,10 @@ Exact steps: `spikes/README-input-helper.md`. Use the packaged app, launched wit
 5. **Alignment and activation** *(2 min).* During the same run:
    - check that the debug outlines hug other apps' window edges;
    - click another app and check for an `appActivated` log line.
-6. **uiohook comparison** *(optional; only if you'd keep uiohook).* README tests 4a/4b: Input Monitoring alone (expected to fail), then Accessibility alone (expected to work).
-7. **Clean up afterwards:**
+6. **Clean up afterwards:**
 
    ```sh
-   tccutil reset ListenEvent com.bitbot.desktop; tccutil reset Accessibility com.bitbot.desktop
+   tccutil reset ListenEvent com.bitbot.desktop
    rm -rf ~/Library/Logs/Bitbot
    ```
 

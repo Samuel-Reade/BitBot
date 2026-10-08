@@ -1,34 +1,144 @@
-# Decision record: overlay window approach (Spike A)
+# Decision record: overlay window approach (Spike A → Milestone 1)
 
-- **Status:** **provisional recommendation.**
-  - The automated measurements are done.
-  - Not yet built: the input "hit window" that the recommended design depends on.
-  - Not yet verified: clicks, focus and fullscreen hiding. **Focus gates everything.**
-- **Date:** 2026-10-06
-- **Spec:** §2, §5.1, §5.2, §8.6, §8.7, §9.4, §11, §12 (Spike A)
-- **Measured on:** Apple M4 (MacBook Air), macOS 15.6, one 60 Hz Retina display (1710×1107 pt @2x), Electron 44.6 (Chrome 152).
+- **Status:** **decided 2026-10-07: approach B, hardened.** The user chose B ("the pet can be anywhere on the computer screen"). Milestone 1 built it and measured it in the real app; it beats A2 on every number that compares. Manual checks on the real app are still to run (below).
+- **Dates:** spike 2026-10-06; decision and M1 measurements 2026-10-07.
+- **Spec:** §2, §5.1, §5.2, §8.6, §8.7, §9.4, §11, §12 (Spike A), §13.1. The spec carries dated "Decided" notes at §5.1 and §5.2.
+- **Measured on:** Apple M4 (MacBook Air, 10 cores), macOS 15.6, one 60 Hz Retina display (1710×1107 pt @2x), Electron 44.6 (Chrome 152).
 
-## Recommendation
+## Decision
 
-**Approach B, hardened — provisionally.**
+**Approach B, hardened**, as built in Milestone 1:
 
-- **Overlay.** One transparent overlay window draws the pet on a small canvas. The canvas moves only by compositor transforms (`translate3d`); the window itself never moves. The overlay **never accepts mouse input**: `setIgnoreMouseEvents(true)` once, with no forwarding.
-- **Hit window.** A small invisible window takes the clicks, and only while the cursor is near the pet.
-- **M1 starts by building and measuring that hit window.** If it fails any check below, fall back to **A2**: a small window moved on every renderer frame, already implemented and measured here.
+- **Overlay.** One display-sized transparent window draws the pet on a 240 pt canvas, moved only by compositor transforms (`translate3d`).
+  - It is a normal window, not a panel, and never accepts mouse input: `setIgnoreMouseEvents(true)` once, no forwarding.
+  - macOS should keep it off fullscreen Spaces and Split View (expected from Electron's sources; manual check 4).
+- **Grab area** (the "hit window"). A small invisible panel that the overlay's page opens with `window.open`.
+  - It shares the overlay's renderer process.
+  - It is shown only while the cursor is near the pet and the helper's window list confirms the overlay is on screen. Fail closed: no answer means hidden.
+  - It is click-through except over the pet's silhouette, and is kept directly above the overlay in z-order (`moveAbove`), so other apps' floating panels stay clickable.
+  - Stale input can't switch it back on: every reset gets a new epoch, and messages from an older epoch are dropped. Space changes (helper protocol 3 `spaceChanged`), app activations and fullscreen pushes hide it at once.
+- **Simulation** at a fixed 30 Hz in main.
+  - The renderer interpolates one step behind and renders WebGL only when the pet's look changes; moving it is a transform.
+  - The loop parks while the pet is hidden.
 
-The proposed design and what is still unknown:
+Code:
+- `src/main/windows/`: overlayWindow, hitWindow, petWindow, petInteraction, hitArea, overlaySession.
+- `src/main/bitbotApp.ts` and `src/renderer/pet/overlay.ts`.
+- Dev check: `electron . --check=overlay` (`src/main/dev/overlayCheck.ts`).
 
-1. **The overlay is not a panel.** It never takes clicks, so it doesn't need Electron's non-activating `panel` type. As a normal window with `setVisibleOnAllWorkspaces(true, {visibleOnFullScreen: false})`, macOS itself should keep it off fullscreen Spaces, Split View included. *Expected from Electron's sources; not yet observed.*
-2. **The hit window is a small panel.** It is opened with `window.open` from the overlay's renderer, so it should share that renderer process: no extra process, and mouse events handled in the overlay's own JavaScript. *Process sharing and the event path: to verify in M1.*
-   - Main moves the hit window over the pet only when its cursor poll (20 Hz, already needed for mileage, §7.1) sees the cursor near the pet.
-   - It is hidden whenever the overlay isn't on screen, which the helper's on-screen window list tells us.
-3. **The 30 Hz simulation stays in main** (§5.1). The renderer interpolates and moves the canvas, so `§5.1 "position is handled by window placement"` and §5.2's window settings change. These are spec edits to approve.
+## Evidence (Milestone 1)
 
-**Focus gates both A2 and B.** Both rely on a `panel` window to keep clicks from activating Bitbot (§2: "must never steal focus"). AppKit logs *"NSWindow does not support nonactivating panel styleMask 0x80"* for Electron's panel, a known Electron issue ([#35815](https://redirect.github.com/electron/electron/issues/35815)). Nobody has clicked the pet yet.
+### Focus, the gate: passed on real input
 
-If manual check 1 fails, the fallback is a truly non-activating native `NSPanel` for the hit window, hosted by the Swift helper or a small native module. That would be an architecture change.
+On 2026-10-07 the user ran the spike's plain-B interactive harness for 96 minutes, with real mouse input:
+- clicked the pet 15 times;
+- dragged it 18 times;
+- used its right-click menu 6 times.
 
-## Why B over A
+Electron's `did-become-active` and `browser-window-focus` never fired. All 39 verdicts read "became the active app: NO" (`spike-results/overlay-B-interactive-20261007-210139.json`, gitignored).
+
+So clicks on Electron's `type: 'panel'` windows don't activate Bitbot, despite AppKit's "nonactivating panel styleMask 0x80" warning. The M1 grab area is the same kind of panel. The app logs a PASS/FAIL verdict line after every press, drag and menu, so this stays checked in every run. The visible half (typing keeps going into the other app) is manual check 1.
+
+### Dev check: 59/59 functional checks pass
+
+The check drives synthetic input into Bitbot's own windows only. On the final code, and in every round:
+
+- **Windows.** The overlay is not focusable, always on top and visible on all workspaces. The grab area is not focusable and always on top. No Dock icon.
+- **Processes.** Exactly one renderer process: the grab area has the overlay's OS pid.
+- **Grab area visibility.** Hidden while the cursor is far. Shown 44–88 ms after it comes near, once the helper confirms the overlay is on screen. Its bounds cover the pet's box.
+  - The helper lists it at layer 3 directly in front of the overlay, 2–6 ms after showing. It leaves the list 9–16 ms after hiding.
+  - Its capture is fully transparent.
+- **Hover.** Comes from the grab area's own mousemove, not only from main's cursor samples.
+- **Click, drag, drop.**
+  - A click without a drag leaves the pet exactly in place.
+  - A drag is followed exactly by the simulation.
+  - Released in the air, the pet lands in 438–463 ms (physics: 467 ms).
+  - An overlay capture shows the pet's pixels at the new spot and none at the old.
+- **Release and menu paths.** A lost mouseup releases. Right-click opens and closes the menu.
+- **Hide.** Hiding during a drag releases the pet, hides both windows and parks the loop (0 renderer frames while hidden); showing restores everything.
+- **Reload.** A page reload leaves exactly one grab area, still grabbable.
+- **Whole run.** Zero focus events, no network requests, no errors.
+
+### Cost, same session (AC power, load average 4–8)
+
+CPU as % of one core, median (min–max) of 3 interleaved rounds. Electron's cumulative CPU deltas, the spike's method, so it compares with the tables below. Helper CPU is from `ps`.
+
+| Run | main | renderer | GPU | Electron total |
+|---|---|---|---|---|
+| B: idle (cursor far, pet still) | 1.83 (1.29–1.87) | 0.03 | 0.01 | 1.88 |
+| B: hidden | 0.13 | 0.00 | 0.00 | 0.13 |
+| B: near and still | 2.37 (1.75–2.45) | 0.49 | 0.01 | 2.87 |
+| B: walk, cursor moving near | **3.14** (2.80–3.49) | 6.34 | 4.16 | 13.31 |
+| B: chase 600 pt/s, cursor near | **4.48** (4.40–6.08) | 6.25 | 3.90 | 14.64 |
+| B: drag 120 pt/s | 6.48 (5.87–8.87) | 9.49 | 4.36 | 20.33 |
+| B: drag 600 pt/s | 8.50 (8.49–11.23) | 9.87 | 4.48 | 22.72 |
+| **A2 walk** (spike) | **13.52** (10.91–14.61) | 11.65 | 13.40 | 39.67 |
+| **A2 synthetic** (spike) | **13.30** (10.82–15.88) | 13.04 | 14.77 | 41.11 |
+
+- **Main is the like-for-like number** (simulation, IPC, window moves): B costs about a quarter of A2.
+- **Renderer and GPU numbers aren't like-for-like.** The M1 overlay does 0 WebGL renders while the pet moves (a static pet; only the transform changes), while the spike's A2 renders every frame.
+- **Moving rows have no walking yet.** M1 has none; the dev check moves the pet with a scripted mover.
+- **Drag rows include injection cost.** They include the check injecting about 67 synthetic events/s from main.
+- **Helper:** 0.1–0.2% on top.
+- **Memory (phys_footprint, Electron processes):** 185.5 MB, vs A2 188–193 MB. The helper adds 4.7 MB.
+- **Hidden meets §11's "< 1%".** Idle costs 1.8% of main because the 30 Hz loop runs while the pet is shown. That's within §11's "< 3% roaming", and a later performance item.
+
+### Responsiveness
+
+| Metric | Value |
+|---|---|
+| Pet moves under a still cursor → clickable | p95 46 ms (range 44–49), max 51 ms; 0 missed |
+| Pet moves away from a still cursor → click-through again | p95 45 ms (43–49), max 49 ms; 0 missed |
+| Drag: input → frame that draws it | p95 ~15 ms (within one 60 Hz frame) at 120 and 600 pt/s |
+| Pet's box outside the grab area | 0.00% of wakes in every moving phase |
+| Renderer while idle, hidden, near and still | 0 frames |
+
+### Bugs the check found (fixed, each with a regression test)
+
+1. **Drags were drawn one frame late.** The grab area's `mousemove` is frame-aligned. A press now follows `pointerrawupdate`, which brought input→frame p95 down from 30 to 15 ms.
+2. **Main's idea of where a held pet is drawn was a step behind.** The grab area trailed a fast drag: 54–58% of wakes uncovered at 600 pt/s.
+3. **Most grab-area moves were also resizes.** Rounding gave 268 or 269 pt; one size per box now, which saves ~1.5–2 points of main CPU while chasing.
+4. **`tuning.hitArea.innerMarginPt` 4 → 24.** A 600 pt/s pet covers 20 pt between two 30 Hz wakes. This costs +0.7–1.9 points of main CPU while a pet moves fast near the cursor; a velocity-aware placement can replace it in M3/M4.
+
+The glue phase also found that Electron 44's `before-mouse-event` has no `modifiers` field, so a drag's held button is read from `button`.
+
+### What the check can't see
+
+Synthetic events reach the page whatever `setIgnoreMouseEvents` says. So the check proves Bitbot's own pipeline, but not:
+- real click-through;
+- the panel's non-activation (shown separately above, with real clicks in the spike);
+- AppKit's mouse capture during drags.
+
+These are the manual checks below.
+
+## Manual checks (the real app)
+
+Start it with `npm run build:helper` (once), then `npm start`. The pet stands on the Dock at the bottom centre, and a small monitor icon appears in the menu bar.
+
+1. **Focus.**
+   - Click into a TextEdit document.
+   - Click the pet, drag it, right-click it and choose Hide, pressing ⌥⌘B to bring it back. After each step, type: the letters must land in TextEdit.
+   - The terminal prints `… -> Bitbot became the active app: NO (PASS)` per interaction.
+2. **Click-through.** Click, scroll and drag right next to the pet. Everything must reach the app below. Hover a text field beside the pet: the I-beam cursor must not flicker.
+3. **Drag.** Drag the pet fast and drop it in mid-air: it follows smoothly and falls onto the Dock. Switch desktops (⌃→): the pet is there and grabbable.
+4. **Fullscreen.**
+   - Put an app into native fullscreen: the pet must be gone, and a click where it stood reaches the app.
+   - Repeat in Split View.
+   - Press ⌥⌘B twice there.
+   - Launch Bitbot while a fullscreen Space is active.
+5. **Level.** The pet stays under the Dock, the menu bar, Spotlight and Notification Center. Another app's floating panel (TextEdit's Fonts panel) over the pet stays clickable.
+6. **Screenshot picker.** Press ⌘⇧4 then Space: the picker still selects app windows, not a screen-sized Bitbot window.
+7. **Tray.** The menu works with another app frontmost; Hide/Show, ⌥⌘B and Quit work.
+
+**If check 1 fails** (a click activates Bitbot): A2 doesn't help, since it also needs a panel. Replace the grab area with a real non-activating NSPanel owned by bitbot-helper. Main's cursor stream does the hit test and the helper forwards presses; PetInteraction and hitArea stay.
+
+**If check 4 fails for the overlay itself:** hide it on the helper's `frontmostFullscreen` / `spaceChanged` signals, which brings the M8 fade forward.
+
+## Spike A analysis (2026-10-06)
+
+Kept as measured during the spike. Where it says "unverified" or "pending", see Evidence (Milestone 1) above.
+
+### Why B over A
 
 §5.2 prefers A "if smooth" because it expected A to be cheaper and B to cost more to composite. Neither held:
 
@@ -58,7 +168,7 @@ If manual check 1 fails, the fallback is a truly non-activating native `NSPanel`
 - **The bubble** must be covered by the hit window, because it is clickable (§9.4).
 - **Displays:** one overlay per display. In Phase 1 there is only a primary-display overlay, so a pet dragged toward another display clips at the edge until it teleports back (§8.7).
 
-## How it was measured
+### How it was measured
 
 - **Code:** harness in `src/main/spike/overlay/*` and `src/renderer/spike/overlay/*`; benchmark `spikes/run-overlay-bench.sh`; analysis `spikes/analysis/*`. Raw results are in `spike-results/bench-final/`, `fps*/` and `fpsfix*/`, which git ignores; the tables below summarize them.
 - **Pipeline:** every variant runs the production shape from §5.1. A fixed-step 30 Hz sim in main owns the pet's position, presentation is interpolated one step behind, and the pet renders every frame (worst case).
@@ -82,7 +192,7 @@ If manual check 1 fails, the fallback is a truly non-activating native `NSPanel`
 - **Conditions:** battery power (Low Power Mode off); about **1–3 cores of other load** besides WindowServer's ≈0.4 core. Repeats of the same configuration differed by at most 1.35×. Effects such as macOS moving threads to efficiency cores are an unquantified risk.
 - **Compare variants with each other,** not with §11. §11's budgets are for an M1-class Mac, and these numbers come from an M4 on battery under load; those two effects pull in opposite directions.
 
-## Results (medians of 3 runs; CPU in % of one core)
+### Results (medians of 3 runs; CPU in % of one core)
 
 | Variant | Mode | CPU total | Main | Renderer | GPU proc | Memory MB | GPU % (system) | WindowServer % |
 |---|---|---|---|---|---|---|---|---|
@@ -103,7 +213,7 @@ If manual check 1 fails, the fallback is a truly non-activating native `NSPanel`
 
 Static medians are within noise of each other for A1, A2 and B (22.5–24.8%).
 
-### Window motion as the window server saw it (A only; 3 runs each)
+#### Window motion as the window server saw it (A only; 3 runs each)
 
 The figures are the % of moving frames with no window update, shown as "best alignment / average over alignments". Best alignment is a lower bound. The probe can't see the display's real vsync phase.
 
@@ -116,7 +226,7 @@ The figures are the % of moving frames with no window update, shown as "best ali
 - **Longest gap** without a move: 36–47 ms in every A run (one or two missed frames, depending on phase).
 - **A1's timer** runs at 60.000 Hz against the display's ≈60.0024 Hz, so its phase should drift through every alignment about every 7 minutes. *Derived from the rates, not observed: each probe run covered 17 s.*
 
-## Render rate vs cost (static pet; A2 and B)
+### Render rate vs cost (static pet; A2 and B)
 
 The §11 budget (< 3% roaming, < 1% asleep/hidden) depends far more on frame rate than on A vs B.
 
@@ -139,7 +249,7 @@ The §11 budget (< 3% roaming, < 1% asleep/hidden) depends far more on frame rat
   - So "the Electron/Chromium frame pipeline dominates" is likely but not proven.
   - Why low frame rates cost more per frame is also untested.
 
-## Interactive properties
+### Interactive properties
 
 These come from Electron 44's sources and docs plus automated checks; the click and focus parts are unverified.
 
@@ -156,7 +266,7 @@ These come from Electron 44's sources and docs plus automated checks; the click 
 - **Mission Control.** `hiddenInMissionControl` (Transient collection behaviour).
 - **Dock icon.** `setVisibleOnAllWorkspaces` needs `skipTransformProcessType: true`. Without it Electron transforms the process type and the agent app gets a Dock icon.
 
-## Risk to raise now: §11's budget vs "feels alive"
+### Risk to raise now: §11's budget vs "feels alive"
 
 §11 asks for under 3% average while roaming, and also for 30 fps idle and 60 fps moving.
 
@@ -172,37 +282,4 @@ These come from Electron 44's sources and docs plus automated checks; the click 
 
 **Recommendation: (c).** Re-measure on AC power with other apps closed before treating any absolute number as final.
 
-## Follow-ups for M1 (if you approve B)
-
-1. **Check 1 (focus) first.** If it fails, stop and redesign the hit window (native `NSPanel`).
-2. **Build the hit window and measure it:**
-   - process sharing via `window.open`;
-   - main CPU and lag while it tracks a walking pet with the cursor near;
-   - extra memory;
-   - drag latency.
-
-   Fall back to A2 if it lags or costs more than A.
-3. **Make the overlay a non-panel window** and confirm macOS hides it on fullscreen Spaces and in Split View.
-4. **Carry over the spike's pieces:** interpolation, device-pixel snapping and the click-through safety net.
-
-## Manual checks
-
-Each takes about 2 minutes. Start with:
-
-```sh
-cd ~/BitBot && npm run build
-env -u ELECTRON_RUN_AS_NODE node_modules/.bin/electron . --spike=overlay --variant=B --mode=interactive --duration=0
-```
-
-Press Ctrl+C once to stop. These checks run on **plain B**, the spike's version, so they don't cover the hit window, which doesn't exist yet. The focus result applies to any `panel` window, including the hit window.
-
-1. **Focus (the gate).** Click into TextEdit so it is frontmost with a caret. Then click, drag and right-click the pet, and type right away: the text must land in TextEdit.
-   - The terminal prints `… -> Bitbot became the active app: NO (PASS)` per interaction.
-   - Repeat with `--window-type=none` to compare.
-2. **Click-through:** click and scroll in the app right next to the pet; everything must reach that app.
-3. **Smoothness:** run A2 and B one after the other in `--mode=walk`, `--mode=synthetic` and `--mode=follow` (move the mouse fast). Any hitches or uneven speed in either?
-4. **Fullscreen:** put an app into native fullscreen and switch to its Space, then try Split View.
-   - With the default panel window, the pet **stays visible**: expected, since panels join fullscreen Spaces.
-   - Then repeat with `--window-type=none`: the pet should disappear.
-5. **Level:** the pet stays under Spotlight (⌘Space), Notification Center, the menu bar and the Dock.
-6. **Screenshot picker:** press ⌘⇧4 then Space and hover over app windows. Does the picker still select them, or does it pick Bitbot's display-sized overlay?
+**Decided 2026-10-07: (c).** The user approved prototyping an event-driven idle in M2. M1 already renders on demand: 0 frames while the pet stands still.
