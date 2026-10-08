@@ -596,7 +596,19 @@ export const tuning = {
   /** Dev tools (not shipped behaviour). */
   dev: {
     /** The developer panel window (§14.1, dev builds): its size, pt, and how often its status refreshes, ms. */
-    panel: { width: 380, height: 720, statusIntervalMs: 1000 },
+    panel: {
+      width: 380,
+      height: 720,
+      statusIntervalMs: 1000,
+      /**
+       * The Economy section (M5): decimal places per column of the currency table (credited can be fractional, payouts
+       * are small: 0.02 a key), and the break the "Break" button injects until changed, minutes.
+       */
+      economy: {
+        decimals: { raw: 0, credited: 1, earned: 2, multiplier: 2, lifetime: 2, wallet: 2, share: 0, rhythm: 2, nutrition: 1 },
+        breakDefaultMin: 10,
+      },
+    },
     /**
      * The overlay's debug view of the world (§14.1, the dev panel's "Show world"): line colours and widths, CSS px.
      * Eligible windows thin, walkable segments and climbable walls thick, moves between surfaces thin and dashed
