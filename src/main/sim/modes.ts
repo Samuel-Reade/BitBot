@@ -7,9 +7,13 @@
 // - Where a spot is now (spotPoint): a screen spot is its point; an app spot is on the app's frontmost visible window,
 //   or, while the app has none, its fallback spot (else the default home), returning when the window reappears.
 // - Stay remembers where it keeps the pet (the drop point, §10.4: "the drop location becomes the new stay location").
+// - Settings (§15.4, M8): rename a spot, and choose the default home: a screen spot (an app spot can't be one: an app
+//   spot without its window goes to the default home, §10.3), or none (the middle of the Dock). An app spot without
+//   its window and without a fallback of its own goes to the default home spot.
 
 import type { PetArea, Point } from '../../shared/geometry'
 import { DEFAULT_MODE_SETTINGS, type HangoutSpot, type ModeSettings, type PetMode } from '../../shared/modes'
+import { cleanSpotName } from '../../shared/settingsProtocol'
 
 /** What a spot's point needs from the world. */
 export interface SpotLookup {
@@ -139,19 +143,46 @@ export class ModeState {
     }
   }
 
+  /** Renames a spot (settings): the name trimmed, 1–tuning.settingsWindow.spotNameMax characters. False: no such spot or a bad name. */
+  renameSpot(id: string, name: string): boolean {
+    const clean = cleanSpotName(name)
+    const spot = this.s.hangouts.find((h) => h.id === id)
+    if (clean === null || !spot) return false
+    spot.name = clean
+    return true
+  }
+
+  /** The default home (settings): a screen spot, or null for the middle of the Dock. False (unchanged): no such screen spot. */
+  setDefaultHome(id: string | null): boolean {
+    if (id !== null && !this.s.hangouts.some((h) => h.id === id && h.kind === 'screen')) return false
+    this.s.defaultHomeId = id
+    return true
+  }
+
+  /** The default home spot (a screen spot); null: none chosen (the middle of the Dock). */
+  get defaultHomeSpot(): Extract<HangoutSpot, { kind: 'screen' }> | null {
+    return this.s.hangouts.find((h): h is Extract<HangoutSpot, { kind: 'screen' }> => h.id === this.s.defaultHomeId && h.kind === 'screen') ?? null
+  }
+
+  /** Where the default home is: its spot's point, else lookup.defaultHome (settings' "Reset position" goes here). */
+  defaultHomePoint(lookup: SpotLookup): Point {
+    const spot = this.defaultHomeSpot
+    return spot ? { x: spot.x, y: spot.y } : { ...lookup.defaultHome }
+  }
+
   /** Where `spot` is now (see the header). */
   spotPoint(spot: HangoutSpot, lookup: SpotLookup): SpotPlace {
     if (spot.kind === 'screen') return { point: { x: spot.x, y: spot.y }, fallback: false }
     const onApp = lookup.appSpot(spot.bundleId, spot.relativeX)
     if (onApp) return { point: onApp, fallback: false }
     const fb = spot.fallbackId ? this.s.hangouts.find((h) => h.id === spot.fallbackId && h.kind === 'screen') : undefined
-    return { point: fb && fb.kind === 'screen' ? { x: fb.x, y: fb.y } : { ...lookup.defaultHome }, fallback: true }
+    return { point: fb && fb.kind === 'screen' ? { x: fb.x, y: fb.y } : this.defaultHomePoint(lookup), fallback: true }
   }
 
   /** Where "Go home" goes (§10.4): the active spot, else the default home spot, else the default home point. */
   home(lookup: SpotLookup): Point {
-    const spot = this.active ?? this.s.hangouts.find((h) => h.id === this.s.defaultHomeId) ?? null
-    return spot ? this.spotPoint(spot, lookup).point : { ...lookup.defaultHome }
+    const spot = this.active
+    return spot ? this.spotPoint(spot, lookup).point : this.defaultHomePoint(lookup)
   }
 
   private activate(id: string): void {

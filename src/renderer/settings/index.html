@@ -2,10 +2,714 @@
 <html>
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:" />
-    <title>Bitbot</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
+    />
+    <title>Bitbot Settings</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #1d1d1f;
+        --muted: #6e6e73;
+        --faint: #8e8e93;
+        --line: rgba(0, 0, 0, 0.08);
+        --window: #ececec;
+        --sidebar: #e3e3e6;
+        --group: #ffffff;
+        --group-line: rgba(0, 0, 0, 0.06);
+        --control: #ffffff;
+        --control-line: rgba(0, 0, 0, 0.16);
+        --segment-bg: rgba(0, 0, 0, 0.06);
+        --segment-on: #ffffff;
+        --accent: #007aff;
+        --accent-fg: #ffffff;
+        --nav-on: rgba(0, 0, 0, 0.1);
+        --danger: #d70015;
+        --warn-bg: rgba(255, 149, 0, 0.12);
+        --warn: #b25000;
+        --ok: #28a745;
+        --off: #ff9500;
+        --switch-off: rgba(0, 0, 0, 0.12);
+        --shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.25);
+        --backdrop: rgba(0, 0, 0, 0.18);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #f5f5f7;
+          --muted: #a1a1a6;
+          --faint: #7c7c80;
+          --line: rgba(255, 255, 255, 0.08);
+          --window: #1e1e1e;
+          --sidebar: #2a2a2c;
+          --group: #2c2c2e;
+          --group-line: rgba(255, 255, 255, 0.06);
+          --control: #4a4a4c;
+          --control-line: rgba(255, 255, 255, 0.12);
+          --segment-bg: rgba(255, 255, 255, 0.08);
+          --segment-on: #6b6b6f;
+          --accent: #0a84ff;
+          --nav-on: rgba(255, 255, 255, 0.1);
+          --danger: #ff453a;
+          --warn-bg: rgba(255, 159, 10, 0.14);
+          --warn: #ffb340;
+          --ok: #32d74b;
+          --off: #ff9f0a;
+          --switch-off: rgba(255, 255, 255, 0.16);
+          --shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.6);
+          --backdrop: rgba(0, 0, 0, 0.4);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font: 13px/1.35 -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+        color: var(--fg);
+        background: var(--window);
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: default;
+      }
+      body {
+        display: grid;
+        grid-template-columns: 172px 1fr;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+        color: inherit;
+      }
+
+      /* ── sidebar ── */
+      nav {
+        background: var(--sidebar);
+        border-right: 1px solid var(--line);
+        padding: 14px 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      nav button {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 5px 8px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        text-align: left;
+      }
+      nav button[aria-current='page'] {
+        background: var(--nav-on);
+        font-weight: 500;
+      }
+      nav .icon {
+        display: inline-grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 5px;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+        flex: none;
+      }
+      nav .icon svg {
+        width: 13px;
+        height: 13px;
+      }
+
+      /* ── content ── */
+      main {
+        overflow-y: auto;
+        padding: 18px 22px 28px;
+      }
+      section[hidden] {
+        display: none;
+      }
+      h1 {
+        font-size: 17px;
+        font-weight: 600;
+        margin: 0 0 14px;
+      }
+      h2 {
+        font-size: 13px;
+        font-weight: 600;
+        margin: 18px 0 6px 2px;
+      }
+      h1 + h2 {
+        margin-top: 0;
+      }
+      .group {
+        background: var(--group);
+        border: 1px solid var(--group-line);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 9px 12px;
+        min-height: 40px;
+      }
+      .row + .row,
+      .sub + .row {
+        border-top: 1px solid var(--line);
+      }
+      .row > .text {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: none;
+      }
+      .note {
+        color: var(--muted);
+        font-size: 11px;
+        margin: 6px 4px 0;
+      }
+      .sub {
+        padding: 0 12px 9px;
+      }
+      .problem {
+        color: var(--warn);
+        background: var(--warn-bg);
+        border-radius: 6px;
+        padding: 5px 8px;
+        font-size: 11px;
+      }
+      .banner {
+        margin: 0 0 12px;
+      }
+
+      /* push buttons */
+      .btn {
+        padding: 2px 10px;
+        min-height: 22px;
+        border-radius: 6px;
+        border: 0.5px solid var(--control-line);
+        background: var(--control);
+        box-shadow: var(--shadow);
+      }
+      .btn:active:not(:disabled) {
+        filter: brightness(0.92);
+      }
+      .btn:disabled {
+        opacity: 0.45;
+      }
+      .btn.primary {
+        background: var(--accent);
+        color: var(--accent-fg);
+        border-color: transparent;
+      }
+      .btn.danger {
+        color: var(--danger);
+      }
+      .btn.danger.filled {
+        background: var(--danger);
+        color: #fff;
+        border-color: transparent;
+      }
+      .link {
+        border: 0;
+        background: none;
+        color: var(--accent);
+        padding: 0 2px;
+      }
+      .link:disabled {
+        color: var(--faint);
+      }
+      .link.danger {
+        color: var(--danger);
+      }
+
+      /* text field */
+      input[type='text'] {
+        width: 180px;
+        padding: 3px 7px;
+        border-radius: 5px;
+        border: 0.5px solid var(--control-line);
+        background: var(--control);
+        box-shadow: inset 0 0.5px 1px rgba(0, 0, 0, 0.08);
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      input[type='text']:focus {
+        outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+        outline-offset: 0;
+      }
+      .field-error {
+        color: var(--danger);
+        font-size: 11px;
+      }
+
+      /* switch */
+      input.switch {
+        appearance: none;
+        -webkit-appearance: none;
+        position: relative;
+        width: 32px;
+        height: 18px;
+        margin: 0;
+        border-radius: 9px;
+        background: var(--switch-off);
+        transition: background 0.15s;
+        flex: none;
+      }
+      input.switch::after {
+        content: '';
+        position: absolute;
+        top: 1px;
+        left: 1px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 0.5px 2px rgba(0, 0, 0, 0.35);
+        transition: transform 0.15s;
+      }
+      input.switch:checked {
+        background: var(--accent);
+      }
+      input.switch:checked::after {
+        transform: translateX(14px);
+      }
+      input.switch:disabled {
+        opacity: 0.45;
+      }
+
+      /* segmented control */
+      .segmented {
+        display: inline-flex;
+        padding: 2px;
+        gap: 2px;
+        border-radius: 7px;
+        background: var(--segment-bg);
+      }
+      .segmented button {
+        min-width: 44px;
+        padding: 2px 10px;
+        border: 0;
+        border-radius: 5px;
+        background: transparent;
+      }
+      .segmented button[aria-pressed='true'] {
+        background: var(--segment-on);
+        box-shadow: var(--shadow);
+        font-weight: 500;
+      }
+      .segmented button:disabled {
+        color: var(--faint);
+      }
+      select {
+        padding: 2px 6px;
+        border-radius: 5px;
+        border: 0.5px solid var(--control-line);
+        background: var(--control);
+        max-width: 200px;
+      }
+
+      /* palette swatches */
+      .swatches {
+        display: flex;
+        gap: 12px;
+      }
+      .swatch {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        border: 0;
+        background: none;
+        padding: 0;
+        font-size: 11px;
+        color: var(--muted);
+        width: 46px;
+      }
+      .swatch .dot {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        border: 2px solid var(--outline);
+        background: var(--fill);
+        box-shadow: 0 0 0 2px var(--group), 0 0 0 4px transparent;
+      }
+      .swatch[aria-pressed='true'] .dot {
+        box-shadow: 0 0 0 2px var(--group), 0 0 0 4px var(--accent);
+      }
+      .swatch[aria-pressed='true'] {
+        color: var(--fg);
+      }
+
+      /* slider */
+      .slider {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 220px;
+      }
+      .slider span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      input[type='range'] {
+        flex: 1;
+        accent-color: var(--accent);
+      }
+
+      /* keycaps / hotkeys */
+      .keys {
+        min-width: 86px;
+        padding: 2px 8px;
+        border-radius: 5px;
+        border: 0.5px solid var(--control-line);
+        background: var(--control);
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.04em;
+      }
+      .keys.broken {
+        text-decoration: line-through;
+        color: var(--muted);
+      }
+      .keys.recording {
+        border-color: var(--accent);
+        outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+        color: var(--muted);
+        letter-spacing: 0;
+      }
+
+      /* lists */
+      ul.plain {
+        margin: 0;
+        padding: 4px 12px 8px 30px;
+      }
+      ul.plain li {
+        padding: 2px 0;
+      }
+      .badge {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 0 6px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 16px;
+        color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+        vertical-align: 1px;
+      }
+      .badge.gray {
+        color: var(--muted);
+        background: var(--segment-bg);
+      }
+      .apps {
+        max-height: 180px;
+        overflow-y: auto;
+      }
+      .apps .row {
+        min-height: 32px;
+        padding: 5px 12px;
+      }
+      .apps .bundle {
+        color: var(--muted);
+        font-size: 11px;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      .empty {
+        color: var(--muted);
+        padding: 10px 12px;
+      }
+      .status {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+      }
+      .status .light {
+        flex: none;
+        width: 8px;
+        height: 8px;
+        margin-top: 4px;
+        border-radius: 50%;
+        background: var(--faint);
+      }
+      .status .light.ok {
+        background: var(--ok);
+      }
+      .status .light.off {
+        background: var(--off);
+      }
+      .spot-rename {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      /* about */
+      .about {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 4px;
+        padding: 28px 0 8px;
+      }
+      .about .name {
+        font-size: 20px;
+        font-weight: 600;
+        margin-top: 8px;
+      }
+
+      /* the in-page confirm (never a dialog of its own) */
+      .sheet-backdrop {
+        position: fixed;
+        inset: 0;
+        background: var(--backdrop);
+        display: grid;
+        place-items: start center;
+        padding-top: 70px;
+      }
+      .sheet-backdrop[hidden] {
+        display: none;
+      }
+      .sheet {
+        width: 340px;
+        padding: 18px 18px 14px;
+        border-radius: 12px;
+        background: var(--group);
+        border: 1px solid var(--group-line);
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+      }
+      .sheet h3 {
+        margin: 0 0 6px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .sheet p {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .sheet .controls {
+        justify-content: flex-end;
+      }
+      #error {
+        margin: 0 0 12px;
+      }
+    </style>
   </head>
   <body>
-    <!-- Placeholder: the M8 page goes here. -->
+    <nav id="nav" aria-label="Settings sections"></nav>
+    <main>
+      <p id="error" class="problem" hidden></p>
+      <p id="notice" class="problem banner" hidden></p>
+
+      <section id="sec-pet" data-section="pet">
+        <h1>Pet</h1>
+        <div class="group">
+          <div class="row">
+            <label class="text" for="name">
+              <span>Name</span>
+              <span id="name-error" class="field-error" hidden></span>
+            </label>
+            <div class="controls"><input id="name" type="text" spellcheck="false" autocomplete="off" /></div>
+          </div>
+          <div class="row">
+            <div class="text"><span>Color</span></div>
+            <div class="controls"><div id="swatches" class="swatches" role="group" aria-label="Color"></div></div>
+          </div>
+          <div class="row">
+            <div class="text">
+              <span>Size</span>
+            </div>
+            <div class="controls"><div id="size" class="segmented" role="group" aria-label="Size"></div></div>
+          </div>
+        </div>
+        <h2>Position</h2>
+        <div class="group">
+          <div class="row">
+            <div class="text">
+              <span>Reset position</span>
+              <span id="reset-hint" class="hint">Puts Bitbot back at its home.</span>
+            </div>
+            <div class="controls"><button id="reset-position" class="btn" type="button">Reset position</button></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-behavior" data-section="behavior" hidden>
+        <h1>Behavior</h1>
+        <div class="group">
+          <div class="row">
+            <div class="text">
+              <span>Default mode</span>
+              <span class="hint">Bitbot starts in this mode too.</span>
+            </div>
+            <div class="controls"><div id="mode" class="segmented" role="group" aria-label="Default mode"></div></div>
+          </div>
+          <div class="row" id="mode-spot-row">
+            <div class="text">
+              <span>Hangout spot</span>
+              <span id="mode-spot-hint" class="hint"></span>
+            </div>
+            <div class="controls"><select id="mode-spot" aria-label="Hangout spot"></select></div>
+          </div>
+          <div class="row">
+            <div class="text">
+              <span>Restlessness</span>
+              <span class="hint">How often it gets up to do things.</span>
+            </div>
+            <div class="controls">
+              <div class="slider">
+                <span>Calm</span>
+                <input id="restlessness" type="range" min="0" max="1" aria-label="Restlessness" />
+                <span>Restless</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h2>Hangout spots</h2>
+        <div class="group" id="spots"></div>
+        <p class="note">Make a spot by dragging Bitbot somewhere and choosing “Hang out here” from its right-click menu.</p>
+
+        <h2>Hiding</h2>
+        <div class="group">
+          <div class="row">
+            <label class="text" for="hide-fullscreen"><span>Hide during fullscreen apps</span></label>
+            <input id="hide-fullscreen" class="switch" type="checkbox" />
+          </div>
+          <div class="row">
+            <label class="text" for="hide-sharing">
+              <span>Hide when screen sharing</span>
+              <span class="hint">Coming later</span>
+            </label>
+            <input id="hide-sharing" class="switch" type="checkbox" disabled />
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-controls" data-section="controls" hidden>
+        <h1>Controls</h1>
+        <h2>Hotkeys</h2>
+        <div class="group" id="hotkeys"></div>
+        <p class="note">Hotkeys work in every app. To change one, click Record and press the new combination (Esc cancels).</p>
+        <h2>Mouse</h2>
+        <div class="group">
+          <div class="row">
+            <label class="text" for="alt-cmd-click">
+              <span>⌥⌘-click sends Bitbot there</span>
+              <span id="alt-cmd-hint" class="hint">Needs Input Monitoring. The click itself still goes to the app underneath.</span>
+            </label>
+            <input id="alt-cmd-click" class="switch" type="checkbox" />
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-privacy" data-section="privacy" hidden>
+        <h1>Privacy</h1>
+        <h2>Permission</h2>
+        <div class="group">
+          <div class="row">
+            <div class="status">
+              <span id="perm-light" class="light"></span>
+              <span id="perm-text"></span>
+            </div>
+            <div class="controls"><button id="perm-turn-on" class="btn" type="button">Turn on…</button></div>
+          </div>
+        </div>
+
+        <h2>What Bitbot counts</h2>
+        <div class="group"><ul id="counted" class="plain"></ul></div>
+        <h2>What Bitbot never sees</h2>
+        <div class="group"><ul id="never" class="plain"></ul></div>
+        <p id="network" class="note"></p>
+
+        <h2>Apps Bitbot has seen opened</h2>
+        <div class="group apps" id="apps"></div>
+        <p class="note">Only the app’s name and when it was last opened, for the treats a new app brings. Never what is in it.</p>
+
+        <h2>Your data</h2>
+        <div class="group">
+          <div class="row">
+            <div class="text">
+              <span>Erase all Bitbot data</span>
+              <span class="hint">Your pet, its progress, your settings, spots and the apps list. Bitbot starts over.</span>
+            </div>
+            <div class="controls"><button id="erase" class="btn danger" type="button">Erase…</button></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-general" data-section="general" hidden>
+        <h1>General</h1>
+        <div class="group">
+          <div class="row">
+            <label class="text" for="login">
+              <span>Open Bitbot when you log in</span>
+              <span id="login-hint" class="hint" hidden>Only in the installed app</span>
+            </label>
+            <input id="login" class="switch" type="checkbox" />
+          </div>
+          <div class="row">
+            <label class="text" for="sound">
+              <span>Sound</span>
+              <span class="hint">Coming later</span>
+            </label>
+            <input id="sound" class="switch" type="checkbox" disabled />
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-about" data-section="about" hidden>
+        <h1>About</h1>
+        <div class="group">
+          <div class="about">
+            <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true">
+              <rect x="6" y="8" width="44" height="36" rx="9" fill="#7FD1C7" stroke="#2C5F5A" stroke-width="2.5" />
+              <rect x="13" y="14" width="30" height="22" rx="5" fill="#1f3b38" />
+              <rect x="20" y="21" width="4" height="6" rx="1" fill="#9BF2D8" />
+              <rect x="32" y="21" width="4" height="6" rx="1" fill="#9BF2D8" />
+              <path d="M24 31 q4 3 8 0" stroke="#9BF2D8" stroke-width="2" fill="none" stroke-linecap="round" />
+              <rect x="18" y="44" width="6" height="6" rx="2" fill="#5FB8AD" />
+              <rect x="32" y="44" width="6" height="6" rx="2" fill="#5FB8AD" />
+            </svg>
+            <div class="name">Bitbot</div>
+            <div id="version" class="hint"></div>
+            <p class="hint">A little creature that lives on your screen.<br />It never connects to the internet.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="confirm" class="sheet-backdrop" hidden>
+      <div class="sheet" role="alertdialog" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+        <h3 id="confirm-title">Erase all Bitbot data?</h3>
+        <p id="confirm-text"></p>
+        <div class="controls">
+          <button id="confirm-cancel" class="btn" type="button">Cancel</button>
+          <button id="confirm-erase" class="btn danger filled" type="button">Erase Everything</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="./main.ts"></script>
   </body>
 </html>

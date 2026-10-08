@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { HelperClient } from '../src/main/helper/helperClient'
-import { Hotkeys, type ShortcutRegistry } from '../src/main/hotkeys'
+import { Hotkeys, rebindNotice, type ShortcutRegistry } from '../src/main/hotkeys'
 import { petContextMenuTemplate } from '../src/main/menus/petContextMenu'
 import { alphaToBgra, TRAY_ICON_PT, trayIconAlpha } from '../src/main/menus/trayIcon'
 import { formatToday, formatWhole, trayMenuTemplate } from '../src/main/menus/trayMenu'
@@ -307,6 +307,19 @@ describe('trayMenuTemplate', () => {
     expect(reminder(trayMenuTemplate({ visible: true, toggleAccelerator: null }, { ...actions(), ...on }))).toBe(false)
     expect(reminder(trayMenuTemplate({ visible: true, toggleAccelerator: null, inputMonitoringOff: true }, actions()))).toBe(false)
   })
+
+  it('Settings… comes after the Input Monitoring reminder and before Developer… when given (§15.2, M8), and calls it', () => {
+    const a = actions()
+    let opened = 0
+    const items = trayMenuTemplate(
+      { visible: true, toggleAccelerator: null, inputMonitoringOff: true },
+      { ...a, developer: () => {}, turnOnInputMonitoring: () => {}, settings: () => opened++ },
+    )
+    expect(labels(items)).toEqual(['Bitbot', 'separator', 'Hide Bitbot', 'separator', 'Input Monitoring is off — Turn on…', 'Settings…', 'Developer…', 'Quit Bitbot'])
+    click(items[5])
+    expect(opened).toBe(1)
+    expect(trayMenuTemplate({ visible: true, toggleAccelerator: null }, actions()).some((item) => item.label === 'Settings…')).toBe(false)
+  })
 })
 
 describe('trayMenuTemplate Mode ▸ (§15.2, M7)', () => {
@@ -362,6 +375,19 @@ describe('trayMenuTemplate Mode ▸ (§15.2, M7)', () => {
     press(list[0])
     press(list[3])
     expect(calls).toEqual(['spot:spot-1', 'forget:spot-2'])
+  })
+
+  it('ends with Manage spots… when given (§15.2, M8: opens settings), and calls it', () => {
+    let managed = 0
+    const items = trayMenuTemplate(
+      { visible: true, toggleAccelerator: null, mode: { current: 'roam', spots: [], activeSpotId: null } },
+      { toggleVisible: () => {}, quit: () => {}, setMode: () => {}, manageSpots: () => managed++ },
+    ) as Item[]
+    const sub = (items.find((i) => i.label === 'Mode')?.submenu ?? []) as Item[]
+    expect(sub.map((i) => i.type ?? i.label)).toEqual(['radio', 'radio', 'Hang out', 'separator', 'Manage spots…'])
+    press(sub[4])
+    expect(managed).toBe(1)
+    expect(setup({ current: 'roam', spots: [], activeSpotId: null }).sub.some((i) => i.label === 'Manage spots…')).toBe(false)
   })
 
   it('in Roam no spot is checked even if one was active before', () => {
@@ -434,6 +460,18 @@ describe('petContextMenuTemplate', () => {
     press(items[2])
     press(items[3])
     expect(calls).toEqual(['here', 'app'])
+  })
+
+  it('Settings… comes last, after Hide, when given (§15.3, M8)', () => {
+    let opened = 0
+    const noop = (): void => undefined
+    const items = petContextMenuTemplate(
+      { mode: 'roam', onApp: null },
+      { pet: noop, stayHere: noop, roam: noop, hangOutHere: noop, hangOutOnApp: noop, goHome: noop, hide: noop, settings: () => opened++ },
+    )
+    expect(items.map((item) => item.type ?? item.label)).toEqual(['Pet', 'Stay here', 'Hang out here', 'Go home', 'separator', 'Hide', 'Settings…'])
+    press(items[6])
+    expect(opened).toBe(1)
   })
 })
 
@@ -537,5 +575,121 @@ describe('Hotkeys', () => {
     }
     expect(() => hotkeys.unregisterAll()).not.toThrow()
     expect(hotkeys.accelerator('toggleVisible')).toBeNull()
+  })
+
+  describe('rebind (the settings window, §15.4)', () => {
+    const setup = () => {
+      const registry = new FakeRegistry()
+      const hotkeys = new Hotkeys(registry)
+      const pressed: string[] = []
+      hotkeys.register({
+        toggleVisible: () => pressed.push('toggle'),
+        comeHere: () => pressed.push('come'),
+        goHome: () => pressed.push('home'),
+        toggleStay: () => pressed.push('stay'),
+      })
+      registry.calls.length = 0
+      return { registry, hotkeys, pressed }
+    }
+
+    it('moves an action to a new combination: the old one is unregistered, the new one calls the same handler', () => {
+      const { registry, hotkeys, pressed } = setup()
+      expect(hotkeys.rebind('toggleVisible', 'Control+Alt+P')).toEqual({ ok: true, accelerator: 'Control+Alt+P' })
+      expect(registry.calls).toEqual(['unregister Alt+Command+B', 'register Control+Alt+P'])
+      registry.press('Alt+Command+B')
+      registry.press('Control+Alt+P')
+      expect(pressed).toEqual(['toggle'])
+      expect(hotkeys.accelerator('toggleVisible')).toBe('Control+Alt+P')
+      expect(hotkeys.bindings().toggleVisible).toBe('Control+Alt+P')
+      expect(hotkeys.statuses().toggleVisible).toEqual({ accelerator: 'Control+Alt+P', registered: true })
+    })
+
+    it('stores the canonical spelling', () => {
+      const { hotkeys } = setup()
+      expect(hotkeys.rebind('goHome', 'Cmd+Option+j')).toEqual({ ok: true, accelerator: 'Alt+Command+J' })
+      expect(hotkeys.bindings().goHome).toBe('Alt+Command+J')
+    })
+
+    it('refuses another Bitbot action’s combination (in any spelling) without touching the registry', () => {
+      const { registry, hotkeys } = setup()
+      expect(hotkeys.rebind('toggleVisible', 'Command+Alt+H')).toEqual({ ok: false, reason: 'conflict', accelerator: 'Alt+Command+H', conflictsWith: 'goHome' })
+      expect(registry.calls).toEqual([])
+      expect(hotkeys.bindings().toggleVisible).toBe(DEFAULT_HOTKEYS.toggleVisible)
+    })
+
+    it('a combination another app owns: the old binding is registered again and kept', () => {
+      const { registry, hotkeys, pressed } = setup()
+      registry.owners.add('Command+Space')
+      expect(hotkeys.rebind('toggleStay', 'Command+Space')).toEqual({ ok: false, reason: 'taken', accelerator: 'Command+Space' })
+      expect(registry.calls).toEqual(['unregister Alt+Command+S', 'register Command+Space', 'register Alt+Command+S'])
+      expect(hotkeys.statuses().toggleStay).toEqual({ accelerator: 'Alt+Command+S', registered: true })
+      registry.press('Alt+Command+S')
+      expect(pressed).toEqual(['stay'])
+    })
+
+    it('a registry that throws counts as taken', () => {
+      const { registry, hotkeys } = setup()
+      registry.fails.set('Control+Alt+X', 'throw')
+      expect(hotkeys.rebind('comeHere', 'Control+Alt+X')).toMatchObject({ ok: false, reason: 'taken' })
+      expect(hotkeys.accelerator('comeHere')).toBe(DEFAULT_HOTKEYS.comeHere)
+    })
+
+    it('an action that failed to register can be moved to a free combination, and then works', () => {
+      const registry = new FakeRegistry()
+      registry.owners.add(DEFAULT_HOTKEYS.comeHere)
+      const hotkeys = new Hotkeys(registry)
+      let comes = 0
+      hotkeys.register({ comeHere: () => comes++ })
+      expect(hotkeys.statuses().comeHere).toEqual({ accelerator: DEFAULT_HOTKEYS.comeHere, registered: false })
+      registry.owners.add('Control+Alt+Y')
+      expect(hotkeys.rebind('comeHere', 'Control+Alt+Y')).toMatchObject({ ok: false, reason: 'taken' })
+      expect(hotkeys.statuses().comeHere).toEqual({ accelerator: DEFAULT_HOTKEYS.comeHere, registered: false })
+      expect(hotkeys.rebind('comeHere', 'Control+Alt+Z')).toEqual({ ok: true, accelerator: 'Control+Alt+Z' })
+      registry.press('Control+Alt+Z')
+      expect(comes).toBe(1)
+      expect(hotkeys.statuses().comeHere).toEqual({ accelerator: 'Control+Alt+Z', registered: true })
+    })
+
+    it('the same combination again changes nothing', () => {
+      const { registry, hotkeys } = setup()
+      expect(hotkeys.rebind('toggleVisible', 'Command+Alt+B')).toEqual({ ok: true, accelerator: 'Alt+Command+B' })
+      expect(registry.calls).toEqual([])
+    })
+
+    it('refuses what isn’t a combination, and an action that was never registered', () => {
+      const { hotkeys } = setup()
+      expect(hotkeys.rebind('toggleVisible', 'B')).toEqual({ ok: false, reason: 'invalid', accelerator: 'B' })
+      expect(hotkeys.rebind('toggleVisible', 'Shift+B')).toMatchObject({ ok: false, reason: 'invalid' })
+      const bare = new Hotkeys(new FakeRegistry())
+      expect(bare.rebind('goHome', 'Control+Alt+G')).toMatchObject({ ok: false, reason: 'noHandler' })
+    })
+
+    it('statuses() covers every action; bindings() are what to save', () => {
+      const registry = new FakeRegistry()
+      const hotkeys = new Hotkeys(registry, { ...DEFAULT_HOTKEYS, goHome: 'Control+Alt+H' })
+      hotkeys.register({ toggleVisible: () => undefined })
+      expect(hotkeys.statuses()).toEqual({
+        toggleVisible: { accelerator: 'Alt+Command+B', registered: true },
+        comeHere: { accelerator: 'Alt+Command+C', registered: false },
+        goHome: { accelerator: 'Control+Alt+H', registered: false },
+        toggleStay: { accelerator: 'Alt+Command+S', registered: false },
+      })
+      expect(hotkeys.bindings()).toEqual({ ...DEFAULT_HOTKEYS, goHome: 'Control+Alt+H' })
+    })
+
+    it('rebindNotice says what happened in words (null when it worked)', () => {
+      const { registry, hotkeys } = setup()
+      expect(rebindNotice('toggleVisible', { ok: true, accelerator: 'Control+Alt+P' }, hotkeys.statuses().toggleVisible)).toBeNull()
+      const conflict = hotkeys.rebind('toggleVisible', 'Alt+Command+H')
+      expect(rebindNotice('toggleVisible', conflict, hotkeys.statuses().toggleVisible)).toBe(
+        '⌥⌘H is already Bitbot’s “Go home” hotkey. Pick another, or change that one first.',
+      )
+      registry.owners.add('Command+Space')
+      const taken = hotkeys.rebind('toggleStay', 'Command+Space')
+      expect(rebindNotice('toggleStay', taken, hotkeys.statuses().toggleStay)).toBe(
+        '⌘Space is in use by another app or by macOS, so “Toggle Stay” stays on ⌥⌘S.',
+      )
+      expect(rebindNotice('toggleStay', taken, { accelerator: 'Alt+Command+S', registered: false })).toContain('has no working hotkey yet')
+    })
   })
 })
