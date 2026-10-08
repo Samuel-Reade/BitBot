@@ -1,9 +1,11 @@
 // The developer panel's page (BITBOT_SPEC.md §14.1, dev builds only; main side src/main/dev/devPanel.ts, messages in
 // src/shared/devPanel.ts). Milestone 2: force the pet's state, mood, dust, facing, face and idle style, and watch what
 // it does. Milestone 3: the world section (show the world's debug view, wander, send the pet somewhere, and what the
-// simulation sees). Vanilla TS over the sandboxed bridge: every control sends a debug:panel-set with the one field it
-// changes (the world buttons a debug:panel-action), and every debug:panel-status (validated) sets the controls and the
-// status blocks, so the page always shows main's overrides, never its own idea of them.
+// simulation sees). Milestone 5: the economy section (the currency table, diet, sparks, whether input is counted, and
+// buttons that inject activity; the pure part in ./economyView.ts). Vanilla TS over the sandboxed bridge: every control
+// sends a debug:panel-set with the one field it changes (the world buttons a debug:panel-action, the economy buttons a
+// debug:panel-inject), and every debug:panel-status (validated) sets the controls and the status blocks, so the page
+// always shows main's overrides, never its own idea of them.
 
 import {
   isDevOverrides,
@@ -13,6 +15,7 @@ import {
   type DevPanelStatus,
   type DevWorldStatus,
 } from '../../shared/devPanel'
+import type { DevInject, EconomySnapshot } from '../../shared/economy'
 import {
   EYES_STATES,
   FACE_OVERLAYS,
@@ -33,6 +36,7 @@ import {
   isMood,
   MOODS,
 } from '../../shared/types'
+import { breakInject, ECONOMY_INJECTS, economyDetails, economyRows, isEconomySnapshot } from './economyView'
 
 /** The value of every "the pet's own" choice. */
 const AUTO = 'auto'
@@ -81,7 +85,8 @@ function isDevPanelStatus(value: unknown): value is DevPanelStatus {
     typeof value['visible'] === 'boolean' &&
     isRate(value['rendersPerS']) &&
     isRate(value['framesPerS']) &&
-    (value['world'] === null || isDevWorldStatus(value['world']))
+    (value['world'] === null || isDevWorldStatus(value['world'])) &&
+    (value['economy'] === null || isEconomySnapshot(value['economy']))
   )
 }
 
@@ -233,6 +238,24 @@ const ACTION_BUTTONS: readonly (readonly [string, DevPanelAction])[] = [
 ]
 for (const [id, action] of ACTION_BUTTONS) element(id, HTMLButtonElement).addEventListener('click', () => sendAction(action))
 
+function sendInject(inject: DevInject): void {
+  try {
+    bridge.send(IPC.debugPanelInject, inject)
+  } catch (err) {
+    showError(`Could not send to Bitbot: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+for (const [id, inject] of ECONOMY_INJECTS) element(id, HTMLButtonElement).addEventListener('click', () => sendInject(inject))
+
+const breakMinutes = element('ec-break-min', HTMLInputElement)
+breakMinutes.value = String(tuning.dev.panel.economy.breakDefaultMin)
+element('ec-break', HTMLButtonElement).addEventListener('click', () => {
+  const inject = breakInject(Number(breakMinutes.value))
+  if (inject) sendInject(inject)
+  else showError('A break is a number of minutes (more than 0).')
+})
+
 element('reset', HTMLButtonElement).addEventListener('click', () => {
   const defaults: DevOverrides = { state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode: tuning.anim.idleMode, showWorld: false, wander: true }
   send(defaults)
@@ -285,6 +308,47 @@ function showWorldStatus(world: DevWorldStatus | null): void {
   wdGoal.textContent = world?.goal ? `${Math.round(world.goal.x)}, ${Math.round(world.goal.y)}` : none
 }
 
+/** The currency table's cells, one row per currency (CURRENCIES order), made once. */
+const ecRows = element('ec-rows', HTMLTableSectionElement)
+const ecCells = economyRows(null).map((row) => {
+  const tr = document.createElement('tr')
+  const name = document.createElement('td')
+  name.textContent = row.currency
+  const cells = row.cells.map((text) => {
+    const td = document.createElement('td')
+    td.textContent = text
+    return td
+  })
+  tr.append(name, ...cells)
+  ecRows.append(tr)
+  return cells
+})
+
+const ecDay = element('ec-day', HTMLElement)
+const ecDiet = element('ec-diet', HTMLElement)
+const ecRhythm = element('ec-rhythm', HTMLElement)
+const ecNutrition = element('ec-nutrition', HTMLElement)
+const ecSparks = element('ec-sparks', HTMLElement)
+const ecInput = element('ec-input', HTMLElement)
+
+/** The economy block; "—" everywhere before the economy starts. */
+function showEconomy(economy: EconomySnapshot | null): void {
+  economyRows(economy).forEach((row, i) => {
+    row.cells.forEach((text, j) => {
+      const td = ecCells[i]?.[j]
+      if (td) td.textContent = text
+    })
+  })
+  const details = economyDetails(economy)
+  ecDay.textContent = details.day
+  ecDiet.textContent = details.diet
+  ecRhythm.textContent = details.rhythm
+  ecNutrition.textContent = details.nutrition
+  ecSparks.textContent = details.sparks
+  ecInput.textContent = details.input
+  ecInput.classList.toggle('warn', details.inputOff)
+}
+
 function showStatus(status: DevPanelStatus): void {
   const forced = status.state !== status.simState
   stState.textContent = forced ? `${status.state} (forced)` : status.state
@@ -294,6 +358,7 @@ function showStatus(status: DevPanelStatus): void {
   stVisible.textContent = status.visible ? 'shown' : 'hidden'
   stRates.textContent = `${rate(status.rendersPerS)} renders/s · ${rate(status.framesPerS)} frames/s`
   showWorldStatus(status.world)
+  showEconomy(status.economy)
   showOverrides(status.overrides)
 }
 

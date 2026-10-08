@@ -61,8 +61,41 @@
       .status dd {
         margin: 0;
       }
-      .actions + .status {
+      .actions + .status,
+      .ledger + .status {
         margin-top: 6px;
+      }
+      .ledger {
+        width: 100%;
+        border-collapse: collapse;
+        border-radius: 6px;
+        background: var(--panel);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+      }
+      .ledger th,
+      .ledger td {
+        padding: 2px 4px;
+        text-align: right;
+        white-space: nowrap;
+      }
+      .ledger th {
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .ledger th:first-child,
+      .ledger td:first-child {
+        text-align: left;
+        color: var(--muted);
+      }
+      .ledger thead th {
+        border-bottom: 1px solid var(--line);
+      }
+      #ec-break-min {
+        width: 56px;
+      }
+      .warn {
+        color: #ff9f0a;
       }
       .actions {
         display: flex;
@@ -189,6 +222,52 @@
           <dt>Goal</dt>
           <dd id="wd-goal">—</dd>
         </dl>
+      </section>
+      <section>
+        <h2>Economy</h2>
+        <table class="ledger">
+          <thead>
+            <tr>
+              <th></th>
+              <th title="Raw units today, before anti-gaming">Raw</th>
+              <th title="Units credited after anti-gaming">Credited</th>
+              <th title="Payout earned today">Earned</th>
+              <th title="The multiplier the next unit gets (§7.4)">×</th>
+              <th title="Earned today / the daily soft cap">Cap</th>
+              <th>Lifetime</th>
+              <th title="Accrues only after the final form (Phase 3)">Wallet</th>
+            </tr>
+          </thead>
+          <tbody id="ec-rows"></tbody>
+        </table>
+        <dl class="status">
+          <dt>Day</dt>
+          <dd id="ec-day">—</dd>
+          <dt>Diet</dt>
+          <dd id="ec-diet">—</dd>
+          <dt>Rhythm</dt>
+          <dd id="ec-rhythm">—</dd>
+          <dt>Nutrition</dt>
+          <dd id="ec-nutrition">—</dd>
+          <dt>Sparks today</dt>
+          <dd id="ec-sparks">—</dd>
+          <dt>Input</dt>
+          <dd id="ec-input">—</dd>
+        </dl>
+        <div class="actions">
+          <button id="ec-keys" type="button">Keys ×100</button>
+          <button id="ec-clicks" type="button">Clicks ×20</button>
+          <button id="ec-scroll" type="button">Scroll ×50</button>
+          <button id="ec-mileage" type="button">Mileage +5,000 pt</button>
+          <button id="ec-launch-new" type="button">Launch (first ever)</button>
+          <button id="ec-launch-returning" type="button">Launch (returning)</button>
+          <button id="ec-activate" type="button">Activate app</button>
+          <button id="ec-wake" type="button">Wake</button>
+        </div>
+        <div class="actions">
+          <button id="ec-break" type="button">Break</button>
+          <label><input id="ec-break-min" type="number" min="1" max="100000" step="1" /> min</label>
+        </div>
       </section>
       <section>
         <button id="reset" type="button">Reset everything</button>
