@@ -100,6 +100,8 @@ const ERROR_LINES: readonly RegExp[] = [
 ]
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+/** On the ground and still: idle, or land (a touchdown's squash and settle, tuning.move.landS, before idle). */
+const standing = (behavior: string): boolean => behavior === 'idle' || behavior === 'land'
 const now = (): number => performance.now()
 const errorDetail = (err: unknown): string => (err instanceof Error ? (err.stack ?? err.message) : String(err))
 
@@ -450,7 +452,7 @@ class OverlayCheck {
     await this.until('click: released', () => !ix.held)
     await sleep(3 * this.stepMs)
     const after = this.state()
-    const stayed = after.x === before.x && after.y === before.y && after.behavior === 'idle'
+    const stayed = after.x === before.x && after.y === before.y && standing(after.behavior)
     this.check('click without a drag: the pet did not move', stayed, `${fmtPoint(before)} → ${fmtPoint(after)}`)
 
     // A drag up and left; the simulation follows; let go in the air, it falls and lands where it was dropped.
@@ -475,7 +477,7 @@ class OverlayCheck {
     await this.until('drag: released', () => !ix.held)
     const landed = await this.until(
       `released in the air: falls and lands on the ground (physics ${fallMs.toFixed(0)} ms + ${T.landMarginMs} ms)`,
-      () => this.state().behavior === 'idle' && this.state().y === home.y,
+      () => standing(this.state().behavior) && this.state().y === home.y,
       fallMs + T.landMarginMs,
     )
     const landedX = this.state().x
@@ -502,7 +504,7 @@ class OverlayCheck {
     ix.handleNativeMouse({ type: 'mouseMove', button: null, leftButtonDown: false, screen: end2 })
     this.check('lost mouseup (a grab-area move without the left button): released', !ix.held)
     this.send('mouseUp', end2, { button: 'left', clickCount: 1 }) // ends the synthetic press in Chromium too
-    await this.until(null, () => this.state().behavior === 'idle')
+    await this.until(null, () => standing(this.state().behavior))
 
     // Right-click: the (injected) pet menu, then closed.
     const spot2 = this.groundPoint()
@@ -547,7 +549,7 @@ class OverlayCheck {
     const rendered = rendersShown !== null && rendersShown > 0
     this.check('…and rendered', rendered, rendersShown === null ? 'no stats' : `${rendersShown} renders`)
     this.cursorPoint = this.farPoint()
-    await this.until(null, () => this.state().behavior === 'idle')
+    await this.until(null, () => standing(this.state().behavior))
   }
 
   // ───────────────────────────── measurements ─────────────────────────────
@@ -697,7 +699,7 @@ class OverlayCheck {
     this.up(last)
     this.pressOffset = null
     await this.until(`${PHASE_TITLES[name]}: released`, () => !ix.held)
-    await this.until(null, () => this.state().behavior === 'idle')
+    await this.until(null, () => standing(this.state().behavior))
     this.cursorPoint = this.farPoint()
     await this.goTo(home)
   }
@@ -1051,7 +1053,7 @@ class OverlayCheck {
       pending = false
       return p
     }
-    await this.until(null, () => !pending && this.state().x === p.x && this.state().y === p.y && this.state().behavior === 'idle')
+    await this.until(null, () => !pending && this.state().x === p.x && this.state().y === p.y && standing(this.state().behavior))
     this.mover = null
   }
 

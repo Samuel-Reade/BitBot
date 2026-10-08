@@ -10,7 +10,7 @@
 
 import { IPC } from '../../shared/ipc'
 import type { Box } from '../../shared/geometry'
-import type { PetLogMsg, PetReadyMsg } from '../../shared/petProtocol'
+import { isPetPingMsg, type PetLogMsg, type PetPongMsg, type PetReadyMsg } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
 import type { PaletteId, PetSize } from '../../shared/types'
 import { Animator } from './character/animator'
@@ -148,9 +148,14 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
   bridge.on(IPC.petConfigChanged, (msg) => guarded('pet:config-changed', () => model.onConfigChanged(msg)))
   bridge.on(IPC.petRedraw, () => guarded('pet:redraw', () => model.onRedraw()))
   bridge.on(IPC.debugPet, (msg) => guarded('debug:pet', () => model.onDevPet(msg)))
+  // Always answered (counters are cheap; the sample lists stay empty unless config.debug): the dev panel shows rates.
   bridge.on(IPC.debugOverlayStatsRequest, () =>
-    guarded('debug:overlay-stats-request', () => {
-      if (model.debug) bridge.send(IPC.debugOverlayStats, model.stats(performance.now()))
+    guarded('debug:overlay-stats-request', () => bridge.send(IPC.debugOverlayStats, model.stats(performance.now()))),
+  )
+  // Main's liveness watchdog: a page that stops answering is recreated.
+  bridge.on(IPC.petPing, (msg) =>
+    guarded('pet:ping', () => {
+      if (isPetPingMsg(msg)) bridge.send(IPC.petPong, { id: msg.id } satisfies PetPongMsg)
     }),
   )
   canvas.addEventListener('webglcontextlost', (e) => {

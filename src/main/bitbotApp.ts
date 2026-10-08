@@ -1,7 +1,10 @@
-// Bitbot itself (BITBOT_SPEC.md §13 milestone 1 "Skeleton"; docs/decisions/overlay.md "Decision"): the composition root
-// that turns the tested pieces into the running app.
+// Bitbot itself (BITBOT_SPEC.md §13 milestones 1 "Skeleton" and 2 "Character alive"; docs/decisions/overlay.md
+// "Decision"): the composition root that turns the tested pieces into the running app.
 // - The 30 Hz simulation in main (SimLoop + Locomotion), parked while the pet is hidden, and main's view of what the
-//   overlay draws (overlaySession.ts): pet:state only on change, never before the page's pet:ready.
+//   overlay draws (overlaySession.ts): pet:state only on change, never before the page's pet:ready. Each step also
+//   works out where the eyes look from the cursor position (sim/look.ts; nothing else is read, nothing is kept).
+// - Dev builds: the developer panel (tray → "Developer…", dev/devPanel.ts) and its overrides (dev/devOverrides.ts),
+//   which pet:state and debug:pet carry to the overlay. Packaged builds have neither: the defaults always apply.
 // - The overlay window and its page (PetWindow), the grab area (ElectronHitWindow), decided by PetInteraction (one
 //   instance for the app's lifetime).
 // - bitbot-helper: the overlay's on-screen check, and the fullscreen and Space-change pushes.
@@ -16,15 +19,19 @@
 
 import { existsSync } from 'node:fs'
 import { app, globalShortcut, Menu, powerMonitor, screen, type BrowserWindow } from 'electron'
+import type { DevPanelSet } from '../shared/devPanel'
 import type { Box, PetArea, Point } from '../shared/geometry'
 import { DEFAULT_HOTKEYS } from '../shared/hotkeys'
 import { IPC } from '../shared/ipc'
 import { DEFAULT_PALETTE_ID } from '../shared/palettes'
 import type { OverlayStatsMsg, PetCursorMsg, PetHoverResetMsg, PetReadyMsg, PetVisibleMsg } from '../shared/petProtocol'
 import { tuning } from '../shared/tuning'
-import type { PaletteId, PetSize } from '../shared/types'
+import type { LookDirection, PaletteId, PetSize } from '../shared/types'
 import { ActivationMonitor, type ActivationCounters, type FocusEventSource } from './activationMonitor'
 import { Debouncer } from './debounce'
+import { devPetMsg, DevOverrideState, overriddenFields } from './dev/devOverrides'
+import { DevPanel } from './dev/devPanel'
+import type { DevPanelAppStatus } from './dev/devPanelModel'
 import { HelperClient, type HelperExitInfo } from './helper/helperClient'
 import { resolveHelperPath } from './helper/paths'
 import type { FrontmostFullscreenMsg } from './helper/protocol'
@@ -34,6 +41,7 @@ import { BitbotTray } from './menus/tray'
 import { SignalGate } from './signals'
 import { systemClock } from './sim/clock'
 import { Locomotion } from './sim/locomotion/locomotion'
+import { lookDirection } from './sim/look'
 import { defaultSimTiming, globalScheduler, SimLoop } from './sim/loop'
 import { petAreaFor, type DisplayGeometry } from './sim/world/screenArea'
 import { ThrottledLog } from './throttledLog'
@@ -58,7 +66,7 @@ const clock = systemClock
 
 /** Hooks for the M1 dev check (`electron . --check=overlay`, next phase). Production passes none. */
 export interface BitbotAppOptions {
-  /** The cursor PetInteraction reads, global pt (a synthetic one). Default: screen.getCursorScreenPoint(). */
+  /** The cursor PetInteraction and the eyes read, global pt (a synthetic one). Default: screen.getCursorScreenPoint(). */
   cursor?: () => Point
   /**
    * Replaces the native pet menu: called when the pet is right-clicked; must call onClose once when its menu closes.
@@ -159,6 +167,12 @@ export class BitbotApp {
   private readonly hotkeys = new Hotkeys(globalShortcut)
   private readonly tray: BitbotTray
   private readonly relayout: Debouncer
+  /** The cursor, global pt (options.cursor or the real one). */
+  private readonly cursor: () => Point
+  /** The developer panel's overrides; never changed in packaged builds (no panel). */
+  private readonly overrides = new DevOverrideState()
+  /** Dev builds only. */
+  private readonly devPanel: DevPanel | null
 
   private helper: HelperClient | null = null
   private loco: Locomotion | null = null
@@ -174,6 +188,10 @@ export class BitbotApp {
   private fullscreen = false
   /** This wake's held point (PetInteraction.sampleHeld), for its steps. */
   private held: Point | null = null
+  /** This wake's cursor, for its steps' look direction. */
+  private wakeCursor: Point | null = null
+  /** Where the eyes look (sim/look.ts), as of the newest step. */
+  private look: LookDirection | null = null
   private menu: { menu: Menu; win: BrowserWindow } | null = null
   /** Dev: native grab-area mouse events still to log for the current press. */
   private nativeLogLeft = 0
@@ -203,6 +221,7 @@ export class BitbotApp {
       this.petWindow.send(IPC.petState, msg)
     })
     this.presented = new PresentedPoint(this.stepMs, { t: clock.now(), x: 0, y: 0 })
+    this.cursor = options.cursor ?? (() => screen.getCursorScreenPoint())
 
     const injectedMenu = options.popupMenu
     this.interaction = new PetInteraction({
@@ -216,7 +235,7 @@ export class BitbotApp {
       },
       tuning: tuning.hitArea,
       now: () => clock.now(),
-      cursor: options.cursor ?? (() => screen.getCursorScreenPoint()),
+      cursor: () => this.cursor(),
       displayedPoint: (nowMs) => drawnPoint(this.presented, nowMs, this.heldPoint()),
       petBox: () => this.ready?.petBox ?? null,
       overlayShown: () => !this.hiddenByUser && !app.isHidden(),
@@ -250,12 +269,14 @@ export class BitbotApp {
       beforeSteps: (wakeMs) => {
         this.held = this.interaction.sampleHeld(wakeMs)
         this.observe()
+        this.wakeCursor = this.cursor()
       },
       onStep: (dtS, t) => this.step(dtS, t),
       afterSteps: (wakeMs) => {
         this.watchAppHidden()
         this.interaction.tick(wakeMs)
         this.observe()
+        this.devPanel?.refresh()
       },
       onError: (err, where) => this.failClosed(`the simulation's ${where} hook threw`, err),
     })
@@ -316,8 +337,23 @@ export class BitbotApp {
       eventCap: tuning.app.activationEventCap,
     })
 
+    this.devPanel = this.dev
+      ? new DevPanel({
+          status: () => this.devPanelStatus(),
+          apply: (set) => this.applyDevPanelSet(set),
+          requestOverlayStats: (timeoutMs) => this.requestOverlayStats(timeoutMs),
+          log: (line) => this.log(line),
+          warn: (key, line) => this.throttled.log(key, line),
+        })
+      : null
+    const devPanel = this.devPanel
     this.tray = new BitbotTray({
-      actions: { toggleVisible: () => this.toggleVisible('tray menu'), quit: () => void this.quit('tray menu') },
+      actions: {
+        toggleVisible: () => this.toggleVisible('tray menu'),
+        // Dev builds only: the menu has no "Developer…" without it.
+        ...(devPanel ? { developer: () => this.guarded('dev panel', () => devPanel.open()) } : {}),
+        quit: () => void this.quit('tray menu'),
+      },
       toggleAccelerator: () => this.hotkeys.accelerator('toggleVisible'),
     })
     this.relayout = new Debouncer(tuning.overlay.displayChangeDebounceMs, () => this.guarded('display re-layout', () => this.layOut()))
@@ -392,6 +428,7 @@ export class BitbotApp {
     this.petWindow.send(IPC.petVisible, { visible: true, epoch: this.interaction.epoch } satisfies PetVisibleMsg)
     this.appHidden = app.isHidden()
     this.tray.update(this.isPetVisible())
+    this.devPanel?.refresh()
     this.log(`[bitbot] pet shown (${source})${hiddenByMacOS ? '; macOS had hidden Bitbot' : ''}`)
   }
 
@@ -409,6 +446,7 @@ export class BitbotApp {
     // Nothing ticks in M1, so the loop is parked; M6 adds the low-rate tick.
     this.loop.stop()
     this.tray.update(false)
+    this.devPanel?.refresh()
     this.log(`[bitbot] pet hidden (${source})`)
   }
 
@@ -431,6 +469,7 @@ export class BitbotApp {
     this.guarded('quit: tray', () => this.tray.destroy())
     this.guarded('quit: activation monitor', () => this.activation.stop())
     await this.stopHelper()
+    this.guarded('quit: dev panel', () => this.devPanel?.destroy())
     this.guarded('quit: windows', () => this.petWindow.destroy())
     this.cleanedUp = true
     this.log('[bitbot] bye')
@@ -480,13 +519,17 @@ export class BitbotApp {
     }
     loco.step(dtS, this.held)
     this.presented.push(t, loco.state)
+    const box = this.ready?.petBox
+    const cursor = this.wakeCursor
+    this.look = box && cursor ? lookDirection(cursor, loco.state, box, this.look, tuning.anim.look) : null
     this.states.offer(this.simState(loco), t, clock.now())
   }
 
+  /** pet:state's fields: the simulation's, with the dev panel's overrides (dev/devOverrides.ts) applied. */
   private simState(loco: Locomotion): PetSimState {
     const s = loco.state
-    // M1 never turns (facing +1, the default 3/4 yaw): walking and turning come with M3.
-    return { x: s.x, y: s.y, facing: 1, state: s.behavior, mood: 'content', dust: 0, look: null, supportY: loco.supportY }
+    const f = overriddenFields(this.overrides.current, { behavior: s.behavior, facing: s.facing })
+    return { x: s.x, y: s.y, facing: f.facing, state: f.state, mood: f.mood, dust: f.dust, look: this.look, supportY: loco.supportY }
   }
 
   /** A held pet's newest step (the overlay draws a held pet under the cursor, which that step followed); null unless held. */
@@ -528,6 +571,8 @@ export class BitbotApp {
     // The first page learns the pet's area here (its box decides it); the grab area waits until it drew with it.
     if (!sameArea(this.petWindow.lastConfig?.area ?? null, area)) this.petWindow.sendConfigChanged()
     this.states.setReady(true)
+    // A fresh page starts with the overlay's defaults.
+    this.sendDevPet()
     if (this.hiddenByUser) {
       this.petWindow.send(IPC.petVisible, { visible: false, epoch: this.interaction.epoch } satisfies PetVisibleMsg)
     } else {
@@ -758,7 +803,11 @@ export class BitbotApp {
     powerMonitor.on('lock-screen', () => this.cancel('the screen locked'))
     powerMonitor.on('suspend', () => this.cancel('the Mac is going to sleep'))
     powerMonitor.on('user-did-resign-active', () => this.cancel('the user session became inactive'))
-    powerMonitor.on('resume', () => this.redraw('woke from sleep'))
+    powerMonitor.on('resume', () => {
+      // Timers and the overlay's renderer both paused during the sleep: the pings missed meanwhile don't count.
+      this.petWindow.resetWatchdog()
+      this.redraw('woke from sleep')
+    })
     powerMonitor.on('unlock-screen', () => this.redraw('the screen unlocked'))
     powerMonitor.on('user-did-become-active', () => this.redraw('the user session became active'))
     app.on('child-process-gone', (_event, details) => {
@@ -859,6 +908,28 @@ export class BitbotApp {
     } catch {
       // Nowhere left to report it.
     }
+  }
+
+  // ───────────────────────────── developer panel ─────────────────────────────
+
+  /** The app's part of the panel's status. */
+  private devPanelStatus(): DevPanelAppStatus {
+    const s = this.loco?.state
+    const behavior = s?.behavior ?? 'idle'
+    const f = overriddenFields(this.overrides.current, { behavior, facing: s?.facing ?? 1 })
+    return { overrides: this.overrides.overrides, state: f.state, simState: behavior, look: this.look, visible: this.isPetVisible() }
+  }
+
+  /** A validated debug:panel-set. pet:state carries the change with the next step (or the snap when shown again). */
+  private applyDevPanelSet(set: DevPanelSet): void {
+    const change = this.overrides.apply(set)
+    if (change.petChanged) this.sendDevPet()
+  }
+
+  /** debug:pet (dev builds only): the overrides the overlay applies itself. */
+  private sendDevPet(): void {
+    if (!this.dev) return
+    this.petWindow.send(IPC.debugPet, devPetMsg(this.overrides.current))
   }
 
   // ───────────────────────────── dev check ─────────────────────────────

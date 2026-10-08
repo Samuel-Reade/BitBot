@@ -53,6 +53,7 @@ On macOS, `npm test` fails if `build/helper/bitbot-helper` is missing or older t
 
 ## Dev tools
 
+- **Developer panel** (dev builds only: `npm run dev` or `npm start`, not a packaged app): tray icon → **Developer…**. It forces the pet's state, mood, dust, facing, face (eyes, mouth, overlays) and idle style (continuous or event-driven), and shows live what `pet:state` says, the simulation's own state, where the eyes look, and the overlay's renders and frames per second. Closing it puts nothing back; **Reset everything** does. It is the one Bitbot window that takes focus, because you opened it.
 - **Dev check of the overlay and its grab area** (Milestone 1; the pet appears and moves at the bottom of the screen while it runs, and your mouse is never touched):
 
   ```sh

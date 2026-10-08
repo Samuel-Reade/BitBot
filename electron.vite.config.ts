@@ -21,6 +21,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           pet: r('src/renderer/pet/index.html'),
+          devPanel: r('src/renderer/devpanel/index.html'),
           spikeDebug: r('src/renderer/spike/debug.html'),
         },
       },

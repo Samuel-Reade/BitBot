@@ -121,10 +121,10 @@ Six reviewers with different focuses, then skeptics who tried to disprove each f
 - **A page that could never load (e.g. no WebGL) was recreated every ~21 s all day.** Recreation now backs off, doubling up to `tuning.overlay.recreateMaxDelayMs` (5 min), and resets on `pet:ready`.
 - **Dev `--snapshot` and `--spike` runs used the packaged app's profile.** They now use `Bitbot-dev-tools`.
 - Tests: the no-network scan catches more ways to reach the network; `npm test` type-checks and fails on a stale helper build; two order- or timing-dependent tests fixed; negative IPC allowlist checks.
+- **A silent renderer hang after `pet:ready` was not detected** (fixed in M2). Chromium's `unresponsive` comes from input acks, and the overlay takes no input, so the pet would freeze until restart. Main now pings a ready page (`pet:ping`) every `tuning.overlay.watchdog.pingMs` (2 s); 3 pings in a row without a `pet:pong` recreate it with its renderer killed. The count is reset after a system sleep.
 
 Real but not fixed (unconfirmed trigger, or later work):
 
-- **A silent renderer hang after `pet:ready` is not detected.** Chromium's `unresponsive` comes from input acks, and the overlay takes no input. The pet would freeze until restart. Needs a cheap main→page ping; candidate for M2.
 - **App switches re-check at once,** while a Space animation may still be running. Waiting `spaceSettleMs` would delay grabbing after every app switch, so it waits for manual check 4 (does `spaceChanged` arrive on device?).
 - **A display rearrangement** can show the grab area for ≤100 ms at the old spot before the re-layout.
 - **A dev helper built before protocol 3** is used as current (no `spaceChanged`); the mismatch is logged. Packaged builds always rebuild it.
