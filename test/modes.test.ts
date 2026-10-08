@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ModeState, screenSpotName, type SpotLookup } from '../src/main/sim/modes'
 import type { PetArea } from '../src/shared/geometry'
+import { tuning } from '../src/shared/tuning'
 
 // The pet's mode and hangout spots (src/main/sim/modes.ts): §10.3 modes, spots, ⌥⌘S, Go home.
 
@@ -96,6 +97,57 @@ describe('ModeState', () => {
     expect(next.id).not.toBe(m.spots[0]?.id) // ids keep counting up
     const broken = new ModeState({ ...m.settings, activeHangoutId: 'gone' })
     expect(broken.mode).toBe('roam')
+  })
+})
+
+describe('ModeState settings (§15.4, M8)', () => {
+  it('renames a spot: trimmed, 1–tuning.settingsWindow.spotNameMax characters; false for a bad name or no such spot', () => {
+    const m = new ModeState()
+    const a = m.hangOutHere({ x: 200, y: 1022 }, 1, AREA)
+    expect(m.renameSpot(a.id, '  Desk corner  ')).toBe(true)
+    expect(m.spots[0]?.name).toBe('Desk corner')
+    expect(m.settings.hangouts[0]?.name).toBe('Desk corner')
+    expect(m.renameSpot(a.id, '   ')).toBe(false)
+    expect(m.renameSpot(a.id, 'x'.repeat(tuning.settingsWindow.spotNameMax + 1))).toBe(false)
+    expect(m.renameSpot(a.id, 'x'.repeat(tuning.settingsWindow.spotNameMax))).toBe(true)
+    expect(m.renameSpot('nope', 'Fine')).toBe(false)
+  })
+
+  it('the default home is a screen spot or none; Go home and Reset position use it', () => {
+    const m = new ModeState()
+    const screen = m.hangOutHere({ x: 200, y: 1022 }, 1, AREA)
+    const app = m.hangOutOnApp('com.apple.Notes', 'Notes', 0.5)
+    m.setMode('roam')
+    expect(m.setDefaultHome(app.id)).toBe(false) // an app spot falls back to the default home (§10.3)
+    expect(m.setDefaultHome('nope')).toBe(false)
+    expect(m.settings.defaultHomeId).toBeNull()
+    expect(m.defaultHomePoint(lookup())).toEqual(HOME)
+    expect(m.setDefaultHome(screen.id)).toBe(true)
+    expect(m.defaultHomeSpot?.id).toBe(screen.id)
+    expect(m.defaultHomePoint(lookup())).toEqual({ x: 200, y: 1022 })
+    expect(m.home(lookup())).toEqual({ x: 200, y: 1022 })
+    expect(m.setDefaultHome(null)).toBe(true)
+    expect(m.home(lookup())).toEqual(HOME)
+  })
+
+  it('an app spot without its window and without a fallback goes to the default home spot (§10.3)', () => {
+    const m = new ModeState()
+    const screen = m.hangOutHere({ x: 300, y: 1022 }, 1, AREA)
+    const app = m.hangOutOnApp('com.apple.Notes', 'Notes', 0.5)
+    expect(m.spotPoint(app, lookup())).toEqual({ point: HOME, fallback: true })
+    m.setDefaultHome(screen.id)
+    expect(m.spotPoint(app, lookup())).toEqual({ point: { x: 300, y: 1022 }, fallback: true })
+    expect(m.home(lookup())).toEqual({ x: 300, y: 1022 }) // Hangout on Notes, its window away
+    expect(m.spotPoint(app, lookup({ 'com.apple.Notes': { x: 100, y: 400, width: 600 } }))).toEqual({ point: { x: 400, y: 400 }, fallback: false })
+  })
+
+  it('forgetting the default home spot goes back to the middle of the Dock', () => {
+    const m = new ModeState()
+    const screen = m.hangOutHere({ x: 300, y: 1022 }, 1, AREA)
+    m.setDefaultHome(screen.id)
+    m.forgetSpot(screen.id)
+    expect(m.settings.defaultHomeId).toBeNull()
+    expect(m.defaultHomePoint(lookup())).toEqual(HOME)
   })
 })
 

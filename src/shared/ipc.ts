@@ -58,4 +58,14 @@ export const IPC = {
   debugPanelStatus: 'debug:panel-status',
   /** renderer → main: dev snapshot tool — the frame is rendered and ready to capture. */
   snapshotReady: 'snapshot:ready',
+
+  // The settings window (§15.4; messages in ./settingsProtocol.ts, main side src/main/windows/settingsWindow.ts).
+  /** settings page → main (invoke): the current view. Returns SettingsView. */
+  settingsGet: 'settings:get',
+  /** settings page → main: one change. Payload: SettingsChange */
+  settingsChange: 'settings:change',
+  /** main → settings page: the view changed. Payload: SettingsView */
+  settingsView: 'settings:view',
+  /** main → settings page: show this section (open(section) while it is already open). Payload: SettingsSection */
+  settingsSection: 'settings:section',
 } as const

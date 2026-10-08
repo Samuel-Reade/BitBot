@@ -275,7 +275,21 @@ export const tuning = {
 
   /** §15.4 the settings window (M8). */
   settingsWindow: {
-    // (M8: filled in by the settings window's work.)
+    /**
+     * The window's size, pt (§15.4; src/main/windows/settingsWindow.ts). It can grow but not shrink below this: the
+     * sidebar and the widest section (Controls) fit without scrolling sideways.
+     */
+    width: 640,
+    height: 560,
+    /** A hangout spot's name (renaming in settings): at most this many characters after trimming, at least 1. */
+    spotNameMax: 40,
+    /** The restlessness slider's step (0..1, "Calm ↔ Restless"). Smaller = finer control, more saves while dragging. */
+    restlessnessStep: 0.05,
+    /**
+     * The known apps list in Privacy shows at most this many (the most recently opened first) and says how many more
+     * there are. Higher = a longer page.
+     */
+    knownAppsShown: 200,
   },
   move: {
     /** pt/s. Higher walk speed reads as busier/more anxious. */
