@@ -44,6 +44,7 @@ import { Locomotion } from './sim/locomotion/locomotion'
 import { lookDirection } from './sim/look'
 import { defaultSimTiming, globalScheduler, SimLoop } from './sim/loop'
 import { petAreaFor, type DisplayGeometry } from './sim/world/screenArea'
+import { buildWorld, worldParamsFor, type World } from './sim/world/worldModel'
 import { ThrottledLog } from './throttledLog'
 import { ElectronHitWindow, type HitWindowCounters } from './windows/hitWindow'
 import { windowNumber, windowOnScreen } from './windows/onScreen'
@@ -60,6 +61,11 @@ import { PetWindow } from './windows/petWindow'
 
 /** M1 draws the base form at the default size and palette (§6.1, §6.2); settings (M8) make both choosable. */
 const PET: { size: PetSize; paletteId: PaletteId } = { size: 'M', paletteId: DEFAULT_PALETTE_ID }
+
+/** M3 compile stand-in until the helper's snapshots feed the world: the ground and the screen walls, no windows. */
+function groundOnlyWorld(display: DisplayGeometry, petBox: Box): World {
+  return buildWorld(display, petBox, [], worldParamsFor(tuning.render.bodyHeightPt[PET.size], process.pid))
+}
 
 /** The simulation's clock: pet:state's t and sentAt, PetInteraction and the activation monitor all use it. */
 const clock = systemClock
@@ -565,11 +571,12 @@ export class BitbotApp {
     this.readyLoad = this.petWindow.loadCount
     const display = this.display ?? primaryDisplay()
     const area = petAreaFor(display, msg.petBox)
+    const world = groundOnlyWorld(display, msg.petBox)
     if (!this.loco) {
       const x = this.opts.spawnX
-      this.loco = new Locomotion(area, tuning.move, x !== undefined && Number.isFinite(x) ? { x, y: area.groundY } : undefined)
+      this.loco = new Locomotion(world, tuning.move, x !== undefined && Number.isFinite(x) ? { x, y: area.groundY } : undefined)
     } else {
-      this.loco.setArea(area)
+      this.loco.setWorld(world, clock.now())
     }
     // The first page learns the pet's area here (its box decides it); the grab area waits until it drew with it.
     if (!sameArea(this.petWindow.lastConfig?.area ?? null, area)) this.petWindow.sendConfigChanged()
@@ -846,7 +853,8 @@ export class BitbotApp {
     this.display = display
     this.petWindow.setBounds(display.bounds)
     const area = this.petArea()
-    if (this.loco && area) this.loco.setArea(area)
+    const box = this.ready?.petBox
+    if (this.loco && box) this.loco.setWorld(groundOnlyWorld(display, box), clock.now())
     this.applyFullscreen() // the primary display may be another one now
     this.petWindow.sendConfigChanged()
     this.snap()
