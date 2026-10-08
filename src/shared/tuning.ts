@@ -265,6 +265,10 @@ export const tuning = {
     nativeMouseLogPerPress: 6,
   },
 
+  /** §15.4 the settings window (M8). */
+  settingsWindow: {
+    // (M8: filled in by the settings window's work.)
+  },
   move: {
     /** pt/s. Higher walk speed reads as busier/more anxious. */
     walkSpeed: 120,
@@ -354,6 +358,10 @@ export const tuning = {
   },
 
   /** Character animation (§6.4). */
+  /** §9.4 the daily summary bubble and other speech (M8). */
+  ui: {
+    // (M8: filled in by the summary bubble's work.)
+  },
   anim: {
     /**
      * The default idle style (types.ts IdleMode; the dev panel switches it). SPEC-DEVIATION, decided by the user
@@ -687,6 +695,10 @@ export const tuning = {
   },
 
   /** bitbot-helper process management (§5.3). */
+  /** §16 the save file (M8). */
+  persistence: {
+    // (M8: filled in by the persistence work.)
+  },
   helper: {
     /** Wait for a reply before a request rejects. Lower = faster failure detection, more spurious timeouts on a busy Mac. */
     requestTimeoutMs: 2000,
@@ -918,6 +930,10 @@ export const tuning = {
   },
 
   /** Throwaway values for the §12 Spike A harness. Removed with the harness. */
+  /** §15.1 first-launch onboarding (M8). */
+  onboarding: {
+    // (M8: filled in by the onboarding work.)
+  },
   spikeOverlay: {
     /** Cursor-follow max speed, pt/s (§12). */
     followSpeed: 600,
