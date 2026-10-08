@@ -3,7 +3,7 @@ import type { HelperClient } from '../src/main/helper/helperClient'
 import { Hotkeys, type ShortcutRegistry } from '../src/main/hotkeys'
 import { petContextMenuTemplate } from '../src/main/menus/petContextMenu'
 import { alphaToBgra, TRAY_ICON_PT, trayIconAlpha } from '../src/main/menus/trayIcon'
-import { trayMenuTemplate } from '../src/main/menus/trayMenu'
+import { formatToday, formatWhole, trayMenuTemplate } from '../src/main/menus/trayMenu'
 import { windowNumber, windowOnScreen, type SnapshotSource } from '../src/main/windows/onScreen'
 import { DEFAULT_HOTKEYS, type HotkeyAction } from '../src/shared/hotkeys'
 
@@ -268,6 +268,75 @@ describe('trayMenuTemplate', () => {
     expect(opened).toBe(1)
     click(items[5])
     expect(a.calls).toEqual(['quit'])
+  })
+
+  const TODAY = { crumbs: 1240.7, pellets: 310, treats: 6.25, mileage: 22.999, sparks: 3 }
+
+  it("shows today's earned totals after the header, before the first separator, disabled (§15.2)", () => {
+    const items = trayMenuTemplate({ visible: true, toggleAccelerator: null, today: TODAY }, actions())
+    expect(labels(items)).toEqual(['Bitbot', 'Today: 🍞 1,240  ⚪ 310  🎁 6  🧭 22  ✨ 3', 'separator', 'Hide Bitbot', 'separator', 'Quit Bitbot'])
+    expect(items[1]?.enabled).toBe(false)
+    expect(items[1]?.click).toBeUndefined()
+  })
+
+  it('has no Today line while the economy has nothing to show (null or absent)', () => {
+    for (const today of [null, undefined]) {
+      const items = trayMenuTemplate({ visible: true, toggleAccelerator: null, today }, actions())
+      expect(items.some((item) => item.label?.startsWith('Today'))).toBe(false)
+    }
+  })
+
+  it('shows the Input Monitoring reminder while it is off, with Developer… and Quit (§7.1, §15.2), and calls it', () => {
+    const a = actions()
+    let turnedOn = 0
+    const items = trayMenuTemplate(
+      { visible: true, toggleAccelerator: null, inputMonitoringOff: true },
+      { ...a, developer: () => {}, turnOnInputMonitoring: () => turnedOn++ },
+    )
+    expect(labels(items)).toEqual(['Bitbot', 'separator', 'Hide Bitbot', 'separator', 'Input Monitoring is off — Turn on…', 'Developer…', 'Quit Bitbot'])
+    expect(items[4]?.enabled).toBeUndefined()
+    click(items[4])
+    expect(turnedOn).toBe(1)
+    expect(a.calls).toEqual([])
+  })
+
+  it('has no reminder when Input Monitoring is granted, or without the action', () => {
+    const reminder = (items: { label?: string }[]): boolean => items.some((item) => item.label?.startsWith('Input Monitoring'))
+    const on = { turnOnInputMonitoring: () => {} }
+    expect(reminder(trayMenuTemplate({ visible: true, toggleAccelerator: null, inputMonitoringOff: false }, { ...actions(), ...on }))).toBe(false)
+    expect(reminder(trayMenuTemplate({ visible: true, toggleAccelerator: null }, { ...actions(), ...on }))).toBe(false)
+    expect(reminder(trayMenuTemplate({ visible: true, toggleAccelerator: null, inputMonitoringOff: true }, actions()))).toBe(false)
+  })
+})
+
+describe('formatToday / formatWhole', () => {
+  it('lists all five currencies in order, icon and number, two spaces apart (§15.2)', () => {
+    expect(formatToday({ crumbs: 0, pellets: 0, treats: 0, mileage: 0, sparks: 0 })).toBe('Today: 🍞 0  ⚪ 0  🎁 0  🧭 0  ✨ 0')
+    expect(formatToday({ crumbs: 1, pellets: 2, treats: 3, mileage: 4, sparks: 5 })).toBe('Today: 🍞 1  ⚪ 2  🎁 3  🧭 4  ✨ 5')
+  })
+
+  it('rounds down so the number never runs ahead of what was earned', () => {
+    expect(formatWhole(0.99)).toBe('0')
+    expect(formatWhole(6.999)).toBe('6')
+    expect(formatWhole(22)).toBe('22')
+  })
+
+  it('does not lose a unit to float error in a running sum', () => {
+    let sum = 0
+    for (let i = 0; i < 10; i++) sum += 0.1 // ten clicks
+    expect(sum).toBeLessThan(1)
+    expect(formatWhole(sum)).toBe('1')
+  })
+
+  it('separates thousands with commas', () => {
+    expect(formatWhole(999)).toBe('999')
+    expect(formatWhole(1000)).toBe('1,000')
+    expect(formatWhole(1240.9)).toBe('1,240')
+    expect(formatWhole(1_234_567)).toBe('1,234,567')
+  })
+
+  it('shows 0 for nothing, negatives and non-numbers', () => {
+    for (const value of [0, -3, Number.NaN, Number.POSITIVE_INFINITY]) expect(formatWhole(value)).toBe('0')
   })
 })
 
