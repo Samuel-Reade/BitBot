@@ -1,8 +1,9 @@
 import * as THREE from 'three'
+import type { Box } from '../../shared/geometry'
 import { tuning } from '../../shared/tuning'
 import { BASE_PARTS, type Palette, type PetSize } from '../../shared/types'
 import { buildBitbot, type BitbotRig } from './character/buildBitbot'
-import { framePetCamera, framingReference } from './character/framing'
+import { framePetCamera, framingReference, projectedBoundingBox, supportLineShadow } from './character/framing'
 import { createHitTester } from './character/hitTest'
 
 // The pet's three.js scene: renderer, camera, lights and rig, laid out so that the pet's ground
@@ -12,7 +13,8 @@ import { createHitTester } from './character/hitTest'
 // Facing: set rig.root.rotation.y. render() and hitTest() notice a new yaw and re-place the
 // camera (so the feet stay on the anchor row), re-clip the contact shadow and, with
 // tuning.render.lights.followFacing, mirror the lights. Other motion (bob, jumps, tumbles) goes
-// on rig.body / rig.figure and never moves the camera.
+// on rig.body / rig.figure and never moves the camera. setContactShadow() puts the shadow on the
+// surface line under a lifted pet.
 
 export interface PetSceneOptions {
   canvas: HTMLCanvasElement
@@ -42,6 +44,16 @@ export interface PetScene {
   render(): void
   /** True if the viewport point (CSS px) is over the pet. */
   hitTest(x: number, y: number): boolean
+  /**
+   * Contact shadow (§6.1) on the surface line `elevationPt` below the pet's ground-contact point (0 = standing on
+   * it; the rest pose), at `strength` 0..1 (0 hides it). Takes effect at the next render.
+   */
+  setContactShadow(elevationPt: number, strength: number): void
+  /**
+   * The pet's projected box relative to `anchor` (pt) as the union over `yaws`: everything the rig can draw or be
+   * hit at, hit proxies and the resting contact shadow included. Restores the current yaw. Null for an empty rig.
+   */
+  measureBox(yaws: readonly number[]): Box | null
   dispose(): void
 }
 
@@ -99,18 +111,28 @@ export function createPetScene(opts: PetSceneOptions): PetScene {
   // slightly raised camera its front half is drawn below the feet, i.e. below the surface line,
   // over the window's title bar (or the Dock / screen edge, which hide it). Clipping it at the
   // ground line makes it look the same on every surface and keeps the pet from painting into
-  // the window it stands on. Size, color and opacity are §6.1's.
-  const groundLine = new THREE.Plane()
-  rig.shadow?.clipTo(groundLine)
+  // the window it stands on. Size, color and opacity are §6.1's. A lifted pet's shadow is drawn on
+  // the surface line below it, clipped the same way at that line (supportLineShadow).
+  const supportLine = new THREE.Plane()
+  rig.shadow?.clipTo(supportLine)
+  const shadowRestY = rig.shadow?.mesh.position.y ?? 0
+  let shadowElevation = 0
 
   let syncedYaw = Number.NaN
+  let syncedElevation = Number.NaN
   const sync = (): void => {
     const yaw = rig.root.rotation.y
-    if (yaw === syncedYaw) return
-    syncedYaw = yaw
-    framing.placeForYaw(yaw)
-    framing.groundLinePlane(groundLine)
-    aimLights(yaw)
+    const yawChanged = yaw !== syncedYaw
+    if (yawChanged) {
+      syncedYaw = yaw
+      framing.placeForYaw(yaw)
+      aimLights(yaw)
+    }
+    if (!yawChanged && shadowElevation === syncedElevation) return
+    syncedElevation = shadowElevation
+    const placement = supportLineShadow(framing, shadowElevation)
+    framing.linePlaneAt(placement.clipRow, supportLine)
+    if (rig.shadow) rig.shadow.mesh.position.y = shadowRestY - placement.drop
   }
   sync()
 
@@ -132,6 +154,36 @@ export function createPetScene(opts: PetSceneOptions): PetScene {
     hitTest(x, y) {
       sync()
       return hitTester(x, y)
+    },
+    setContactShadow(elevationPt, strength) {
+      shadowElevation = Number.isFinite(elevationPt) ? Math.max(0, elevationPt) : 0
+      rig.shadow?.setStrength(Number.isFinite(strength) ? strength : 0)
+    },
+    measureBox(yaws) {
+      const savedYaw = rig.root.rotation.y
+      const savedElevation = shadowElevation
+      shadowElevation = 0
+      let left = Infinity
+      let top = Infinity
+      let right = -Infinity
+      let bottom = -Infinity
+      for (const yaw of yaws) {
+        rig.root.rotation.y = yaw
+        sync() // re-places the camera for this yaw, as a render would
+        const e = projectedBoundingBox(rig.root, camera, width, height)
+        if (!e) continue
+        left = Math.min(left, e.left)
+        top = Math.min(top, e.top)
+        right = Math.max(right, e.right)
+        bottom = Math.max(bottom, e.bottom)
+      }
+      rig.root.rotation.y = savedYaw
+      shadowElevation = savedElevation
+      sync()
+      rig.root.updateMatrixWorld(true)
+      if (!Number.isFinite(left)) return null
+      const { x, y } = framing.anchor
+      return { left: left - x, top: top - y, right: right - x, bottom: bottom - y }
     },
     dispose() {
       rig.dispose()

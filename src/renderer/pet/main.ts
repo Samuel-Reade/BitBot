@@ -6,13 +6,18 @@ import type { PetSize } from '../../shared/types'
 import { addAttachMarkers, showHitProxies } from './character/debugViews'
 import { isEyesState, isFaceOverlay, isMouthState } from './character/face'
 import { measureViewportExtents, projectToViewport } from './character/framing'
+import { installOverlayErrorReporting, startOverlay } from './overlay'
 import { createPetScene } from './scene'
 
 // Pet renderer entry. Query params select the mode:
+//   (no mode)      the overlay: the production pet page (overlay.ts); main passes size and palette
 //   mode=snapshot  render one frame for the PNG dev tool (see src/main/dev/snapshot.ts)
 //   mode=spike     hand over to the Spike A renderer harness
 const params = new URLSearchParams(location.search)
-const mode = params.get('mode') ?? 'pet'
+const mode = params.get('mode') ?? 'overlay'
+const isOverlay = mode !== 'snapshot' && mode !== 'spike'
+// Before anything can throw (creating the WebGL context), so main hears about it.
+if (isOverlay) installOverlayErrorReporting()
 const paletteParam = params.get('palette')
 const palette = PALETTES[isPaletteId(paletteParam) ? paletteParam : DEFAULT_PALETTE_ID]
 const sizeParam = params.get('size')
@@ -54,7 +59,7 @@ if (mode === 'snapshot') {
 } else if (mode === 'spike') {
   void import('../spike/petSpike').then(({ startPetSpike }) => startPetSpike(pet, params))
 } else {
-  pet.render()
+  startOverlay(pet, { size, paletteId: palette.id })
 }
 
 // ---- Snapshot-mode helpers -------------------------------------------------------------------

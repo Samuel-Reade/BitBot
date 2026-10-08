@@ -17,7 +17,8 @@ import { BODY_HEIGHT_UNITS, SPEC_ORIGIN_HEIGHT } from './construction'
 //     re-solved whenever the yaw changes (placeForYaw), and the root origin lands on anchor.x;
 //   - the drawn body box is exactly tuning.render.bodyHeightPt[size] tall at the default yaw.
 // Consumers put `anchor` on the surface line (Spike A: on the work-area bottom) and the feet rest
-// exactly on it at every yaw.
+// exactly on it at every yaw. A lifted pet's contact shadow stays on the surface line below it
+// (supportLineShadow).
 
 /** Rest-pose shape the framing measures, as xyz triples in root space (the rig unrotated). */
 export interface FramingReference {
@@ -42,9 +43,12 @@ export interface PetFraming {
   /** Moves the camera (translation only) so the ground line of the rig at `yaw` sits on the anchor. False if it already did. */
   placeForYaw(yaw: number): boolean
   /**
-   * Writes the world-space plane through the camera center and the anchor row into `target`:
-   * everything drawn above the ground line is on its positive side. Valid until the next placeForYaw.
+   * Writes the world-space plane through the camera center and viewport row `rowPx` (CSS px from the top) into
+   * `target`: everything drawn above that row is on its positive side, so clipping to it cuts the image exactly
+   * along the row. Valid until the next placeForYaw.
    */
+  linePlaneAt(rowPx: number, target: THREE.Plane): THREE.Plane
+  /** linePlaneAt(anchor.y): the plane of the pet's ground line. */
   groundLinePlane(target: THREE.Plane): THREE.Plane
 }
 
@@ -151,15 +155,18 @@ export function framePetCamera(
       camera.updateMatrixWorld(true)
       return true
     },
-    groundLinePlane(target) {
-      // The camera center and two points on the anchor row span the plane.
-      const ndcY = 1 - (2 * anchor.y) / height
+    linePlaneAt(rowPx, target) {
+      // The camera center and two points on the row span the plane.
+      const ndcY = 1 - (2 * rowPx) / height
       const left = new THREE.Vector3(-1, ndcY, 0.5).unproject(probe)
       const right = new THREE.Vector3(1, ndcY, 0.5).unproject(probe)
       target.setFromCoplanarPoints(probe.position, left, right)
       const above = new THREE.Vector3(0, ndcY + 0.5, 0.5).unproject(probe)
       if (target.distanceToPoint(above) < 0) target.negate()
       return target
+    },
+    groundLinePlane(target) {
+      return framing.linePlaneAt(anchor.y, target)
     },
   }
   framing.placeForYaw(yaw)
@@ -177,6 +184,53 @@ export function framingReference(rig: Pick<BitbotRig, 'root' | 'parts'>): Framin
     body: rig.parts.body ? drawnVertices(rig.parts.body, toRoot) : null,
     footprint: rig.parts.feet ? drawnVertices(rig.parts.feet, toRoot) : null,
   }
+}
+
+/** How to draw the contact shadow on a support line below the pet's ground line (see supportLineShadow). */
+export interface SupportLineShadow {
+  /** Lower the shadow mesh by this much, scene units (root space: the yaw turns about +y, so down is down). */
+  readonly drop: number
+  /** …and clip it at this viewport row (CSS px from the top): linePlaneAt(clipRow). */
+  readonly clipRow: number
+}
+
+/**
+ * The contact shadow (§6.1) belongs on the surface line under the pet, which is `elevationPt` below the pet's
+ * ground line when the pet is lifted (0 = standing on it). Moving the shadow down by elevationPt / ptPerUnit puts it
+ * elevationPt lower on screen at the root's depth (perspective moves its near edge ~8% more and its far edge ~12%
+ * less: under 3 pt while it is visible at all, tuning.overlay.shadowFadePt), and clipping it at anchor.y + elevationPt
+ * keeps it from painting below that line, as at rest.
+ */
+export function supportLineShadow(framing: Pick<PetFraming, 'anchor' | 'ptPerUnit'>, elevationPt: number): SupportLineShadow {
+  const e = Number.isFinite(elevationPt) ? Math.max(0, elevationPt) : 0
+  return { drop: e / framing.ptPerUnit, clipRow: framing.anchor.y + e }
+}
+
+/**
+ * Viewport bounds (CSS px) of the bounding box of everything under `object` (drawn meshes, hit proxies and the
+ * contact shadow, whatever their layer or visibility), from the 8 projected corners of its world-space box: a
+ * conservative box around everything that can be drawn or hit. Null if there is no geometry.
+ */
+export function projectedBoundingBox(object: THREE.Object3D, camera: THREE.Camera, width: number, height: number): ViewportExtents | null {
+  object.updateMatrixWorld(true)
+  camera.updateMatrixWorld(true)
+  const box = new THREE.Box3().setFromObject(object)
+  if (box.isEmpty()) return null
+  let left = Infinity
+  let right = -Infinity
+  let top = Infinity
+  let bottom = -Infinity
+  const v = new THREE.Vector3()
+  for (let i = 0; i < 8; i++) {
+    v.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).project(camera)
+    const x = ((v.x + 1) / 2) * width
+    const y = ((1 - v.y) / 2) * height
+    if (x < left) left = x
+    if (x > right) right = x
+    if (y < top) top = y
+    if (y > bottom) bottom = y
+  }
+  return { left, right, top, bottom }
 }
 
 /** Vertices of every mesh the pet camera draws (layer 0) under `object`, in root space. */
