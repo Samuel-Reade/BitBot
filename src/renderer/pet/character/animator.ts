@@ -245,8 +245,8 @@ export class Animator {
 
     // The pose: the state's own, blended in from the pose shown when the state changed, then the mood layers.
     let pose = this.statePose(input, tau, t, dt, eventMode)
-    const blending = tau < T.blendS
-    if (blending) pose = mix(this.from, pose, smoothstep(tau / T.blendS))
+    const blendS = blendFor(input.state, T)
+    if (tau < blendS) pose = mix(this.from, pose, smoothstep(tau / blendS))
     pose = this.moodLayers(pose, input, t, eventMode)
     this.last = pose
 
@@ -408,16 +408,17 @@ export class Animator {
       case 'peek': {
         const k = T.peek
         p.roll = -f * k.lean
-        if (f === 1) p.armLRaise = k.armUp
-        else p.armRRaise = k.armUp
+        // The arm on the side turned toward the viewer (the 3/4 view hides the other one behind the body).
+        if (f === 1) p.armRRaise = k.armUp
+        else p.armLRaise = k.armUp
         return p
       }
       case 'greet': {
         const g = T.greet
         const wave = Math.sin(TAU * g.waveHz * tau) * g.wave
-        // The arm on the viewer's side the pet faces.
-        if (f === 1) p.armLRaise = g.armUp + wave
-        else p.armRRaise = g.armUp + wave
+        // The arm on the side turned toward the viewer: facing right (+1) shows the pet's own right arm (−x).
+        if (f === 1) p.armRRaise = g.armUp + wave
+        else p.armLRaise = g.armUp + wave
         p.bodyY = Math.abs(Math.sin(TAU * g.waveHz * 0.5 * tau)) * g.bounceAmp
         return p
       }
@@ -732,7 +733,7 @@ export class Animator {
     const active = (e: Timed | null): boolean => e !== null && t >= e.start && t < e.end
     if (CONTINUOUS.has(input.state)) return true
     if (IDLE_LIKE.has(input.state) && !eventMode) return true
-    if (t - this.stateStart < this.T.blendS) return true
+    if (t - this.stateStart < blendFor(input.state, this.T)) return true
     if (this.yaw !== yawFor(input)) return true
     if (active(this.event) && this.event?.kind !== 'glance') return true
     if (active(this.moodEvent) && (this.moodEvent?.kind === 'hop' || this.moodEvent?.kind === 'wiggle')) return true
@@ -840,6 +841,11 @@ function mix(a: Pose, b: Pose, u: number): Pose {
   const out = { ...b }
   for (const key of POSE_KEYS) out[key] = lerp(a[key], b[key], u)
   return out
+}
+
+/** How long a change into `state` blends (§6.4: 150–250 ms; a landing hits at once). */
+function blendFor(state: BehaviorState, T: AnimTuning): number {
+  return state === 'land' ? T.land.blendS : T.blendS
 }
 
 /** The yaw the pet turns toward: its facing's 3/4 view (§6.1); a climbing pet faces the viewer. */

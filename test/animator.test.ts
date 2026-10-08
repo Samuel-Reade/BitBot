@@ -83,8 +83,9 @@ describe('Animator: idle styles', () => {
       if (r.wakeAt !== null && r.wakeAt > t * 1000) {
         still++
         next = r.wakeAt
-        // Nothing moves while it waits.
-        expect(Math.abs(rig.body.position.y - rest) < 1e-12 || r.changed === false || true).toBe(true)
+        // Nothing moves while it waits: the body is at rest (a blink may still change the face).
+        expect(rig.body.position.y).toBe(rest)
+        expect(rig.body.scale.y).toBe(1)
       }
     }
     // Most of the time it waits for something.
@@ -148,8 +149,9 @@ describe('Animator: face', () => {
     }
     expect(new Set(mouths)).toEqual(new Set(['open-chew-A', 'open-chew-B']))
     const switches = mouths.filter((m, i) => i > 0 && m !== mouths[i - 1]).length
-    expect(switches).toBeGreaterThanOrEqual(A.eat.chewHz * 2 - 2)
-    expect(switches).toBeLessThanOrEqual(A.eat.chewHz * 2 + 1)
+    // One switch per chew frame: chewHz frames a second, alternating A and B.
+    expect(switches).toBeGreaterThanOrEqual(A.eat.chewHz - 1)
+    expect(switches).toBeLessThanOrEqual(A.eat.chewHz + 1)
     expect(anim.face?.eyes).toBe('happy')
   })
 

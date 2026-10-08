@@ -29,9 +29,13 @@ import {
   renderAllowed,
   sameShadow,
   snapToDevicePixels,
+  insideBox,
+  nextAnimationAt,
   type FramePlan,
   type GrabMouseEvent,
+  type OverlayModelDeps,
 } from '../src/renderer/pet/placement'
+import type { AnimInput, AnimResult } from '../src/renderer/pet/character/animator'
 
 // The overlay renderer's decisions (src/renderer/pet/placement.ts): the placement rules one by one, then the
 // OverlayModel state machine driven the way overlay.ts drives it, with a fake pet whose silhouette is a box.
@@ -89,7 +93,7 @@ class Driver {
   readonly model: OverlayModel
   private seq = 0
 
-  constructor(options: { dpr?: number; config?: Partial<PetConfig>; start?: boolean } = {}) {
+  constructor(options: { dpr?: number; config?: Partial<PetConfig>; start?: boolean; animate?: OverlayModelDeps['animate'] } = {}) {
     this.dpr = options.dpr ?? 2
     this.model = new OverlayModel(
       { edge: EDGE, anchor: ANCHOR, devicePixelRatio: this.dpr },
@@ -108,6 +112,7 @@ class Driver {
           this.frameRequests++
         },
         log: (level, message) => this.logs.push({ level, message }),
+        ...(options.animate ? { animate: options.animate } : {}),
       },
     )
     if (options.start !== false) this.start(options.config)
@@ -184,7 +189,7 @@ class Driver {
 }
 
 /** A started driver with the pet standing at (x, y), drawn and settled (the loop stopped). */
-function placed(options: { dpr?: number; config?: Partial<PetConfig> } = {}, x = 800, y = GROUND): Driver {
+function placed(options: { dpr?: number; config?: Partial<PetConfig>; animate?: OverlayModelDeps['animate'] } = {}, x = 800, y = GROUND): Driver {
   const d = new Driver(options)
   d.state(0, x, y, { snap: true })
   const plans = d.run(Driver.at(0))
@@ -1003,5 +1008,138 @@ describe('OverlayModel: dev stats', () => {
     expect(quiet.frames).toBeGreaterThan(2)
     expect(quiet.rafIntervalsMs).toEqual([])
     expect(quiet.inputToFrameMs).toEqual([])
+  })
+})
+
+/** A fake animator: records its calls and answers with `result` (changed, wakeAt relative to the call, fps). */
+class FakeAnimator {
+  readonly calls: { input: AnimInput; ts: number }[] = []
+  result: { changed: boolean; wakeIn: number | null; fps: number; shadowScale?: number } = { changed: true, wakeIn: null, fps: 60 }
+
+  readonly animate = (input: AnimInput, ts: number): AnimResult => {
+    this.calls.push({ input: { ...input }, ts })
+    const r = this.result
+    return { changed: r.changed, wakeAt: r.wakeIn === null ? null : ts + r.wakeIn, fps: r.fps, shadowScale: r.shadowScale ?? 1 }
+  }
+}
+
+describe('animation scheduling rules', () => {
+  it('nextAnimationAt: the wake time, but not before the frame-rate cap allows a render', () => {
+    expect(nextAnimationAt(null, 100, 30, 2)).toBeNull()
+    expect(nextAnimationAt(500, null, 30, 2)).toBe(500)
+    expect(nextAnimationAt(110, 100, 30, 2)).toBeCloseTo(100 + 1000 / 30 - 2, 9)
+    expect(nextAnimationAt(900, 100, 30, 2)).toBe(900)
+  })
+
+  it('insideBox: relative to the anchor, edges included', () => {
+    const box = { left: -60, top: -130, right: 60, bottom: 3 }
+    expect(insideBox({ x: 120, y: 180 }, ANCHOR, box)).toBe(true)
+    expect(insideBox({ x: 60, y: 50 }, ANCHOR, box)).toBe(true)
+    expect(insideBox({ x: 59, y: 50 }, ANCHOR, box)).toBe(false)
+    expect(insideBox({ x: 120, y: 184 }, ANCHOR, box)).toBe(false)
+  })
+})
+
+describe('OverlayModel: animation', () => {
+  it('passes what main says to the animator and renders when it reports a change', () => {
+    const fake = new FakeAnimator()
+    const d = new Driver({ animate: fake.animate })
+    d.state(0, 800, GROUND, { snap: true, state: 'sleep', mood: 'sleepy', dust: 0.4, look: 'up', facing: -1 })
+    const plan = d.frame(Driver.at(0))
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]?.input).toMatchObject({ state: 'sleep', mood: 'sleepy', dust: 0.4, look: 'up', facing: -1, held: null, idleMode: tuning.anim.idleMode })
+    expect(plan.render).not.toBeNull()
+  })
+
+  it('sleeps on a timer until the animation’s next change, then animates again', () => {
+    const fake = new FakeAnimator()
+    fake.result = { changed: true, wakeIn: 2000, fps: 30 }
+    const d = new Driver({ animate: fake.animate })
+    d.state(0, 800, GROUND, { snap: true })
+    const t0 = Driver.at(0)
+    d.frame(t0)
+    // The placement settles; then nothing is due until the wake time: no frames, a timer instead.
+    const plans = d.run(t0 + 17)
+    const last = plans.at(-1)
+    expect(last?.again).toBe(false)
+    expect(last?.wakeAt).toBeCloseTo(t0 + 2000, 6)
+    const calls = fake.calls.length
+    d.frame(t0 + 2000 - 1)
+    expect(fake.calls.length).toBe(calls + 1)
+  })
+
+  it('a static pose (no change) renders nothing', () => {
+    const fake = new FakeAnimator()
+    const d = placed({ animate: fake.animate })
+    fake.result = { changed: false, wakeIn: null, fps: 60 }
+    d.model.onRedraw() // dirty: animates
+    const plans = d.run(T)
+    expect(plans.filter((p) => p.render !== null)).toHaveLength(1) // the redraw itself
+    expect(plans.at(-1)?.wakeAt).toBeNull()
+    d.model.onDevPet({ face: null, idleMode: 'event' }) // new input: animates again, nothing changed
+    const calls = fake.calls.length
+    expect(d.frame(T + 100).render).toBeNull()
+    expect(fake.calls.length).toBe(calls + 1)
+  })
+
+  it('continuous animation renders at most at the state’s frame rate, waiting between renders on a timer', () => {
+    const fake = new FakeAnimator()
+    fake.result = { changed: true, wakeIn: 0, fps: 10 }
+    const d = new Driver({ animate: fake.animate })
+    d.state(0, 800, GROUND, { snap: true })
+    let ts = Driver.at(0)
+    let renders = 0
+    for (let i = 0; i < 120; i++, ts += 1000 / 60) {
+      const plan = d.frame(ts)
+      if (plan.render) renders++
+    }
+    // Two seconds at 10 fps.
+    expect(renders).toBeGreaterThanOrEqual(19)
+    expect(renders).toBeLessThanOrEqual(22)
+    const plan = d.frame(ts)
+    expect(plan.again || plan.wakeAt !== null).toBe(true)
+  })
+
+  it('a drag animates as held, swinging with the cursor; a click keeps the state it had', () => {
+    const fake = new FakeAnimator()
+    const d = placed({ animate: fake.animate })
+    d.down(ON_PET, T)
+    d.frame(T + 1)
+    expect(fake.calls.at(-1)?.input.state).toBe('idle')
+    expect(fake.calls.at(-1)?.input.held).toBeNull()
+    d.move({ x: 900, y: 700 }, T + 5, 1)
+    d.frame(T + 20)
+    const held = fake.calls.at(-1)?.input
+    expect(held?.state).toBe('held')
+    expect(held?.held).toEqual({ grabX: 0, grabY: ON_PET.y - GROUND, mouseX: 900 })
+  })
+
+  it('debug:pet sets the face override and idle style; a malformed one is ignored', () => {
+    const fake = new FakeAnimator()
+    const d = placed({ animate: fake.animate })
+    d.model.onDevPet({ face: { eyes: 'heart' }, idleMode: 'continuous' })
+    d.frame(T)
+    expect(fake.calls.at(-1)?.input).toMatchObject({ faceOverride: { eyes: 'heart' }, idleMode: 'continuous' })
+    d.model.onDevPet({ face: { eyes: 'nope' }, idleMode: 'continuous' })
+    expect(d.logs.some((l) => l.message.includes('malformed debug:pet'))).toBe(true)
+  })
+
+  it('scales the contact shadow while an animation lifts the pet', () => {
+    const fake = new FakeAnimator()
+    fake.result = { changed: true, wakeIn: 0, fps: 60, shadowScale: 0.5 }
+    const d = new Driver({ animate: fake.animate })
+    d.state(0, 800, GROUND, { snap: true })
+    const plan = d.frame(Driver.at(0))
+    expect(plan.render).toEqual({ elevationPt: 0, strength: 0.5 })
+  })
+
+  it('never hit-tests outside the pet’s measured box, whatever is drawn there', () => {
+    const d = placed()
+    d.cursor(ON_PET, T)
+    expect(d.take(IPC.petHover)).toEqual([{ over: true, epoch: 3 }])
+    // A box that ends above the cursor: the same point no longer counts.
+    d.model.setPetBox({ left: -60, top: -130, right: 60, bottom: -100 })
+    d.cursor({ x: ON_PET.x, y: ON_PET.y + 1 }, T + 200)
+    expect(d.take(IPC.petHover)).toEqual([{ over: false, epoch: 3 }])
   })
 })

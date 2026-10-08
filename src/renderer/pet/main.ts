@@ -2,7 +2,8 @@ import { Vector3 } from 'three'
 import { IPC } from '../../shared/ipc'
 import { DEFAULT_PALETTE_ID, PALETTES, isPaletteId } from '../../shared/palettes'
 import { tuning } from '../../shared/tuning'
-import type { PetSize } from '../../shared/types'
+import { isBehaviorState, isMood, type PetSize } from '../../shared/types'
+import { Animator, type AnimInput } from './character/animator'
 import { addAttachMarkers, showHitProxies } from './character/debugViews'
 import { isEyesState, isFaceOverlay, isMouthState } from './character/face'
 import { measureViewportExtents, projectToViewport } from './character/framing'
@@ -31,7 +32,9 @@ const pet = createPetScene({ canvas, width: edge, height: edge, size, palette })
 
 if (mode === 'snapshot') {
   // Options (all optional): bg=transparent|checker|<css color>  yaw=<radians>
-  //   eyes=open|blink  mouth=smile  overlays=blush,...  shadow=<0..1>
+  //   eyes=open|blink  mouth=smile  overlays=blush,...  frame=<n>  shadow=<0..1>
+  //   state=<behavior state> [t=<seconds into it, default 1>] [mood=<mood>] [dust=<0..1>] [facing=1|-1]
+  //     (pose the pet with the animator, continuous idle style, as it looks t seconds into that state)
   //   show=hit,attach,anchor,measure,hitmask  (hit proxies, attach-point markers, anchor crosshair,
   //   log numbers, or ONLY the region where pet.hitTest() is true, one sample per pt, for diffing)
   //   (not 'debug=': Electron's Node treats --debug as its own, removed flag and exits)
@@ -43,6 +46,7 @@ if (mode === 'snapshot') {
   }
   const yaw = params.get('yaw')
   if (yaw !== null && Number.isFinite(Number(yaw))) pet.rig.root.rotation.y = Number(yaw)
+  applySnapshotPose(params)
   applySnapshotFace(params)
   const shadow = params.get('shadow')
   if (shadow !== null && Number.isFinite(Number(shadow))) pet.rig.shadow?.setStrength(Number(shadow))
@@ -63,6 +67,32 @@ if (mode === 'snapshot') {
 }
 
 // ---- Snapshot-mode helpers -------------------------------------------------------------------
+
+function applySnapshotPose(query: URLSearchParams): void {
+  const state = query.get('state')
+  if (!isBehaviorState(state)) return
+  const mood = query.get('mood')
+  const t = Number(query.get('t') ?? '1')
+  const dust = Number(query.get('dust') ?? '0')
+  const facing = query.get('facing') === '-1' ? -1 : 1
+  // A fixed random source, so a snapshot is the same every run.
+  let seed = 1
+  const animator = new Animator(pet.rig, { ptPerUnit: pet.ptPerUnit, random: () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646 })
+  const input: AnimInput = {
+    state,
+    mood: isMood(mood) ? mood : 'content',
+    dust: Number.isFinite(dust) ? Math.min(1, Math.max(0, dust)) : 0,
+    facing,
+    look: null,
+    held: null,
+    faceOverride: null,
+    idleMode: 'continuous',
+  }
+  // Step into the state at 60 fps, so springs and blends are where they would be.
+  const end = Number.isFinite(t) && t >= 0 ? t * 1000 : 1000
+  for (let ms = 0; ms < end; ms += 1000 / 60) animator.update(ms, input)
+  animator.update(end, input)
+}
 
 function applySnapshotFace(query: URLSearchParams): void {
   const eyes = query.get('eyes')

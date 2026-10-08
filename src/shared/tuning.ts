@@ -341,9 +341,10 @@ export const tuning = {
     fall: { tumbleRate: 7, flailHz: 8, flail: 0.8, whipHz: 10, whip: 0.6 },
     /**
      * Land (§6.4, for tuning.move.landS): squash to `squash` of the height, overshoot to `stretch`, settle; arms out
-     * (rad), antenna boing (rad); wide eyes for the first wideFraction of it.
+     * (rad), antenna boing (rad); wide eyes for the first wideFraction of it. It blends in over blendS only (an impact
+     * is sudden: the usual blendS would swallow the squash).
      */
-    land: { squash: 0.75, stretch: 1.08, armsOut: 0.6, boing: 0.5, wideFraction: 0.4 },
+    land: { squash: 0.75, stretch: 1.08, armsOut: 0.6, boing: 0.5, wideFraction: 0.4, blendS: 0.04 },
     /**
      * Held (§6.4): the pet swings about the grab point like a pendulum of lengthPt under gravityPt (pt/s²), damped
      * (1/s), at most maxAngle (rad); idleSway (rad) without a drag to follow. Shaking it (summed speed changes over
@@ -394,7 +395,7 @@ export const tuning = {
      * Dust (§6.4 "dusty"): grey specks on the body, as many as level × maxSpecks, shown from visibleFrom (§9.1: dust
      * ≥ 30 → visible). radius in scene units. More specks = reads dustier.
      */
-    dust: { visibleFrom: 0.3, maxSpecks: 36, radius: 0.028, color: '#8C8A7E', seed: 7 },
+    dust: { visibleFrom: 0.3, maxSpecks: 36, radius: 0.04, color: '#6F6D63', seed: 7 },
     /**
      * Rest emissive intensities of the glowing bits (§6.1). M2 animates them: the antenna tip
      * flashes while eating, the power light dims asleep, the amber light blinks when hungry.
