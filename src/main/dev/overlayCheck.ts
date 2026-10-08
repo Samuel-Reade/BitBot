@@ -36,7 +36,7 @@ import { tuning } from '../../shared/tuning'
 import { BitbotApp, type BitbotInspection } from '../bitbotApp'
 import type { CliArgs } from '../cli'
 import { resolveHelperPath } from '../helper/paths'
-import { HELPER_PROTOCOL_VERSION } from '../helper/protocol'
+import { HELPER_PROTOCOL_VERSION, type HelperWindow } from '../helper/protocol'
 import { blockedRequestCount } from '../security'
 import type { SimLoop } from '../sim/loop'
 import { windowNumber } from '../windows/onScreen'
@@ -270,6 +270,8 @@ class OverlayCheck {
 
   // What the check feeds Bitbot.
   private cursorPoint: Point = { x: 0, y: 0 }
+  /** The windows Bitbot's world is built from (made up; never the user's). */
+  private windows: HelperWindow[] = []
   private cursorFn: ((nowMs: number) => Point) | null = null
   private mover: ((tMs: number) => Point | null) | null = null
   private popupCalls = 0
@@ -334,6 +336,7 @@ class OverlayCheck {
         this.closeMenu = onClose
       },
       devMover: (tMs) => this.onStep(tMs),
+      windows: () => this.windows,
       debug: true,
       log: (line) => this.appLog(line),
     })
@@ -359,7 +362,7 @@ class OverlayCheck {
     this.watchConsole()
     // The grab area's checks and timings assume an outline that only moves with the pet: the still idle style (blinks
     // and looks only). The idle styles' own cost is measured in their phases.
-    this.i().setDevOverrides({ idleMode: 'still' })
+    this.i().setDevOverrides({ idleMode: 'still', wander: false })
     this.loco = this.i().locomotion
     const home = this.groundPoint()
     this.log(`[check] the pet stands at ${fmtPoint(home)} (work area ${fmtRect(wa)})`)
@@ -367,6 +370,7 @@ class OverlayCheck {
     await this.windowChecks()
     await this.grabAreaChecks(home)
     await this.interactionChecks(home)
+    await this.worldChecks(home)
     if (this.opts.measure) await this.measurements(home)
     await this.reloadCheck()
     await this.finalChecks()
@@ -456,6 +460,69 @@ class OverlayCheck {
       `${this.describeZ(gone.z)}; gone from the list ${gone.ms.toFixed(0)} ms after it was hidden`,
     )
     this.check('…and click-through', !this.ix().mouseEnabled)
+  }
+
+  /**
+   * M3: the world from a made-up window. The pet gets onto its top (a route: walk, climb its side, step on), rides it
+   * while it moves (with the fast snapshot rate), and falls back to the ground when it closes.
+   */
+  private async worldChecks(home: Point): Promise<void> {
+    const W = T.world
+    const loco = (): NonNullable<BitbotInspection['locomotion']> => {
+      const l = this.i().locomotion
+      if (!l) throw new Error('no pet')
+      return l
+    }
+    const win: HelperWindow = {
+      wid: 900_001,
+      pid: 1,
+      bundleId: 'com.bitbot.check',
+      layer: 0,
+      x: home.x + W.dx,
+      y: home.y - W.up,
+      w: W.width,
+      h: W.up,
+      onScreen: true,
+      alpha: 1,
+    }
+    const onTop = (): boolean => loco().state.surface?.startsWith(`top:${win.wid}:`) === true
+    this.windows = [{ ...win }]
+    this.i().refreshWorld()
+    if (!(await this.until("world: the made-up window's top is a surface", () => loco().world.segments.some((s) => s.windowId === win.wid))))
+      return
+    this.check('world: a route onto its top', loco().goTo({ x: win.x + win.w / 2, y: win.y }))
+    const reached = await this.until(
+      'world: the pet gets onto the window (walks, climbs its side, steps onto the top)',
+      // Arrived: on the top with its route done (a hop onto the corner lands first, then it walks on to the middle).
+      () => onTop() && loco().state.behavior === 'idle' && loco().goal === null,
+      W.reachTimeoutMs,
+    )
+    if (!reached) return
+    const x0 = loco().state.x
+    let fast = false
+    for (let i = 0; i < W.rideSteps; i++) {
+      win.x += W.rideStepPt
+      this.windows = [{ ...win }]
+      this.i().refreshWorld()
+      await sleep(W.rideIntervalMs)
+      if (this.i().snapshotHz === tuning.world.snapshotHz.attached) fast = true
+    }
+    const moved = W.rideSteps * W.rideStepPt
+    const rode = await this.until(null, () => Math.abs(loco().state.x - (x0 + moved)) < 1)
+    const s = loco().state
+    this.check(
+      'world: it rides the moving window',
+      rode,
+      `moved ${(s.x - x0).toFixed(1)} of ${moved} pt, on ${s.surface ?? 'nothing'} (${s.behavior})`,
+    )
+    this.check('world: …with the fast snapshot rate while the window moves', fast, `${tuning.world.snapshotHz.attached} Hz`)
+    this.windows = []
+    this.i().refreshWorld()
+    await this.until(
+      'world: the window closes and the pet falls back onto the ground',
+      () => loco().state.surface === 'ground' && standing(loco().state.behavior),
+    )
+    await this.goTo(home)
   }
 
   private async interactionChecks(home: Point): Promise<void> {

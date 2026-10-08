@@ -159,6 +159,15 @@ For M3: climbing is only previewed in place (rolled a quarter turn about the bod
 
 Also found while measuring: an animated outline moves under a still cursor, so after every render that changed the pose the overlay tests hover again at the last cursor it saw (a click must never be caught where the pet no longer is). Parts an animation draws outside the measured pet box are never grabbable (SPEC-DEVIATION in placement.ts).
 
+## M3: the world (2026-10-08)
+
+- **Built:** the world model (eligible windows, visible top and side pieces under occlusion, the ground and screen walls), routes (walk, drop, jump, climb, short hops onto and off walls; Dijkstra over travel time plus penalties), locomotion along them, riding and flinging, falls landing on the first surface crossed, a wanderer standing in for the M6 brain, the snapshot rate (decided adaptive), the debug view and the developer panel's World section.
+- **Climbing:** the pet turns a quarter turn about its contact point, and the canvas anchor moves with the turn (`tuning.render.climbAnchor`), so nothing is clipped at sizes S, M and L. Main turns the pet's box the same way (`boxFor`) for the grab area and the safety net.
+- **Dev check:** new world checks with one made-up window (the user's real windows are left out, so results never depend on the desktop): the pet gets onto its top, rides it 120 of 120 pt with the 15 Hz snapshot rate, and falls back when it closes. 65/65 functional checks, 0 thresholds failed.
+- **Found by the check:** a snapshot asked for right after a pushed one made a 20 pt window move read as a fling (speed = move ÷ a few ms). Window speed is now measured over at least `tuning.move.flingMinIntervalS` (1/15 s).
+- **On the real desktop** (90 s, dev build): the pet hopped to a window's side, climbed it, walked its top, dropped to the Dock and climbed the other side; clean quit, no errors.
+- **Not covered yet:** multiple displays (Phase 4), tossing (M4), the cost of real walking (the dev check moves the pet by teleport; walking renders at 60 fps like a drag).
+
 ## Manual checks (the real app)
 
 Start it with `npm run build:helper` (once), then `npm start`. The pet stands on the Dock at the bottom centre, and a small monitor icon appears in the menu bar.

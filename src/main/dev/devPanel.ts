@@ -12,7 +12,7 @@
 // Construct it only in dev builds: a packaged build registers no handler, so the channels don't exist there.
 
 import { BrowserWindow, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
-import { isDevPanelSet, type DevPanelSet, type DevPanelStatus } from '../../shared/devPanel'
+import { isDevPanelAction, isDevPanelSet, type DevPanelAction, type DevPanelSet, type DevPanelStatus } from '../../shared/devPanel'
 import { IPC } from '../../shared/ipc'
 import type { OverlayStatsMsg } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
@@ -24,6 +24,8 @@ export interface DevPanelOptions {
   status(): DevPanelAppStatus
   /** A validated debug:panel-set from the panel. */
   apply(set: DevPanelSet): void
+  /** A validated debug:panel-action from the panel (go somewhere, stop). */
+  action(action: DevPanelAction): void
   /** The overlay's counters (BitbotApp.requestOverlayStats); null if they don't come within timeoutMs. */
   requestOverlayStats(timeoutMs: number): Promise<OverlayStatsMsg | null>
   log(line: string): void
@@ -177,6 +179,22 @@ export class DevPanel {
         this.opts.apply(payload)
       } catch (err) {
         this.opts.warn(`${IPC.debugPanelSet} handler`, `[bitbot] ERROR handling ${IPC.debugPanelSet}: ${errorText(err)}`)
+      }
+      this.push(false)
+    })
+    ipcMain.on(IPC.debugPanelAction, (event: IpcMainEvent, payload: unknown) => {
+      if (!this.fromPanel(event)) {
+        this.opts.warn(`${IPC.debugPanelAction} sender`, `[bitbot] dev panel: ignored ${IPC.debugPanelAction} from another page`)
+        return
+      }
+      if (!isDevPanelAction(payload)) {
+        this.opts.warn(`malformed ${IPC.debugPanelAction}`, `[bitbot] dev panel: ignored a malformed ${IPC.debugPanelAction}`)
+        return
+      }
+      try {
+        this.opts.action(payload)
+      } catch (err) {
+        this.opts.warn(`${IPC.debugPanelAction} handler`, `[bitbot] ERROR handling ${IPC.debugPanelAction}: ${errorText(err)}`)
       }
       this.push(false)
     })

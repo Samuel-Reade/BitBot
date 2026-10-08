@@ -27,6 +27,7 @@ import { DEFAULT_PALETTE_ID } from '../shared/palettes'
 import type { OverlayStatsMsg, PetCursorMsg, PetHoverResetMsg, PetReadyMsg, PetVisibleMsg } from '../shared/petProtocol'
 import { tuning } from '../shared/tuning'
 import type { LookDirection, PaletteId, PetSize } from '../shared/types'
+import { boxFor } from '../shared/world'
 import { ActivationMonitor, type ActivationCounters, type FocusEventSource } from './activationMonitor'
 import { Debouncer } from './debounce'
 import { devPetMsg, DevOverrideState, overriddenFields } from './dev/devOverrides'
@@ -34,7 +35,7 @@ import { DevPanel } from './dev/devPanel'
 import type { DevPanelAppStatus } from './dev/devPanelModel'
 import { HelperClient, type HelperExitInfo } from './helper/helperClient'
 import { resolveHelperPath } from './helper/paths'
-import type { FrontmostFullscreenMsg } from './helper/protocol'
+import type { FrontmostFullscreenMsg, HelperWindow } from './helper/protocol'
 import { Hotkeys } from './hotkeys'
 import { petContextMenuTemplate } from './menus/petContextMenu'
 import { BitbotTray } from './menus/tray'
@@ -44,7 +45,8 @@ import { Locomotion } from './sim/locomotion/locomotion'
 import { lookDirection } from './sim/look'
 import { defaultSimTiming, globalScheduler, SimLoop } from './sim/loop'
 import { petAreaFor, type DisplayGeometry } from './sim/world/screenArea'
-import { buildWorld, worldParamsFor, type World } from './sim/world/worldModel'
+import { WorldDriver } from './sim/worldDriver'
+import { worldParamsFor } from './sim/world/worldModel'
 import { ThrottledLog } from './throttledLog'
 import { ElectronHitWindow, type HitWindowCounters } from './windows/hitWindow'
 import { windowNumber, windowOnScreen } from './windows/onScreen'
@@ -61,11 +63,6 @@ import { PetWindow } from './windows/petWindow'
 
 /** M1 draws the base form at the default size and palette (§6.1, §6.2); settings (M8) make both choosable. */
 const PET: { size: PetSize; paletteId: PaletteId } = { size: 'M', paletteId: DEFAULT_PALETTE_ID }
-
-/** M3 compile stand-in until the helper's snapshots feed the world: the ground and the screen walls, no windows. */
-function groundOnlyWorld(display: DisplayGeometry, petBox: Box): World {
-  return buildWorld(display, petBox, [], worldParamsFor(tuning.render.bodyHeightPt[PET.size], process.pid))
-}
 
 /** The simulation's clock: pet:state's t and sentAt, PetInteraction and the activation monitor all use it. */
 const clock = systemClock
@@ -87,6 +84,11 @@ export interface BitbotAppOptions {
    * ignored while held), null leaves it alone.
    */
   devMover?: (tMs: number) => Point | null
+  /**
+   * The windows the world is built from, instead of the helper's (the dev check's made-up windows: the user's real
+   * windows would make its results depend on the desktop). The helper's snapshots still pace the updates.
+   */
+  windows?: () => readonly HelperWindow[]
   /** PetConfig.debug: the overlay keeps renderer counters and answers stats requests. Default false. */
   debug?: boolean
   /** Where the app's log lines go. Default: console.log. */
@@ -139,6 +141,10 @@ export interface BitbotInspection {
   setVisible(visible: boolean): void
   /** Changes the dev panel's overrides as the panel would (dev builds; the check measures each idle style with it). */
   setDevOverrides(set: DevPanelSet): void
+  /** Rebuilds the world from a fresh snapshot now (after changing options.windows). */
+  refreshWorld(): void
+  /** The helper's snapshot rate asked for now, Hz (null: none yet). */
+  snapshotHz: number | null
   /**
    * Resolves with the pet:ready of the current page load once it came (at once if it already has), from a load
    * numbered minLoad or later (default 1; pass `loads + 1` to wait for the next one); rejects after timeoutMs.
@@ -179,6 +185,8 @@ export class BitbotApp {
   private readonly cursor: () => Point
   /** The developer panel's overrides; never changed in packaged builds (no panel). */
   private readonly overrides = new DevOverrideState()
+  /** The world from bitbot-helper's snapshots, the snapshot rate, wandering, the debug view (sim/worldDriver.ts). */
+  private readonly worldDriver: WorldDriver
   /** Dev builds only. */
   private readonly devPanel: DevPanel | null
 
@@ -200,6 +208,8 @@ export class BitbotApp {
   private wakeCursor: Point | null = null
   /** Where the eyes look (sim/look.ts), as of the newest step. */
   private look: LookDirection | null = null
+  /** Dev builds: the last movement line logged (logMovement). */
+  private lastMovementLine = ''
   private menu: { menu: Menu; win: BrowserWindow } | null = null
   /** Dev: native grab-area mouse events still to log for the current press. */
   private nativeLogLeft = 0
@@ -225,6 +235,13 @@ export class BitbotApp {
       forwardMouseMoves: tuning.hitArea.forwardMouseMoves,
       log: (line) => this.log(`[bitbot] ${line}`),
     })
+    this.worldDriver = new WorldDriver({
+      params: worldParamsFor(tuning.render.bodyHeightPt[PET.size], process.pid),
+      setPollRate: (hz) => this.helper?.setPollRate(hz),
+      sendDebug: this.dev ? (msg) => void this.petWindow.send(IPC.debugWorld, msg) : null,
+      random: Math.random,
+    })
+    this.applyOverridesToWorld()
     this.states = new PetStateSender((msg) => {
       this.petWindow.send(IPC.petState, msg)
     })
@@ -245,7 +262,8 @@ export class BitbotApp {
       now: () => clock.now(),
       cursor: () => this.cursor(),
       displayedPoint: (nowMs) => drawnPoint(this.presented, nowMs, this.heldPoint()),
-      petBox: () => this.ready?.petBox ?? null,
+      // Turned with the pet while it climbs (boxFor), so the grab area and the safety net follow it onto a wall.
+      petBox: () => (this.ready ? boxFor(this.ready.petBox, this.loco?.state.attach ?? 'floor') : null),
       overlayShown: () => !this.hiddenByUser && !app.isHidden(),
       petDrawn: () => this.petWindow.petDrawn,
       frontmostFullscreen: () => this.fullscreen,
@@ -282,6 +300,8 @@ export class BitbotApp {
       onStep: (dtS, t) => this.step(dtS, t),
       afterSteps: (wakeMs) => {
         this.watchAppHidden()
+        this.worldDriver.tick(wakeMs, this.loco)
+        if (this.dev) this.logMovement()
         this.interaction.tick(wakeMs)
         this.observe()
         this.devPanel?.refresh()
@@ -349,6 +369,7 @@ export class BitbotApp {
       ? new DevPanel({
           status: () => this.devPanelStatus(),
           apply: (set) => this.applyDevPanelSet(set),
+          action: (action) => this.worldDriver.action(action, this.loco),
           requestOverlayStats: (timeoutMs) => this.requestOverlayStats(timeoutMs),
           log: (line) => this.log(line),
           warn: (key, line) => this.throttled.log(key, line),
@@ -430,6 +451,8 @@ export class BitbotApp {
     this.petWindow.showInactive()
     if (app.isHidden()) this.log('[bitbot] WARNING macOS still hides Bitbot after showInactive(): the pet stays hidden')
     if (this.loco) this.loop.start()
+    this.worldDriver.setHidden(false, clock.now(), this.loco)
+    this.refreshWorld()
     this.snap()
     this.interaction.invalidateOnScreen()
     this.observe()
@@ -453,6 +476,7 @@ export class BitbotApp {
     // SPEC-DEVIATION: §8.6 keeps the simulation running at a low rate while hidden (needs and economy still tick).
     // Nothing ticks in M1, so the loop is parked; M6 adds the low-rate tick.
     this.loop.stop()
+    this.worldDriver.setHidden(true, clock.now(), this.loco)
     this.tray.update(false)
     this.devPanel?.refresh()
     this.log(`[bitbot] pet hidden (${source})`)
@@ -511,6 +535,8 @@ export class BitbotApp {
       displayedPoint: drawnPoint(this.presented, clock.now(), this.heldPoint()),
       setVisible: (visible) => (visible ? this.showPet('dev check') : this.hidePet('dev check')),
       setDevOverrides: (set) => this.applyDevPanelSet(set),
+      refreshWorld: () => this.refreshWorld(),
+      snapshotHz: this.worldDriver.snapshotHz,
       waitForReady: (timeoutMs, minLoad = 1) => this.waitForReady(timeoutMs, minLoad),
       requestOverlayStats: (timeoutMs) => this.requestOverlayStats(timeoutMs),
     }
@@ -538,7 +564,44 @@ export class BitbotApp {
   private simState(loco: Locomotion): PetSimState {
     const s = loco.state
     const f = overriddenFields(this.overrides.current, { behavior: s.behavior, facing: s.facing })
-    return { x: s.x, y: s.y, facing: f.facing, state: f.state, mood: f.mood, dust: f.dust, look: this.look, attach: 'floor', supportY: loco.supportY }
+    return {
+      x: s.x,
+      y: s.y,
+      facing: f.facing,
+      state: f.state,
+      mood: f.mood,
+      dust: f.dust,
+      look: this.look,
+      attach: s.attach,
+      supportY: loco.supportY,
+    }
+  }
+
+  /** Dev builds: one line whenever the pet's behavior, surface or goal changes (window ids and points only, never titles). */
+  private logMovement(): void {
+    const loco = this.loco
+    if (!loco) return
+    const s = loco.state
+    const g = loco.goal
+    const line = `${s.behavior} on ${s.surface ?? 'nothing'}${g ? ` → ${g.x.toFixed(0)},${g.y.toFixed(0)}` : ''}`
+    if (line === this.lastMovementLine) return
+    this.lastMovementLine = line
+    this.log(`[bitbot] pet: ${line} at ${s.x.toFixed(0)},${s.y.toFixed(0)}`)
+  }
+
+  /** Asks the helper for a snapshot now (the pet was shown or created: the world may be stale), off the push schedule. */
+  private refreshWorld(): void {
+    const helper = this.helper
+    if (!helper?.isRunning) return
+    helper.snapshot().then(
+      (m) => this.guarded('window snapshot', () => this.worldDriver.onSnapshot(this.worldWindows(m.windows), clock.now(), this.loco)),
+      (err: unknown) => this.throttled.log('world refresh', `[bitbot] window snapshot failed: ${errorText(err)}`),
+    )
+  }
+
+  /** The windows the world uses: the helper's, or the dev check's made-up ones (options.windows). */
+  private worldWindows(fromHelper: readonly HelperWindow[]): readonly HelperWindow[] {
+    return this.opts.windows ? this.opts.windows() : fromHelper
   }
 
   /** A held pet's newest step (the overlay draws a held pet under the cursor, which that step followed); null unless held. */
@@ -571,7 +634,8 @@ export class BitbotApp {
     this.readyLoad = this.petWindow.loadCount
     const display = this.display ?? primaryDisplay()
     const area = petAreaFor(display, msg.petBox)
-    const world = groundOnlyWorld(display, msg.petBox)
+    const world = this.worldDriver.setScene(display, msg.petBox, this.loco, clock.now())
+    this.worldDriver.pageReady()
     if (!this.loco) {
       const x = this.opts.spawnX
       this.loco = new Locomotion(world, tuning.move, x !== undefined && Number.isFinite(x) ? { x, y: area.groundY } : undefined)
@@ -590,6 +654,7 @@ export class BitbotApp {
       if (!app.isHidden()) this.petWindow.showInactive()
       this.loop.start()
     }
+    this.refreshWorld()
     this.snap()
     this.interaction.invalidateOnScreen()
     this.observe()
@@ -754,6 +819,8 @@ export class BitbotApp {
       this.interaction.invalidateOnScreen()
       this.observe()
     })
+    // The world (§8): pushed at the rate WorldDriver sets (none until the pet exists, none while hidden).
+    helper.on('snapshot', (m) => this.guarded('window snapshot', () => this.worldDriver.onSnapshot(this.worldWindows(m.windows), clock.now(), this.loco)))
     this.helper = helper
     helper.start()
   }
@@ -854,7 +921,7 @@ export class BitbotApp {
     this.petWindow.setBounds(display.bounds)
     const area = this.petArea()
     const box = this.ready?.petBox
-    if (this.loco && box) this.loco.setWorld(groundOnlyWorld(display, box), clock.now())
+    if (box) this.worldDriver.setScene(display, box, this.loco, clock.now())
     this.applyFullscreen() // the primary display may be another one now
     this.petWindow.sendConfigChanged()
     this.snap()
@@ -928,13 +995,28 @@ export class BitbotApp {
     const s = this.loco?.state
     const behavior = s?.behavior ?? 'idle'
     const f = overriddenFields(this.overrides.current, { behavior, facing: s?.facing ?? 1 })
-    return { overrides: this.overrides.overrides, state: f.state, simState: behavior, look: this.look, visible: this.isPetVisible(), world: null }
+    return {
+      overrides: this.overrides.overrides,
+      state: f.state,
+      simState: behavior,
+      look: this.look,
+      visible: this.isPetVisible(),
+      world: this.worldDriver.status(this.loco),
+    }
   }
 
   /** A validated debug:panel-set. pet:state carries the change with the next step (or the snap when shown again). */
   private applyDevPanelSet(set: DevPanelSet): void {
     const change = this.overrides.apply(set)
     if (change.petChanged) this.sendDevPet()
+    this.applyOverridesToWorld()
+  }
+
+  /** Wandering only while it is on and no state is forced; the debug view while "show world" is on (dev builds). */
+  private applyOverridesToWorld(): void {
+    const o = this.overrides.current
+    this.worldDriver.setWandering(o.wander && o.state === null)
+    this.worldDriver.setShowWorld(this.dev && o.showWorld)
   }
 
   /** debug:pet (dev builds only): the overrides the overlay applies itself. */

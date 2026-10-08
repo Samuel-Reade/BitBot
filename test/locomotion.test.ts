@@ -762,6 +762,14 @@ describe('Locomotion: riding and falling (§8.5)', () => {
     expect(slow.state).toMatchObject({ x: 1000, behavior: 'idle', surface: 'top:1:0' })
   })
 
+  it('a window’s speed is measured over at least flingMinIntervalS: two snapshots close together never fling', () => {
+    // 60 pt between snapshots 5 ms apart would read 12 000 pt/s; over 1/15 s it is 900 pt/s: a ride.
+    const loco = onW1()
+    loco.setWorld(world([W1, W2, W3]), 245)
+    loco.setWorld(moved(60, 0, []), 250)
+    expect(loco.state).toMatchObject({ x: 660, behavior: 'idle', surface: 'top:1:0' })
+  })
+
   it('a flung pet flies sideways until a screen wall stops it, and lands', () => {
     const loco = onW1()
     loco.setWorld(moved(500, 0, []), 250)

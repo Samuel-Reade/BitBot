@@ -265,6 +265,11 @@ export const tuning = {
     terminalVelocity: 2200,
     /** Window speed (pt/s) above which a ridden window flings the pet off. */
     flingThreshold: 1800,
+    /**
+     * A ridden window's speed is its move over at least this long, s (the fast snapshot interval, 1 ÷ 15 Hz): a snapshot
+     * asked for right after a pushed one would otherwise turn a small move into a huge speed and a fling.
+     */
+    flingMinIntervalS: 1 / 15,
     /** Movement speed multiplier while stuffed (§9.3). */
     stuffedSpeedFactor: 0.6,
     /** A pet this close above the ground (pt) counts as standing on it: released or placed there, it doesn't fall. */
@@ -562,6 +567,13 @@ export const tuning = {
       drawnAlpha: 8,
       /** The capture at the pet's new spot needs at least this many drawn device pixels (the M pet covers ~40k at 2×). */
       minPetPixels: 5000,
+      /**
+       * The world checks (M3) use one made-up window (the user's real windows are left out, so results never depend on the
+       * desktop): its left side dx pt right of the pet's home, `up` pt tall from the ground, `width` wide. The pet must get
+       * onto its top within reachTimeoutMs (walk, climb the side, step on), ride it rideSteps × rideStepPt to the right
+       * (one move every rideIntervalMs), and fall back to the ground when it closes.
+       */
+      world: { dx: 260, up: 280, width: 420, reachTimeoutMs: 25_000, rideSteps: 6, rideStepPt: 20, rideIntervalMs: 120 },
       /** While hidden, the simulation must not step for this long, ms. */
       hiddenHoldMs: 500,
       /** Wait before the last checks so the activation monitor's verdicts are in (after tuning.app.activationVerdictDelayMs), ms. */

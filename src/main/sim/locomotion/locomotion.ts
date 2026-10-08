@@ -64,6 +64,8 @@ export interface LocomotionParams extends FallParams {
   jumpApexPt: number
   /** A ridden window faster than this (pt/s) flings the pet off. */
   flingThreshold: number
+  /** Its speed is measured over at least this long, s. */
+  flingMinIntervalS: number
   landBounce: { minSpeed: number; restitution: number }
 }
 
@@ -745,9 +747,12 @@ export class Locomotion {
       moved = dx !== 0 || dy !== 0
       s.x += dx
       s.y += dy
-      if (moved && dtS !== null && dtS > 0 && Math.hypot(dx, dy) / dtS > this.params.flingThreshold) {
-        this.fallWith(dx / dtS, dy / dtS)
-        return true
+      if (moved && dtS !== null && dtS > 0) {
+        const span = Math.max(dtS, this.params.flingMinIntervalS)
+        if (Math.hypot(dx, dy) / span > this.params.flingThreshold) {
+          this.fallWith(dx / span, dy / span)
+          return true
+        }
       }
     }
     const tol = w.params.occlusionTolerance
@@ -836,6 +841,7 @@ function checkedParams(params: LocomotionParams): LocomotionParams {
     nonNegative(p.runDistancePt) &&
     nonNegative(p.jumpApexPt) &&
     positive(p.flingThreshold) &&
+    nonNegative(p.flingMinIntervalS) &&
     nonNegative(p.landBounce?.minSpeed) &&
     Number.isFinite(p.landBounce?.restitution) &&
     p.landBounce.restitution >= 0 &&
@@ -852,6 +858,7 @@ function checkedParams(params: LocomotionParams): LocomotionParams {
     runDistancePt: p.runDistancePt,
     jumpApexPt: p.jumpApexPt,
     flingThreshold: p.flingThreshold,
+    flingMinIntervalS: p.flingMinIntervalS,
     landBounce: { minSpeed: p.landBounce.minSpeed, restitution: p.landBounce.restitution },
   }
 }
