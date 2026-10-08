@@ -999,12 +999,12 @@ describe('§6.3 pixel face', () => {
     expect(face.state.overlays).toEqual(['blush'])
     expect(face.setState({ overlays: undefined })).toBe(false)
     expect(face.setState({ overlays: 'blush' as never })).toBe(false)
-    expect(face.state).toEqual({ eyes: 'blink', mouth: 'smile', overlays: ['blush'] })
+    expect(face.state).toEqual({ eyes: 'blink', mouth: 'smile', overlays: ['blush'], frame: 0 })
     expect(face.setState({ overlays: [] })).toBe(true)
     face.dispose()
 
     const created = makeFace({ eyes: 'blink', mouth: undefined, overlays: undefined }).face
-    expect(created.state).toEqual({ eyes: 'blink', mouth: 'smile', overlays: [] })
+    expect(created.state).toEqual({ eyes: 'blink', mouth: 'smile', overlays: [], frame: 0 })
     created.dispose()
   })
 

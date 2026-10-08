@@ -68,10 +68,12 @@ function applySnapshotFace(query: URLSearchParams): void {
   const eyes = query.get('eyes')
   const mouth = query.get('mouth')
   const overlays = query.get('overlays')
+  const frame = query.get('frame') // the animated overlays' frame index
   pet.rig.face?.setState({
     ...(isEyesState(eyes) ? { eyes } : {}),
     ...(isMouthState(mouth) ? { mouth } : {}),
     ...(overlays !== null ? { overlays: overlays.split(',').filter(isFaceOverlay) } : {}),
+    ...(frame !== null && /^\d+$/.test(frame) ? { frame: Number(frame) } : {}),
   })
 }
 
