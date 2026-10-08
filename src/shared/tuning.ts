@@ -2,7 +2,7 @@
 // Never hard-code a tunable number elsewhere — import it from this file.
 // Sections are filled in milestone by milestone; comments say what raising/lowering feels like.
 
-import type { PetSize } from './types'
+import type { IdleMode, PetSize } from './types'
 
 export const tuning = {
   render: {
@@ -131,6 +131,13 @@ export const tuning = {
      * faulty page, more log noise.
      */
     logMessageBudget: 50,
+    /**
+     * Liveness watchdog for the overlay page (a silent renderer hang is otherwise never noticed: Chromium's own hang
+     * monitor needs input, and the overlay takes none). Main pings a ready page every pingMs; maxMissed pings in a row
+     * without a pong recreate it (renderer killed). Lower = a frozen pet recovers sooner, more risk of recreating a page
+     * that was only briefly busy.
+     */
+    watchdog: { pingMs: 2000, maxMissed: 3 },
     /** Display changes arrive in bursts; the overlay is re-laid out this long after the last one, ms. */
     displayChangeDebounceMs: 100,
     /**
@@ -257,6 +264,8 @@ export const tuning = {
     stuffedSpeedFactor: 0.6,
     /** A pet this close above the ground (pt) counts as standing on it: released or placed there, it doesn't fall. */
     groundSnapPt: 0.5,
+    /** After a fall touches down the pet is in Land (§10.1) this long before Idle, s: the squash-and-settle (§6.4). */
+    landS: 0.4,
   },
 
   world: {
@@ -286,8 +295,18 @@ export const tuning = {
     ],
   },
 
-  /** Character animation (§6.4). Filled in by the character work; M2 adds the full state set. */
+  /** Character animation (§6.4). */
   anim: {
+    /** The default idle style (types.ts IdleMode; the dev panel switches it). */
+    idleMode: 'event' as IdleMode,
+    /**
+     * Eyes follow the cursor (§6.3: within ~300 pt, while idle). Main turns the cursor into a direction (look-left /
+     * right / up) relative to the pet's eyes, eyeHeight of the pet box's height above its ground-contact point.
+     * Beyond radiusPt: not looking. Up: the cursor more than upPt above the eyes and more above than beside them.
+     * Left / right: more than sidePt beside them. Otherwise (on the face, or below it): straight ahead. A direction
+     * holds until another one wins by hysteresisPt, so a cursor on a boundary doesn't make the eyes flicker.
+     */
+    look: { radiusPt: 300, eyeHeight: 0.55, upPt: 40, sidePt: 24, hysteresisPt: 8 },
     /**
      * Rest emissive intensities of the glowing bits (§6.1). M2 animates them: the antenna tip
      * flashes while eating, the power light dims asleep, the amber light blinks when hungry.
@@ -333,6 +352,8 @@ export const tuning = {
 
   /** Dev tools (not shipped behaviour). */
   dev: {
+    /** The developer panel window (§14.1, dev builds): its size, pt, and how often its status refreshes, ms. */
+    panel: { width: 380, height: 720, statusIntervalMs: 1000 },
     /** PNG snapshot tool: give up if the hidden renderer hasn't drawn within this many ms. */
     snapshotReadyTimeoutMs: 15_000,
     /** PNG snapshot tool: wait after drawing so the compositor presents the frame before capture. */

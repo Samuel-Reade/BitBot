@@ -121,7 +121,7 @@ class Driver {
 
   /** A state at main time `t`, sent then and arriving `latency` ms later. */
   state(t: number, x: number, y = GROUND, more: Partial<PetStateMsg> = {}, latency = LATENCY): void {
-    const msg: PetStateMsg = { seq: ++this.seq, t, sentAt: t, x, y, facing: 1, state: 'idle', supportY: GROUND, snap: false, ...more }
+    const msg: PetStateMsg = { seq: ++this.seq, t, sentAt: t, x, y, facing: 1, state: 'idle', mood: 'content', dust: 0, look: null, supportY: GROUND, snap: false, ...more }
     this.model.onState(msg, t + SHIFT + latency)
   }
 

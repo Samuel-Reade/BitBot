@@ -486,7 +486,7 @@ export class BitbotApp {
   private simState(loco: Locomotion): PetSimState {
     const s = loco.state
     // M1 never turns (facing +1, the default 3/4 yaw): walking and turning come with M3.
-    return { x: s.x, y: s.y, facing: 1, state: s.behavior, supportY: loco.supportY }
+    return { x: s.x, y: s.y, facing: 1, state: s.behavior, mood: 'content', dust: 0, look: null, supportY: loco.supportY }
   }
 
   /** A held pet's newest step (the overlay draws a held pet under the cursor, which that step followed); null unless held. */

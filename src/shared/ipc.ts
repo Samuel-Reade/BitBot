@@ -28,6 +28,10 @@ export const IPC = {
   petHoverReset: 'pet:hover-reset',
   /** main → overlay: shown / hidden by the user (hotkey, menus). Payload: PetVisibleMsg */
   petVisible: 'pet:visible',
+  /** main → overlay: are you alive? Payload: PetPingMsg */
+  petPing: 'pet:ping',
+  /** overlay → main: yes. Payload: PetPongMsg */
+  petPong: 'pet:pong',
   /** overlay → main: problem report. Payload: PetLogMsg */
   petLog: 'pet:log',
   /** overlay → main: pointer is over / no longer over the pet's silhouette. Payload: PetHoverMsg */
@@ -38,6 +42,14 @@ export const IPC = {
   debugOverlayStatsRequest: 'debug:overlay-stats-request',
   /** overlay → main (dev check only): the renderer's counters. Payload: OverlayStatsMsg */
   debugOverlayStats: 'debug:overlay-stats',
+  /** main → overlay (dev builds): the dev panel's renderer-side overrides. Payload: DevPetMsg */
+  debugPet: 'debug:pet',
+  /** dev panel → main (invoke): the panel's current status. Returns DevPanelStatus (src/shared/devPanel.ts). */
+  debugPanelGet: 'debug:panel-get',
+  /** dev panel → main: change overrides. Payload: DevPanelSet (src/shared/devPanel.ts) */
+  debugPanelSet: 'debug:panel-set',
+  /** main → dev panel: the status changed (and about once a second while open). Payload: DevPanelStatus */
+  debugPanelStatus: 'debug:panel-status',
   /** renderer → main: dev snapshot tool — the frame is rendered and ready to capture. */
   snapshotReady: 'snapshot:ready',
 } as const

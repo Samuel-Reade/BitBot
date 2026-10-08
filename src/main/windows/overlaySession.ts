@@ -17,7 +17,7 @@
 import { isPoint, type PetArea, type Point } from '../../shared/geometry'
 import { interpolate, type TimedPoint } from '../../shared/interpolation'
 import type { PetDrawnMsg, PetStateMsg } from '../../shared/petProtocol'
-import type { BehaviorState } from '../../shared/types'
+import type { BehaviorState, LookDirection, Mood } from '../../shared/types'
 
 /** The part of the simulation's state the overlay is told about. */
 export interface PetSimState {
@@ -26,12 +26,25 @@ export interface PetSimState {
   y: number
   facing: 1 | -1
   state: BehaviorState
+  mood: Mood
+  /** 0..1 */
+  dust: number
+  look: LookDirection | null
   /** The support line under the pet, global pt; null: nothing below it. */
   supportY: number | null
 }
 
 export function sameSimState(a: PetSimState, b: PetSimState): boolean {
-  return a.x === b.x && a.y === b.y && a.facing === b.facing && a.state === b.state && a.supportY === b.supportY
+  return (
+    a.x === b.x &&
+    a.y === b.y &&
+    a.facing === b.facing &&
+    a.state === b.state &&
+    a.mood === b.mood &&
+    a.dust === b.dust &&
+    a.look === b.look &&
+    a.supportY === b.supportY
+  )
 }
 
 export class PetStateSender {
@@ -95,12 +108,15 @@ export class PetStateSender {
       y: s.y,
       facing: s.facing,
       state: s.state,
+      mood: s.mood,
+      dust: s.dust,
+      look: s.look,
       supportY: s.supportY,
       snap,
     }
     this.send(msg)
     this.seq = msg.seq
-    this.last = { x: s.x, y: s.y, facing: s.facing, state: s.state, supportY: s.supportY }
+    this.last = { ...s }
     this.snapPending = false
     this.sentCount++
     return true

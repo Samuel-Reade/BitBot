@@ -12,7 +12,19 @@
 
 import { isBox, isPetArea, isPoint, isRect, type Box, type PetArea, type Point, type Rect } from './geometry'
 import { isPaletteId } from './palettes'
-import { isBehaviorState, type BehaviorState, type PaletteId, type PetSize } from './types'
+import { isFaceOverride, type FaceOverride } from './faceStates'
+import {
+  isBehaviorState,
+  isIdleMode,
+  isLookDirection,
+  isMood,
+  type BehaviorState,
+  type IdleMode,
+  type LookDirection,
+  type Mood,
+  type PaletteId,
+  type PetSize,
+} from './types'
 
 /** Prefix of the grab area's window.open target name. Main issues a fresh name per overlay page load. */
 export const HIT_WINDOW_NAME_PREFIX = 'bitbot-hit'
@@ -60,6 +72,12 @@ export interface PetStateMsg {
   y: number
   facing: 1 | -1
   state: BehaviorState
+  /** Mood (§9.2): picks face defaults and layered cues (§6.4). */
+  mood: Mood
+  /** Dust level 0..1 (§9.1 dust ÷ 100): grey specks on the body and face (§6.4 "dusty"), visible from tuning.anim.dust.visibleFrom. */
+  dust: number
+  /** Where the cursor is, for the eyes (§6.3: within ~300 pt; the overlay uses it only in states that look around). */
+  look: LookDirection | null
   /** y of the surface line under the pet, global pt (the contact shadow is drawn there, §6.1); null: nothing below. */
   supportY: number | null
   /** Do not interpolate from earlier states (first state, release, shown again, display change). */
@@ -121,6 +139,23 @@ export type PetPointerMsg =
   | { kind: 'down'; button: number; screenX: number; screenY: number; groundX: number; groundY: number; epoch: number }
   | { kind: 'up'; button: number; screenX: number; screenY: number; epoch: number }
   | { kind: 'contextmenu'; screenX: number; screenY: number; epoch: number }
+
+/** pet:ping — main → overlay, every tuning.overlay.watchdog.pingMs while a page is ready: answer with pet:pong. */
+export interface PetPingMsg {
+  id: number
+}
+
+/** pet:pong — overlay → main: the answer to pet:ping `id` (a page that stops answering is recreated). */
+export interface PetPongMsg {
+  id: number
+}
+
+/** debug:pet — main → overlay, dev builds: the dev panel's renderer-side overrides (sent again after every pet:ready). */
+export interface DevPetMsg {
+  /** Face fields to force; null: the animator's own face. */
+  face: FaceOverride | null
+  idleMode: IdleMode
+}
 
 /** pet:log — overlay → main. */
 export interface PetLogMsg {
@@ -198,6 +233,11 @@ export function isPetStateMsg(value: unknown): value is PetStateMsg {
     isFiniteNumber(value['y']) &&
     (value['facing'] === 1 || value['facing'] === -1) &&
     isBehaviorState(value['state']) &&
+    isMood(value['mood']) &&
+    isFiniteNumber(value['dust']) &&
+    value['dust'] >= 0 &&
+    value['dust'] <= 1 &&
+    (value['look'] === null || isLookDirection(value['look'])) &&
     (value['supportY'] === null || isFiniteNumber(value['supportY'])) &&
     typeof value['snap'] === 'boolean'
   )
@@ -259,6 +299,18 @@ export function isPetLogMsg(value: unknown): value is PetLogMsg {
     (value['level'] === 'error' || value['level'] === 'warning' || value['level'] === 'info') &&
     typeof value['message'] === 'string'
   )
+}
+
+export function isPetPingMsg(value: unknown): value is PetPingMsg {
+  return isRecord(value) && isCount(value['id'])
+}
+
+export function isPetPongMsg(value: unknown): value is PetPongMsg {
+  return isRecord(value) && isCount(value['id'])
+}
+
+export function isDevPetMsg(value: unknown): value is DevPetMsg {
+  return isRecord(value) && (value['face'] === null || isFaceOverride(value['face'])) && isIdleMode(value['idleMode'])
 }
 
 function isNumberList(value: unknown): value is number[] {

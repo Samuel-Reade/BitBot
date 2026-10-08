@@ -93,6 +93,34 @@ export function isBehaviorState(value: unknown): value is BehaviorState {
   return typeof value === 'string' && (BEHAVIOR_STATES as readonly string[]).includes(value)
 }
 
+/** Moods (§9.2): the most pressing need picks one. M6 computes it; until then the dev panel sets it. */
+export const MOODS = ['happy', 'content', 'hungry', 'sleepy', 'stuffed', 'bored', 'lonely'] as const
+export type Mood = (typeof MOODS)[number]
+
+export function isMood(value: unknown): value is Mood {
+  return typeof value === 'string' && (MOODS as readonly string[]).includes(value)
+}
+
+/** Where the pet's eyes follow the cursor (§6.3 look-left/right/up), from the viewer's side; null: not looking. */
+export const LOOK_DIRECTIONS = ['left', 'right', 'up'] as const
+export type LookDirection = (typeof LOOK_DIRECTIONS)[number]
+
+export function isLookDirection(value: unknown): value is LookDirection {
+  return typeof value === 'string' && (LOOK_DIRECTIONS as readonly string[]).includes(value)
+}
+
+/**
+ * How the pet idles (docs/decisions/overlay.md, decided (c): prototype both in M2, decide with numbers).
+ * 'continuous': §6.4's idle bob and sway all the time, rendered at tuning.render.fps.idle. 'event': mostly still,
+ * animating in short bursts (blinks, glances, a breath, an antenna wiggle) and rendering only during them.
+ */
+export const IDLE_MODES = ['continuous', 'event'] as const
+export type IdleMode = (typeof IDLE_MODES)[number]
+
+export function isIdleMode(value: unknown): value is IdleMode {
+  return typeof value === 'string' && (IDLE_MODES as readonly string[]).includes(value)
+}
+
 /** The pet's place in the world (§16 `pet.position`): ground-contact point in global screen points, y down. */
 export interface PetPosition {
   displayId: number
