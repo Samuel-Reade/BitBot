@@ -4,6 +4,7 @@
 
 import { distance, type Point } from '../../../shared/geometry'
 import type { tuning } from '../../../shared/tuning'
+import type { Segment } from '../../../shared/world'
 import { findRoute, placeOf } from '../world/navigation'
 import type { World } from '../world/worldModel'
 
@@ -22,10 +23,24 @@ export type WanderParams = typeof tuning.brain.wander
  */
 export function pickTarget(kind: WanderKind, world: World, from: Point, random: () => number, minDistancePt = 0): Point | null {
   if (kind === 'wall') return wallTarget(world, from)
+  const segments = kind === 'window' ? world.segments.filter((s) => s.kind === 'windowTop') : world.segments
+  return pickOnSegments(segments, from, random, minDistancePt, world.params.occlusionTolerance)
+}
+
+/**
+ * A random point on `segments`, uniform along their total length, leaving out minDistancePt either side of `from` on
+ * the segment it stands on (within tolerancePt of its line). Null when nothing is left. One draw of `random`.
+ */
+export function pickOnSegments(
+  segments: readonly Segment[],
+  from: Point,
+  random: () => number,
+  minDistancePt: number,
+  tolerancePt: number,
+): Point | null {
   const pieces: { y: number; x0: number; x1: number }[] = []
-  for (const s of world.segments) {
-    if (kind === 'window' && s.kind !== 'windowTop') continue
-    const here = Math.abs(from.y - s.y) <= world.params.occlusionTolerance && from.x >= s.x0 && from.x <= s.x1
+  for (const s of segments) {
+    const here = Math.abs(from.y - s.y) <= tolerancePt && from.x >= s.x0 && from.x <= s.x1
     if (!here) {
       pieces.push({ y: s.y, x0: s.x0, x1: s.x1 })
       continue

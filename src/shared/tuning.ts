@@ -636,10 +636,34 @@ export const tuning = {
     calmScale: 0.35,
     /** §10.2 run to eat: an app launch makes eating the goal at once; the pet waits up to windowWaitS for the new app's window, else eats where it is. */
     appLaunch: { windowWaitS: 4 },
-    /** How long each in-place activity lasts, s (ranges are random). */
-    activityS: { eat: 3, sit: [6, 20] as readonly [number, number], peek: [3, 6] as readonly [number, number], greet: 2, celebrate: 2.4, wakeUp: 1.8 },
+    /**
+     * How long each in-place activity lasts, s (ranges are random). nap: a nap it chose (§10.2 Nap); a nap it can't help
+     * (energy ≤ needs.energy.napAt) lasts until energy is back above needs.energy.sleepyAt.
+     */
+    activityS: { eat: 3, sit: [6, 20] as readonly [number, number], peek: [3, 6] as readonly [number, number], greet: 2, celebrate: 2.4, wakeUp: 1.8, nap: [30, 90] as readonly [number, number] },
     /** Approach cursor stops this far from it, pt. */
     approachCursorGapPt: 90,
+    /**
+     * Shaping the §10.2 scores (each then × its weight): eat and nap rise with hunger / tiredness to needExponent (a
+     * need matters once it presses: a rested pet rarely naps); hunger ≥ needs.hunger.seeksFoodAt adds seeksFoodBoost to
+     * eat (§9.1 "seeks food"); boredom ≥ needs.boredom.boredAt adds boredBoost to explore, climb, peek and approachCursor;
+     * a content or happy pet sits contentSitScale × as often. Higher boosts = a more single-minded pet.
+     */
+    needExponent: 2,
+    /**
+     * A softmax gives every candidate some chance, so eat and nap are candidates only once the need is felt: eat from
+     * needs.hunger.hungryAt, nap below napBelowEnergy (an app launch still feeds it, napNow / asleep still sleep it).
+     * Higher napBelowEnergy = a dozier pet.
+     */
+    napBelowEnergy: 50,
+    seeksFoodBoost: 1.5,
+    boredBoost: 0.4,
+    contentSitScale: 1.6,
+    /**
+     * Explore (§10.2 "prefer unvisited windows"): with unvisitedBias it goes to a window top it hasn't stood on in the
+     * last memoryS (s, life clock), when there is one; else anywhere (wander.minDistancePt away at least).
+     */
+    explore: { unvisitedBias: 0.75, memoryS: 300 },
 
     /**
      * M3's stand-in for Roam: after arriving it pauses pauseS (random in the range), then goes somewhere reachable:
