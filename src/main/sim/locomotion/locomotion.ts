@@ -66,6 +66,14 @@ export interface LocomotionParams extends FallParams {
   flingThreshold: number
   /** Its speed is measured over at least this long, s. */
   flingMinIntervalS: number
+  /** Tossing when let go (tuning.move.toss). */
+  toss: {
+    releaseWindowS: number
+    minSpeed: number
+    maxSpeed: number
+    wallRestitution: number
+    ceilingRestitution: number
+  }
   landBounce: { minSpeed: number; restitution: number }
 }
 
@@ -87,7 +95,21 @@ interface Flight {
   leftS: number
   /** The visible extent of the segment it took off from (y, x-range): not landed on again on the way. */
   ignore: { y: number; x0: number; x1: number } | null
+  /** The speed it was tossed at (pt/s); null: not a toss. */
+  tossSpeed?: number | null
+  /** It touched down once already (a bounce): its landing was reported. */
+  touched?: boolean
 }
+
+/** How the user let go (Locomotion.release). */
+export type ReleaseKind = 'throw' | 'drop' | 'click'
+
+/** What happened that the app reacts to (drainEvents()). */
+export type LocomotionEvent =
+  /** Let go fast enough to be tossed, at this velocity (pt/s). */
+  | { kind: 'toss'; vx: number; vy: number }
+  /** The first touchdown after time in the air: its downward speed, and the toss speed if it was tossed. */
+  | { kind: 'land'; impactSpeed: number; tossSpeed: number | null }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
 
@@ -118,6 +140,12 @@ export class Locomotion {
   private lastWorldTMs: number | null = null
   /** A fresh plan is starting: a move that can't start now gives up instead of planning again (no loop). */
   private planning = false
+  /** Where it was held, newest last, over the toss window (time since the grab, s). */
+  private heldTrail: { t: number; x: number; y: number }[] = []
+  private heldT = 0
+  private events: LocomotionEvent[] = []
+  /** Where the pet was when grabbed (a click puts it back there: on its wall too). */
+  private grabbedFrom: PetPlace | null = null
 
   /**
    * `start` (default: spawnPoint(world.area); also when it is not a finite point) is clamped into the area; the pet
@@ -252,21 +280,71 @@ export class Locomotion {
   /** The user took hold of the pet (also mid-flight or landing): → held, velocity 0, no goal. Ignored while held. */
   grab(): void {
     if (this.s.behavior === 'held') return
+    this.grabbedFrom = this.on ? { ...this.on } : null
     this.clearRoute()
     this.flight = null
     this.detach()
+    this.heldTrail = [{ t: 0, x: this.s.x, y: this.s.y }]
+    this.heldT = 0
     this.s.vx = 0
     this.s.vy = 0
     this.begin('held')
   }
 
   /**
-   * The user let go with the ground-contact point at `at` (clamped; not a finite point: where it is now): the ground
-   * rule (M1: no toss). Ignored unless held, so a second release of the same press changes nothing.
+   * The user let go with the ground-contact point at `at` (clamped; not a finite point: where it is now). Let go moving
+   * at tuning.move.toss.minSpeed or faster (the drag's velocity over releaseWindowS), it is tossed: it flies off with
+   * that velocity (capped at maxSpeed) and reports a 'toss' event; slower, the ground rule. Ignored unless held, so a
+   * second release of the same press changes nothing. `how`: 'throw' (the user let go: a toss if fast enough), 'drop'
+   * (a cancel: hiding, a Space change; never a toss), 'click' (the press never became a drag, petting §10.4: the pet is
+   * put back where it was grabbed, on its wall too).
    */
-  release(at: Point): void {
+  release(at: Point, how: ReleaseKind = 'throw'): void {
+    const click = how === 'click'
     if (this.s.behavior !== 'held') return
-    this.place(isPoint(at) ? at : this.s)
+    const from = this.grabbedFrom
+    this.grabbedFrom = null
+    if (click && from && from.on === 'wall') {
+      const wall = this.w.wall(from.id)
+      if (wall) {
+        const s = this.s
+        s.x = wall.x
+        s.y = clamp(from.y, wall.y0, wall.y1)
+        s.vx = 0
+        s.vy = 0
+        this.attachTo({ on: 'wall', id: wall.id, y: s.y })
+        this.begin('idle')
+        return
+      }
+    }
+    if (click || how === 'drop') {
+      this.place(isPoint(at) ? at : this.s)
+      return
+    }
+    // Where the pet can be (a drop point below the ground is on it): the velocity is the pet's, not the cursor's.
+    const p = clampToArea(isPoint(at) ? at : this.s, this.w.area)
+    const t = this.params.toss
+    const v = this.releaseVelocity(p)
+    const speed = Math.hypot(v.x, v.y)
+    if (speed < t.minSpeed) {
+      this.place(p)
+      return
+    }
+    const k = speed > t.maxSpeed ? t.maxSpeed / speed : 1
+    const c = clampToArea(p, this.w.area)
+    this.clearRoute()
+    this.s.x = c.x
+    this.s.y = c.y
+    this.fallWith(v.x * k, v.y * k)
+    if (this.flight) this.flight.tossSpeed = speed * k
+    this.events.push({ kind: 'toss', vx: v.x * k, vy: v.y * k })
+  }
+
+  /** The events since the last call (tosses, landings), oldest first. */
+  drainEvents(): LocomotionEvent[] {
+    const events = this.events
+    this.events = []
+    return events
   }
 
   /**
@@ -298,6 +376,11 @@ export class Locomotion {
         s.vy = (p.y - s.y) / dtS
         s.x = p.x
         s.y = p.y
+        this.heldT += dtS
+        this.heldTrail.push({ t: this.heldT, x: p.x, y: p.y })
+        // Keep a little more than the toss window (the oldest sample in it is the one the velocity is taken from).
+        const keepFrom = this.heldT - 2 * this.params.toss.releaseWindowS
+        while (this.heldTrail.length > 2 && (this.heldTrail[1] as { t: number }).t < keepFrom) this.heldTrail.shift()
         return
       }
       case 'jump':
@@ -561,13 +644,14 @@ export class Locomotion {
       vy = Math.min(vy + this.params.gravity * dt, this.params.terminalVelocity)
       y += vy * dt
       x += vx * dt
+      // A toss or a fling bounces off the screen's sides and the ceiling (§10.4 "tossed with physics").
       if (x < area.minX || x > area.maxX) {
         x = clamp(x, area.minX, area.maxX)
-        vx = 0
+        vx = -vx * this.params.toss.wallRestitution
       }
       if (y < area.minY) {
         y = area.minY
-        vy = Math.max(0, vy)
+        if (vy < 0) vy = -vy * this.params.toss.ceilingRestitution
       }
     }
     // The first segment crossed on the way down (the ground is never passed).
@@ -646,11 +730,13 @@ export class Locomotion {
   /** Touchdown on `seg` at x with downward speed vy: a bounce if hard, else land (or straight on with landS 0). */
   private touchDown(seg: Segment, x: number, vy: number): void {
     const s = this.s
+    const f = this.flight
+    if (!f?.touched) this.events.push({ kind: 'land', impactSpeed: vy, tossSpeed: f?.tossSpeed ?? null })
     s.x = clamp(x, seg.x0, seg.x1)
     s.y = seg.y
     const bounce = this.params.landBounce
     if (vy > bounce.minSpeed && bounce.restitution > 0) {
-      this.flight = { mode: this.flight?.mode ?? 'fall', to: null, leftS: 0, ignore: null }
+      this.flight = { mode: f?.mode ?? 'fall', to: null, leftS: 0, ignore: null, tossSpeed: f?.tossSpeed ?? null, touched: true }
       s.vx = 0
       s.vy = -bounce.restitution * vy
       return
@@ -708,6 +794,17 @@ export class Locomotion {
     } else {
       this.fallFromRest()
     }
+  }
+
+  /** The drag's velocity at release: from the oldest held sample within the toss window to `at`, pt/s. */
+  private releaseVelocity(at: Point): Point {
+    const trail = this.heldTrail
+    const from = this.heldT - this.params.toss.releaseWindowS
+    const first = trail.find((p) => p.t >= from) ?? trail[0]
+    if (!first) return { x: 0, y: 0 }
+    const dt = this.heldT - first.t
+    if (!(dt > 0)) return { x: 0, y: 0 }
+    return { x: (at.x - first.x) / dt, y: (at.y - first.y) / dt }
   }
 
   /** The segment a point stands on by the ground rule (walls never: a pet let go beside one falls). */
@@ -842,6 +939,11 @@ function checkedParams(params: LocomotionParams): LocomotionParams {
     nonNegative(p.jumpApexPt) &&
     positive(p.flingThreshold) &&
     nonNegative(p.flingMinIntervalS) &&
+    positive(p.toss?.releaseWindowS) &&
+    nonNegative(p.toss?.minSpeed) &&
+    positive(p.toss?.maxSpeed) &&
+    nonNegative(p.toss?.wallRestitution) &&
+    nonNegative(p.toss?.ceilingRestitution) &&
     nonNegative(p.landBounce?.minSpeed) &&
     Number.isFinite(p.landBounce?.restitution) &&
     p.landBounce.restitution >= 0 &&
@@ -859,6 +961,7 @@ function checkedParams(params: LocomotionParams): LocomotionParams {
     jumpApexPt: p.jumpApexPt,
     flingThreshold: p.flingThreshold,
     flingMinIntervalS: p.flingMinIntervalS,
+    toss: { ...p.toss },
     landBounce: { minSpeed: p.landBounce.minSpeed, restitution: p.landBounce.restitution },
   }
 }

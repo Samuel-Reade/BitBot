@@ -17,7 +17,7 @@
 import { isPoint, type PetArea, type Point } from '../../shared/geometry'
 import { interpolate, type TimedPoint } from '../../shared/interpolation'
 import type { PetDrawnMsg, PetStateMsg } from '../../shared/petProtocol'
-import type { BehaviorState, LookDirection, Mood } from '../../shared/types'
+import type { BehaviorState, LookDirection, Mood, PetReaction } from '../../shared/types'
 import type { PetAttach } from '../../shared/world'
 
 /** The part of the simulation's state the overlay is told about. */
@@ -32,6 +32,7 @@ export interface PetSimState {
   dust: number
   look: LookDirection | null
   attach: PetAttach
+  reaction: PetReaction | null
   /** The support line under the pet, global pt; null: nothing below it. */
   supportY: number | null
 }
@@ -46,6 +47,7 @@ export function sameSimState(a: PetSimState, b: PetSimState): boolean {
     a.dust === b.dust &&
     a.look === b.look &&
     a.attach === b.attach &&
+    a.reaction?.seq === b.reaction?.seq &&
     a.supportY === b.supportY
   )
 }
@@ -115,6 +117,7 @@ export class PetStateSender {
       dust: s.dust,
       look: s.look,
       attach: s.attach,
+      reaction: s.reaction ? { ...s.reaction } : null,
       supportY: s.supportY,
       snap,
     }

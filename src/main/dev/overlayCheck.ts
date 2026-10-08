@@ -370,6 +370,7 @@ class OverlayCheck {
     await this.windowChecks()
     await this.grabAreaChecks(home)
     await this.interactionChecks(home)
+    await this.directingChecks(home)
     await this.worldChecks(home)
     if (this.opts.measure) await this.measurements(home)
     await this.reloadCheck()
@@ -463,6 +464,58 @@ class OverlayCheck {
   }
 
   /**
+   * M4 directing (§10.4): a toss (let go while moving fast: it flies on, lands farther along, dizzy), Come here (to the
+   * cursor) and Go home.
+   */
+  private async directingChecks(home: Point): Promise<void> {
+    const ix = this.ix()
+    const loco = (): NonNullable<BitbotInspection['locomotion']> => {
+      const l = this.i().locomotion
+      if (!l) throw new Error('no pet')
+      return l
+    }
+    await this.goTo(home)
+    const press = this.pressPoint(home)
+    this.cursorPoint = press
+    await this.until(null, () => ix.mouseEnabled)
+    this.down(press)
+    await this.until('toss: held', () => ix.held)
+    this.pressOffset = { x: press.x - home.x, y: press.y - home.y }
+    const end = await this.dragMoves(press, T.toss)
+    const releasedX = end.x - this.pressOffset.x
+    this.up(end) // still moving: a toss
+    this.pressOffset = null
+    await this.until('toss: released', () => !ix.held)
+    const flew = await this.until('toss: it flies off (falling with sideways speed)', () => loco().state.behavior === 'fall' && loco().state.vx > 0)
+    if (flew) {
+      await this.until(null, () => standing(loco().state.behavior), 5000)
+      // Farther along, or back the other way after bouncing off the screen's side (a hard toss reaches it).
+      const flight = loco().state.x - releasedX
+      this.check('toss: …and lands well away from the release point', Math.abs(flight) >= T.toss.minFlightPt, `${flight.toFixed(0)} pt from it`)
+      const r = this.i().reaction
+      this.check('toss: …dizzy after a hard throw (§10.4)', r?.kind === 'dizzy', `reaction ${r ? `${r.kind} #${r.seq}` : 'none'}`)
+    }
+    await this.until(null, () => loco().state.behavior === 'idle')
+
+    const D = T.directing
+    const target = { x: home.x + D.comeHereDx, y: home.y }
+    this.cursorPoint = target
+    this.bitbot?.comeHere('dev check')
+    await this.until(
+      'Come here: it walks to the cursor (§10.4)',
+      () => loco().goal === null && loco().state.behavior === 'idle' && Math.abs(loco().state.x - target.x) <= D.arrivePt,
+      D.walkTimeoutMs,
+    )
+    this.cursorPoint = this.farPoint()
+    this.bitbot?.goHome('dev check')
+    await this.until(
+      'Go home: it walks back to its home on the Dock',
+      () => loco().goal === null && loco().state.behavior === 'idle' && Math.abs(loco().state.x - home.x) <= D.arrivePt,
+      D.walkTimeoutMs,
+    )
+  }
+
+  /**
    * M3: the world from a made-up window. The pet gets onto its top (a route: walk, climb its side, step on), rides it
    * while it moves (with the fast snapshot rate), and falls back to the ground when it closes.
    */
@@ -545,6 +598,8 @@ class OverlayCheck {
     const after = this.state()
     const stayed = after.x === before.x && after.y === before.y && standing(after.behavior)
     this.check('click without a drag: the pet did not move', stayed, `${fmtPoint(before)} → ${fmtPoint(after)}`)
+    const petted = this.i().reaction
+    this.check('…and it was petted (§10.4)', petted?.kind === 'petted', `reaction ${petted ? `${petted.kind} #${petted.seq}` : 'none'}`)
 
     // A drag up and left; the simulation follows; let go in the air, it falls and lands where it was dropped.
     await this.until(null, () => ix.mouseEnabled)

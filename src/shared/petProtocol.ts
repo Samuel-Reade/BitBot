@@ -19,11 +19,13 @@ import {
   isIdleMode,
   isLookDirection,
   isMood,
+  isPetReaction,
   type BehaviorState,
   type IdleMode,
   type LookDirection,
   type Mood,
   type PaletteId,
+  type PetReaction,
   type PetSize,
 } from './types'
 
@@ -81,6 +83,8 @@ export interface PetStateMsg {
   look: LookDirection | null
   /** Standing (or in the air) vs climbing a wall on its left / right: the overlay turns the pet onto the wall. */
   attach: PetAttach
+  /** The newest reaction (petted, dizzy); null: none yet. The overlay plays each seq once. */
+  reaction: PetReaction | null
   /** y of the surface line under the pet, global pt (the contact shadow is drawn there, §6.1); null: nothing below. */
   supportY: number | null
   /** Do not interpolate from earlier states (first state, release, shown again, display change). */
@@ -242,6 +246,7 @@ export function isPetStateMsg(value: unknown): value is PetStateMsg {
     value['dust'] <= 1 &&
     (value['look'] === null || isLookDirection(value['look'])) &&
     isPetAttach(value['attach']) &&
+    (value['reaction'] === null || isPetReaction(value['reaction'])) &&
     (value['supportY'] === null || isFiniteNumber(value['supportY'])) &&
     typeof value['snap'] === 'boolean'
   )

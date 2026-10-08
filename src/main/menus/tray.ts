@@ -5,6 +5,7 @@
 
 import { Menu, nativeImage, Tray, type NativeImage } from 'electron'
 import { alphaToBgra, TRAY_ICON_PT, trayIconAlpha } from './trayIcon'
+import type { HotkeyAction } from '../../shared/hotkeys'
 import { trayMenuTemplate, type TrayMenuActions } from './trayMenu'
 
 /** The template image at 1× and 2× (macOS tints a template for the menu bar's appearance; only its alpha counts). */
@@ -20,8 +21,8 @@ export function trayImage(): NativeImage {
 
 export interface BitbotTrayOptions {
   actions: TrayMenuActions
-  /** The show/hide shortcut when it registered (Hotkeys.accelerator('toggleVisible')), shown next to the item. */
-  toggleAccelerator(): string | null
+  /** A global shortcut when it registered (Hotkeys.accelerator), shown next to its item; null: none. */
+  accelerator(action: HotkeyAction): string | null
 }
 
 export class BitbotTray {
@@ -46,7 +47,11 @@ export class BitbotTray {
   update(visible: boolean): void {
     const tray = this.tray
     if (!tray || tray.isDestroyed()) return
-    const template = trayMenuTemplate({ visible, toggleAccelerator: this.opts.toggleAccelerator() }, this.opts.actions)
+    const a = (action: HotkeyAction): string | null => this.opts.accelerator(action)
+    const template = trayMenuTemplate(
+      { visible, toggleAccelerator: a('toggleVisible'), comeHereAccelerator: a('comeHere'), goHomeAccelerator: a('goHome') },
+      this.opts.actions,
+    )
     tray.setContextMenu(Menu.buildFromTemplate(template))
   }
 

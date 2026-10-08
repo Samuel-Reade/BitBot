@@ -42,7 +42,7 @@ import {
   type PetPointerMsg,
 } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
-import type { BehaviorState, IdleMode, LookDirection, Mood } from '../../shared/types'
+import type { BehaviorState, IdleMode, LookDirection, Mood, PetReaction } from '../../shared/types'
 import { boxFor, type PetAttach } from '../../shared/world'
 import type { AnimInput, AnimResult } from './character/animator'
 
@@ -288,6 +288,7 @@ interface StateLook {
   look: LookDirection | null
   facing: 1 | -1
   attach: PetAttach
+  reaction: PetReaction | null
 }
 
 interface BufferedState extends TimedPoint, StateLook {
@@ -503,6 +504,7 @@ export class OverlayModel {
       look: raw.look,
       facing: raw.facing,
       attach: raw.attach,
+      reaction: raw.reaction,
     }
     pushTimed(this.states, state, config.stepMs, tuning.overlay.stateBufferSize)
     this.supportY = raw.supportY
@@ -871,6 +873,7 @@ export class OverlayModel {
       held: press && dragging ? { grabX: press.localGrab.x, grabY: press.localGrab.y, mouseX: press.mouse.x } : null,
       faceOverride: this.devFace,
       idleMode: this.idleMode,
+      reaction: look.reaction,
     }
     const changed = this.animInput === null || !sameAnimInput(input, this.animInput)
     if (changed) this.animDirty = true
@@ -897,7 +900,15 @@ export class OverlayModel {
     let pick = states[0] as BufferedState
     if (renderT === null) pick = states[states.length - 1] as BufferedState
     else for (const s of states) if (s.t <= renderT + tuning.overlay.starveToleranceMs) pick = s
-    return { state: pick.state, mood: pick.mood, dust: pick.dust, look: pick.look, facing: pick.facing, attach: pick.attach }
+    return {
+      state: pick.state,
+      mood: pick.mood,
+      dust: pick.dust,
+      look: pick.look,
+      facing: pick.facing,
+      attach: pick.attach,
+      reaction: pick.reaction,
+    }
   }
 
   /** The attach to draw: the state's at render time; a press keeps the one it began with until it drags (held). */
@@ -1009,6 +1020,7 @@ function sameAnimInput(a: AnimInput, b: AnimInput): boolean {
     a.look === b.look &&
     a.facing === b.facing &&
     a.attach === b.attach &&
+    a.reaction?.seq === b.reaction?.seq &&
     a.idleMode === b.idleMode &&
     a.faceOverride === b.faceOverride &&
     a.held?.grabX === b.held?.grabX &&

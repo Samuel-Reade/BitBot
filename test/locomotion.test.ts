@@ -217,7 +217,8 @@ describe('Locomotion: M1 and M2 (ground, held, fall, land)', () => {
     const releasedAt = (y: number): Locomotion => {
       const loco = make()
       loco.grab()
-      loco.step(DT, { x: 600, y: 900 }) // a fast move: the release must not keep its speed (no toss in M1)
+      // Held still at the drop point for longer than the toss window: a drop, not a toss.
+      for (let i = 0; i < 6; i++) loco.step(DT, { x: 600, y })
       loco.release({ x: 600, y })
       return loco
     }
@@ -779,7 +780,114 @@ describe('Locomotion: riding and falling (§8.5)', () => {
       return l.state.behavior === 'land'
     })
     expect(maxX).toBe(loco.area.maxX)
-    expect(loco.state).toMatchObject({ x: loco.area.maxX, y: 1022, surface: 'ground' })
+    // It bounced off the wall (tuning.move.toss.wallRestitution) and landed on the ground.
+    expect(loco.state).toMatchObject({ y: 1022, surface: 'ground' })
+    expect(loco.state.x).toBeLessThan(loco.area.maxX)
+  })
+
+  it('a click (petting) puts a climbing pet back on its wall; a drag let go there makes it fall', () => {
+    const climbing = (): Locomotion => {
+      const loco = make({ x: 300, y: 1022 }, world([W1]))
+      loco.goTo({ x: W1.x, y: 820 })
+      runUntil(loco, (l) => l.state.attach !== 'floor' && l.state.behavior === 'idle' && l.goal === null)
+      return loco
+    }
+    const petted = climbing()
+    const at = { x: petted.state.x, y: petted.state.y }
+    expect(petted.state.attach).toBe('wallRight')
+    petted.grab()
+    petted.release(at, 'click')
+    expect(petted.state).toMatchObject({ x: at.x, y: at.y, attach: 'wallRight', behavior: 'idle' })
+    const dropped = climbing()
+    dropped.grab()
+    dropped.release({ x: dropped.state.x, y: dropped.state.y })
+    expect(dropped.state.behavior).toBe('fall')
+  })
+
+  it('a cancelled drag (drop) never tosses, however fast it was moving', () => {
+    const loco = make({ x: 400, y: 1022 })
+    loco.grab()
+    for (let i = 1; i <= 6; i++) loco.step(DT, { x: 400 + i * 60, y: 600 })
+    loco.release({ x: 760, y: 600 }, 'drop')
+    expect(loco.state).toMatchObject({ x: 760, vx: 0, vy: 0, behavior: 'fall' })
+    expect(loco.drainEvents()).toEqual([])
+  })
+
+  describe('tossing (§10.4)', () => {
+    /** Held at y 500 moving at vx pt/s (and vy) for half a second, then let go where the drag is. */
+    const tossed = (vx: number, vy = 0, steps = 15): Locomotion => {
+      const loco = make({ x: 400, y: 1022 })
+      loco.grab()
+      let x = 400
+      let y = 500
+      for (let i = 0; i < steps; i++) {
+        x += vx * DT
+        y += vy * DT
+        loco.step(DT, { x, y })
+      }
+      loco.release({ x, y })
+      return loco
+    }
+
+    it('let go moving fast, it flies off with the drag’s velocity and reports a toss', () => {
+      const loco = tossed(900, -300)
+      expect(loco.state.behavior).toBe('fall')
+      expect(loco.state.vx).toBeCloseTo(900, 0)
+      expect(loco.state.vy).toBeCloseTo(-300, 0)
+      expect(loco.drainEvents()).toEqual([{ kind: 'toss', vx: expect.closeTo(900, 0), vy: expect.closeTo(-300, 0) }])
+      expect(loco.drainEvents()).toEqual([])
+    })
+
+    it('let go slowly, it just drops (no toss)', () => {
+      const loco = tossed(PARAMS.toss.minSpeed * 0.8)
+      expect(loco.state).toMatchObject({ vx: 0, vy: 0, behavior: 'fall' })
+      expect(loco.drainEvents()).toEqual([])
+    })
+
+    it('caps the toss speed at maxSpeed, keeping its direction', () => {
+      // A short, very fast drag (4 steps: past the toss window, short of the screen's side).
+      const loco = tossed(PARAMS.toss.maxSpeed * 2, -PARAMS.toss.maxSpeed * 0.5, 4)
+      expect(Math.hypot(loco.state.vx, loco.state.vy)).toBeCloseTo(PARAMS.toss.maxSpeed, 6)
+      expect(loco.state.vx / loco.state.vy).toBeCloseTo(-4, 6)
+    })
+
+    it('flies, lands farther along, and reports its landing with the toss speed', () => {
+      const loco = tossed(800)
+      const x0 = loco.state.x
+      loco.drainEvents()
+      runUntil(loco, (l) => l.state.behavior === 'land' || l.state.behavior === 'idle')
+      expect(loco.state.x).toBeGreaterThan(x0 + 200)
+      expect(loco.state.surface).toBe('ground')
+      const [land] = loco.drainEvents()
+      expect(land).toMatchObject({ kind: 'land', tossSpeed: expect.closeTo(800, 0) })
+      expect((land as { impactSpeed: number }).impactSpeed).toBeGreaterThan(0)
+    })
+
+    it('bounces off the screen’s side and the ceiling', () => {
+      const side = tossed(3000, 0, 4)
+      let minVx = Infinity
+      runUntil(side, (l) => {
+        minVx = Math.min(minVx, l.state.vx)
+        return l.state.behavior !== 'fall'
+      })
+      expect(minVx).toBeLessThan(0) // came back off the right side
+      const up = tossed(0, -3000, 3)
+      let lowestY = Infinity
+      let vyAfter = -1
+      runUntil(up, (l) => {
+        if (l.state.y < lowestY) lowestY = l.state.y
+        if (l.state.y === up.area.minY && vyAfter < 0) vyAfter = l.state.vy
+        return l.state.behavior !== 'fall'
+      })
+      expect(lowestY).toBe(up.area.minY)
+      expect(vyAfter).toBeGreaterThan(0) // pushed back down off the ceiling
+    })
+
+    it('a landing after a plain jump or fall reports no toss speed', () => {
+      const loco = make({ x: 600, y: 400 })
+      fallToRest(loco)
+      expect(loco.drainEvents()).toEqual([{ kind: 'land', impactSpeed: expect.any(Number), tossSpeed: null }])
+    })
   })
 
   it('a window that closes drops the pet: it falls onto what is below', () => {

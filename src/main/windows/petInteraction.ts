@@ -37,8 +37,12 @@ import {
 export interface LocomotionControl {
   /** The pet was grabbed: it follows PetInteraction.sampleHeld() until released. */
   grab(): void
-  /** The pet was let go with its ground-contact point at `at` (global pt); it falls from there if that is in the air. */
-  release(at: Point): void
+  /**
+   * The pet was let go with its ground-contact point at `at` (global pt); it falls from there if that is in the air.
+   * 'click': the press never moved clickMaxMovePt (petting, §10.4): `at` is where it was pressed. 'throw': the user let
+   * go after a drag (a toss if it was moving). 'drop': cancelled (hidden, Space change…): never a toss.
+   */
+  release(at: Point, how: 'click' | 'throw' | 'drop'): void
 }
 
 /** A mouse event on the grab area as main sees it (its webContents' before-mouse-event), independent of renderer JS. */
@@ -514,8 +518,8 @@ export class PetInteraction {
     if (screen) this.trackMove(press, screen)
     const dragged = press.maxMove >= this.deps.tuning.clickMaxMovePt
     this.press = null
-    // A click leaves the pet exactly where it was (petting is M4).
-    this.releaseAt(!dragged ? press.startGround : screen ? heldPoint(screen, press) : press.last)
+    // A click leaves the pet exactly where it was: petting (§10.4).
+    this.releaseAt(!dragged ? press.startGround : screen ? heldPoint(screen, press) : press.last, dragged ? 'throw' : 'click')
     if (dragged) {
       // The overlay forgets its hover with the bump; the cursor stream re-enables the mouse if it is still on the pet.
       this.setMouse(false)
@@ -523,8 +527,8 @@ export class PetInteraction {
     }
   }
 
-  private releaseAt(at: Point): void {
-    this.attempt('locomotion.release', () => this.deps.locomotion.release({ x: at.x, y: at.y }))
+  private releaseAt(at: Point, how: 'click' | 'throw' | 'drop'): void {
+    this.attempt('locomotion.release', () => this.deps.locomotion.release({ x: at.x, y: at.y }, how))
     this.attempt('onSnap', () => this.deps.onSnap())
   }
 
@@ -561,7 +565,7 @@ export class PetInteraction {
     if (press) {
       // Where the overlay draws it now: no jump, and it falls from there if it is in the air.
       const drawn = this.attempt('displayedPoint', () => this.deps.displayedPoint(this.readNow()))
-      this.releaseAt(drawn !== FAILED && isPoint(drawn) ? drawn : press.last)
+      this.releaseAt(drawn !== FAILED && isPoint(drawn) ? drawn : press.last, 'drop')
     }
     if (menu) this.attempt('closeMenu', () => this.deps.closeMenu())
     this.setMouse(false)

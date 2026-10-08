@@ -214,26 +214,42 @@ describe('trayMenuTemplate', () => {
     const handler = item.click as (...args: unknown[]) => void
     handler({}, undefined, {})
   }
+  const labels = (items: { type?: string; label?: string }[]): (string | undefined)[] => items.map((item) => item.type ?? item.label)
 
-  it('lists the header, Hide Bitbot with its shortcut, a separator and Quit', () => {
+  it('lists the header, Hide Bitbot with its shortcut, and Quit (§15.2 order)', () => {
     const items = trayMenuTemplate({ visible: true, toggleAccelerator: 'Alt+Command+B' }, actions())
-    expect(items.map((item) => item.type ?? item.label)).toEqual(['Bitbot', 'Hide Bitbot', 'separator', 'Quit Bitbot'])
+    expect(labels(items)).toEqual(['Bitbot', 'separator', 'Hide Bitbot', 'separator', 'Quit Bitbot'])
     expect(items[0]).toEqual({ label: 'Bitbot', enabled: false })
-    expect(items[1]?.accelerator).toBe('Alt+Command+B')
-    expect(items[3]?.accelerator).toBeUndefined()
+    expect(items[2]?.accelerator).toBe('Alt+Command+B')
+    expect(items[4]?.accelerator).toBeUndefined()
   })
 
   it('offers Show Bitbot while hidden, and shows no shortcut when it did not register', () => {
     const items = trayMenuTemplate({ visible: false, toggleAccelerator: null }, actions())
-    expect(items[1]?.label).toBe('Show Bitbot')
-    expect(items[1] && 'accelerator' in items[1]).toBe(false)
+    expect(items[2]?.label).toBe('Show Bitbot')
+    expect(items[2] && 'accelerator' in items[2]).toBe(false)
+  })
+
+  it('Come here and Go home come before Hide, with their shortcuts when registered (§15.2, M4)', () => {
+    const a = actions()
+    const calls: string[] = []
+    const items = trayMenuTemplate(
+      { visible: true, toggleAccelerator: null, comeHereAccelerator: 'Alt+Command+C', goHomeAccelerator: null },
+      { ...a, comeHere: () => calls.push('come'), goHome: () => calls.push('home') },
+    )
+    expect(labels(items)).toEqual(['Bitbot', 'separator', 'Come here', 'Go home', 'Hide Bitbot', 'separator', 'Quit Bitbot'])
+    expect(items[2]?.accelerator).toBe('Alt+Command+C')
+    expect(items[3] && 'accelerator' in items[3]).toBe(false)
+    click(items[2])
+    click(items[3])
+    expect(calls).toEqual(['come', 'home'])
   })
 
   it('calls the actions on click', () => {
     const a = actions()
     const items = trayMenuTemplate({ visible: true, toggleAccelerator: null }, a)
-    click(items[1])
-    click(items[3])
+    click(items[2])
+    click(items[4])
     expect(a.calls).toEqual(['toggle', 'quit'])
     expect(items[0]?.click).toBeUndefined()
   })
@@ -247,22 +263,21 @@ describe('trayMenuTemplate', () => {
     const a = actions()
     let opened = 0
     const items = trayMenuTemplate({ visible: true, toggleAccelerator: null }, { ...a, developer: () => opened++ })
-    expect(items.map((item) => item.type ?? item.label)).toEqual(['Bitbot', 'Hide Bitbot', 'separator', 'Developer…', 'Quit Bitbot'])
-    click(items[3])
-    expect(opened).toBe(1)
+    expect(labels(items)).toEqual(['Bitbot', 'separator', 'Hide Bitbot', 'separator', 'Developer…', 'Quit Bitbot'])
     click(items[4])
+    expect(opened).toBe(1)
+    click(items[5])
     expect(a.calls).toEqual(['quit'])
   })
 })
 
 describe('petContextMenuTemplate', () => {
-  it('has one item, Hide, which calls hide()', () => {
-    let hidden = 0
-    const items = petContextMenuTemplate({ hide: () => hidden++ })
-    expect(items.map((item) => item.label)).toEqual(['Hide'])
-    const onClick = items[0]?.click as ((...args: unknown[]) => void) | undefined
-    onClick?.({}, undefined, {})
-    expect(hidden).toBe(1)
+  it('Pet, Go home, a separator and Hide (§15.3 order), each calling its action', () => {
+    const calls: string[] = []
+    const items = petContextMenuTemplate({ pet: () => calls.push('pet'), goHome: () => calls.push('home'), hide: () => calls.push('hide') })
+    expect(items.map((item) => item.type ?? item.label)).toEqual(['Pet', 'Go home', 'separator', 'Hide'])
+    for (const i of [0, 1, 3]) (items[i]?.click as (...args: unknown[]) => void)({}, undefined, {})
+    expect(calls).toEqual(['pet', 'home', 'hide'])
   })
 })
 

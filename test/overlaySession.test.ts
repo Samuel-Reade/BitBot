@@ -17,7 +17,7 @@ import { isPetStateMsg, type PetStateMsg } from '../src/shared/petProtocol'
 // where the overlay draws the pet, and whether the pet counts as drawn for the current configuration.
 
 const STEP = 1000 / 30
-const IDLE: PetSimState = { x: 855, y: 1068, facing: 1, state: 'idle', mood: 'content', dust: 0, look: null, attach: 'floor', supportY: 1068 }
+const IDLE: PetSimState = { x: 855, y: 1068, facing: 1, state: 'idle', mood: 'content', dust: 0, look: null, attach: 'floor', reaction: null, supportY: 1068 }
 
 function sender(): { s: PetStateSender; sent: PetStateMsg[] } {
   const sent: PetStateMsg[] = []

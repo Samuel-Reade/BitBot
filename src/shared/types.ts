@@ -123,6 +123,30 @@ export function isIdleMode(value: unknown): value is IdleMode {
   return typeof value === 'string' && (IDLE_MODES as readonly string[]).includes(value)
 }
 
+/**
+ * A short reaction the overlay plays once (pet:state's reaction): 'petted' (§10.4: clicked without dragging: blush, a
+ * happy wiggle), 'dizzy' (§10.4: landed after a hard toss). seq grows with every new one, so the overlay starts it
+ * exactly once, however many states repeat it.
+ */
+export const PET_REACTIONS = ['petted', 'dizzy'] as const
+export type PetReactionKind = (typeof PET_REACTIONS)[number]
+export interface PetReaction {
+  kind: PetReactionKind
+  seq: number
+}
+
+export function isPetReaction(value: unknown): value is PetReaction {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v['kind'] === 'string' &&
+    (PET_REACTIONS as readonly string[]).includes(v['kind']) &&
+    typeof v['seq'] === 'number' &&
+    Number.isInteger(v['seq']) &&
+    v['seq'] >= 1
+  )
+}
+
 /** The pet's place in the world (§16 `pet.position`): ground-contact point in global screen points, y down. */
 export interface PetPosition {
   displayId: number

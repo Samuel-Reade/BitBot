@@ -121,6 +121,8 @@ class Harness {
     mouse: [] as boolean[],
     grabs: 0,
     releases: [] as Point[],
+    /** How each release let go ('click' | 'throw' | 'drop'), in step with releases. */
+    releaseKinds: [] as string[],
     snaps: 0,
     resets: [] as number[],
     cursors: [] as Point[],
@@ -154,8 +156,9 @@ class Harness {
           boom('grab')
           rec.grabs++
         },
-        release: (at) => {
+        release: (at, how) => {
           boom('release')
+          rec.releaseKinds.push(how)
           rec.releases.push({ ...at })
         },
       },
@@ -490,6 +493,7 @@ describe('PetInteraction: presses', () => {
     const epoch = h.pi.epoch
     h.up({ x: 513, y: 752 }) // 3.6 pt from the press
     expect(h.rec.releases).toEqual([{ x: 500.25, y: 799.5 }])
+    expect(h.rec.releaseKinds).toEqual(['click']) // petting (§10.4)
     expect(h.rec.snaps).toBe(1)
     expect(h.pi.held).toBe(false)
     expect(h.pi.epoch).toBe(epoch)
@@ -507,6 +511,7 @@ describe('PetInteraction: presses', () => {
     const epoch = h.pi.epoch
     h.up({ x: 705, y: 602 })
     expect(h.rec.releases).toEqual([{ x: 695, y: 652 }])
+    expect(h.rec.releaseKinds).toEqual(['throw']) // the user let go: a toss if it was moving
     expect(h.rec.snaps).toBe(1)
     expect(h.pi.held).toBe(false)
     expect(h.pi.mouseEnabled).toBe(false)
@@ -1072,6 +1077,7 @@ describe('PetInteraction: cancel, safety net, cursor stream', () => {
     const epoch = h.pi.epoch
     h.pi.cancel('lock screen')
     expect(h.rec.releases).toEqual([{ x: 505, y: 790 }])
+    expect(h.rec.releaseKinds).toEqual(['drop']) // a cancel never tosses
     expect(h.rec.snaps).toBe(1)
     expect(h.pi.held).toBe(false)
     expect(h.pi.mouseEnabled).toBe(false)

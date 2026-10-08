@@ -168,6 +168,13 @@ Also found while measuring: an animated outline moves under a still cursor, so a
 - **On the real desktop** (90 s, dev build): the pet hopped to a window's side, climbed it, walked its top, dropped to the Dock and climbed the other side; clean quit, no errors.
 - **Not covered yet:** multiple displays (Phase 4), tossing (M4), the cost of real walking (the dev check moves the pet by teleport; walking renders at 60 fps like a drag).
 
+## M4: directing (2026-10-08)
+
+- **Built (§10.4):** tossing (the drag's velocity over the last 80 ms; fast enough flies on, bounces off the screen's sides and the ceiling, lands dizzy after a hard throw), petting (a click: blush and a happy wiggle; the pet stays where it was, on a wall too), Come here (⌥⌘C) and Go home (⌥⌘H) from hotkeys and the menus, and ⌥⌘-click send through the helper's listen-only mouse tap (only with Input Monitoring; never intercepted).
+- **How a press ends** is explicit: a click puts the pet back, letting go after a drag may toss it, and a cancel (hiding, a Space change) just drops it. The dev check found that hiding mid-drag had thrown the pet.
+- **Not yet:** petting's "boredom −30" waits for the needs model (M6); "in Stay mode the drop location becomes the stay location" waits for modes (M7); Go home goes to the middle of the Dock until hangout spots exist (M7); the teleport sparkle for a drop on another display stays a SPEC-DEVIATION (the drag is kept on the primary display).
+- **Dev check:** petting, a toss (lands ≥ 150 pt away, dizzy), Come here and Go home added; 67/67 functional, and the drag phases pass with the mouse left alone.
+
 ## Manual checks (the real app)
 
 Start it with `npm run build:helper` (once), then `npm start`. The pet stands on the Dock at the bottom centre, and a small monitor icon appears in the menu bar.

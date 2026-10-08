@@ -168,7 +168,7 @@ describe('pet overlay protocol', () => {
     epoch: 0,
     debug: false,
   }
-  const state: PetStateMsg = { seq: 1, t: 10, sentAt: 11, x: 855, y: 1022, facing: 1, state: 'idle', mood: 'content', dust: 0, look: null, attach: 'floor', supportY: 1022, snap: true }
+  const state: PetStateMsg = { seq: 1, t: 10, sentAt: 11, x: 855, y: 1022, facing: 1, state: 'idle', mood: 'content', dust: 0, look: null, attach: 'floor', reaction: null, supportY: 1022, snap: true }
   const ready: PetReadyMsg = {
     configSeq: 3,
     anchor: { x: 120, y: 180 },

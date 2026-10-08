@@ -214,6 +214,11 @@ export const tuning = {
   /** The running app's glue (src/main/bitbotApp.ts): quitting, signals, error reports and the focus self-check. */
   app: {
     /**
+     * §10.4 "Send to cursor": an ⌥⌘-click anywhere sends the pet there (seen by the helper's listen-only tap, never
+     * intercepted; needs Input Monitoring, else unavailable). The default of settings.altCmdClickSend (§16, M8).
+     */
+    altCmdClickSend: true,
+    /**
      * Quitting waits at most this long for bitbot-helper to exit, ms. Its own stop escalates quit → SIGTERM → SIGKILL,
      * tuning.helper.stopGraceMs apart, so this covers that with a little to spare. Lower = a faster quit that may leave
      * the helper to exit on its own (it also exits when Bitbot does).
@@ -280,6 +285,20 @@ export const tuning = {
     runDistancePt: 400,
     /** A jump's arc peaks this far above the higher of its two ends, pt. Higher = loftier, slower jumps. */
     jumpApexPt: 40,
+    /**
+     * Tossing (§10.4 "released with velocity → tossed with physics"): the release velocity is the drag's over the last
+     * releaseWindowS; at least minSpeed (pt/s) tosses (slower: it just drops), capped at maxSpeed. In the air it bounces
+     * off the screen's sides at wallRestitution and off the ceiling at ceilingRestitution; tossed at dizzySpeed or more,
+     * it lands dizzy (§10.4 "maybe dizzy if thrown hard"). Higher minSpeed = harder to toss by accident.
+     */
+    toss: {
+      releaseWindowS: 0.08,
+      minSpeed: 300,
+      maxSpeed: 3200,
+      wallRestitution: 0.5,
+      ceilingRestitution: 0.3,
+      dizzySpeed: 1800,
+    },
     /** §8.5 "small bounce on hard landings": a landing faster than minSpeed (pt/s) bounces back up at restitution × speed. */
     landBounce: { minSpeed: 1400, restitution: 0.18 },
   },
@@ -405,6 +424,11 @@ export const tuning = {
     },
     /** Celebrate (§6.4): one jump with a full spin per periodS, height (units), arms up (rad), fast antenna wiggle (Hz, rad). */
     celebrate: { periodS: 1.2, jump: 0.25, armsUp: 2.4, antennaWiggleHz: 8, antennaWiggle: 0.35 },
+    /**
+     * Reactions (pet:state's reaction): petted (§10.4: blush, a happy wiggle; wiggle in rad, for pettedS) and dizzy after
+     * a hard toss (dizzy eyes, a wobble; for dizzyS). Longer = the pet dwells on it.
+     */
+    react: { pettedS: 0.9, wiggle: 0.18, wiggleHz: 4, dizzyS: 1.6, wobble: 0.08, wobbleHz: 2.5 },
     /** Peek (§6.4): leans out (rad), one arm up on the edge (rad). */
     peek: { lean: 0.35, armUp: 2.2 },
     /** Greet (§10.1; not in the §6.4 table): one arm waves (rad up, Hz, ± rad), a small bounce (units). */
@@ -459,6 +483,11 @@ export const tuning = {
      * busier, more fidgety pet.
      */
     wander: { pauseS: [2, 6] as readonly [number, number], windowBias: 0.6, climbChance: 0.15, minDistancePt: 150 },
+    /**
+     * "Go home" (§10.4) before hangout spots exist (M7): the default home, on the ground at this fraction of its width
+     * (0.5: the middle of the Dock, where the pet first appears).
+     */
+    homeX: 0.5,
   },
 
   /** bitbot-helper process management (§5.3). */
@@ -574,6 +603,14 @@ export const tuning = {
        * (one move every rideIntervalMs), and fall back to the ground when it closes.
        */
       world: { dx: 260, up: 280, width: 420, reachTimeoutMs: 25_000, rideSteps: 6, rideStepPt: 20, rideIntervalMs: 120 },
+      /**
+       * The toss check (M4): a drag of `moves` moves of stepPt, intervalMs apart (≈ 2600 pt/s, well over
+       * tuning.move.toss.dizzySpeed), let go while still moving; the pet must land at least minFlightPt from the release
+       * point (either way: it may bounce off the screen's side), dizzy. Then Come here (cursor dx pt left of home, on the ground) and Go home, each within
+       * walkTimeoutMs, to within arrivePt.
+       */
+      toss: { moves: 8, stepPt: { x: 40, y: -14 }, intervalMs: 16, minFlightPt: 150 },
+      directing: { comeHereDx: -320, walkTimeoutMs: 12_000, arrivePt: 2 },
       /** While hidden, the simulation must not step for this long, ms. */
       hiddenHoldMs: 500,
       /** Wait before the last checks so the activation monitor's verdicts are in (after tuning.app.activationVerdictDelayMs), ms. */

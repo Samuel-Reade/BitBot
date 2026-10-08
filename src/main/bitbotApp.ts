@@ -26,7 +26,7 @@ import { IPC } from '../shared/ipc'
 import { DEFAULT_PALETTE_ID } from '../shared/palettes'
 import type { OverlayStatsMsg, PetCursorMsg, PetHoverResetMsg, PetReadyMsg, PetVisibleMsg } from '../shared/petProtocol'
 import { tuning } from '../shared/tuning'
-import type { LookDirection, PaletteId, PetSize } from '../shared/types'
+import type { LookDirection, PaletteId, PetReaction, PetReactionKind, PetSize } from '../shared/types'
 import { boxFor } from '../shared/world'
 import { ActivationMonitor, type ActivationCounters, type FocusEventSource } from './activationMonitor'
 import { Debouncer } from './debounce'
@@ -145,6 +145,8 @@ export interface BitbotInspection {
   refreshWorld(): void
   /** The helper's snapshot rate asked for now, Hz (null: none yet). */
   snapshotHz: number | null
+  /** The newest reaction pet:state carries (petted, dizzy). */
+  reaction: PetReaction | null
   /**
    * Resolves with the pet:ready of the current page load once it came (at once if it already has), from a load
    * numbered minLoad or later (default 1; pass `loads + 1` to wait for the next one); rejects after timeoutMs.
@@ -208,6 +210,10 @@ export class BitbotApp {
   private wakeCursor: Point | null = null
   /** Where the eyes look (sim/look.ts), as of the newest step. */
   private look: LookDirection | null = null
+  /** The newest reaction for pet:state (petted, dizzy), numbered so the overlay plays each once. */
+  private reaction: PetReaction | null = null
+  /** Where the pet was sent while it couldn't go (in the air, held): it goes when it stands again. */
+  private pendingSend: Point | null = null
   /** Dev builds: the last movement line logged (logMovement). */
   private lastMovementLine = ''
   private menu: { menu: Menu; win: BrowserWindow } | null = null
@@ -254,9 +260,13 @@ export class BitbotApp {
       locomotion: {
         grab: () => {
           if (!this.loco) throw new Error('the pet has no place yet')
+          this.pendingSend = null // the user has it now
           this.loco.grab()
         },
-        release: (at) => this.loco?.release(at),
+        release: (at, how) => {
+          this.loco?.release(at, how)
+          if (how === 'click') this.react('petted')
+        },
       },
       tuning: tuning.hitArea,
       now: () => clock.now(),
@@ -379,11 +389,13 @@ export class BitbotApp {
     this.tray = new BitbotTray({
       actions: {
         toggleVisible: () => this.toggleVisible('tray menu'),
+        comeHere: () => this.comeHere('tray menu'),
+        goHome: () => this.goHome('tray menu'),
         // Dev builds only: the menu has no "Developer…" without it.
         ...(devPanel ? { developer: () => this.guarded('dev panel', () => devPanel.open()) } : {}),
         quit: () => void this.quit('tray menu'),
       },
-      toggleAccelerator: () => this.hotkeys.accelerator('toggleVisible'),
+      accelerator: (action) => this.hotkeys.accelerator(action),
     })
     this.relayout = new Debouncer(tuning.overlay.displayChangeDebounceMs, () => this.guarded('display re-layout', () => this.layOut()))
   }
@@ -537,6 +549,7 @@ export class BitbotApp {
       setDevOverrides: (set) => this.applyDevPanelSet(set),
       refreshWorld: () => this.refreshWorld(),
       snapshotHz: this.worldDriver.snapshotHz,
+      reaction: this.reaction ? { ...this.reaction } : null,
       waitForReady: (timeoutMs, minLoad = 1) => this.waitForReady(timeoutMs, minLoad),
       requestOverlayStats: (timeoutMs) => this.requestOverlayStats(timeoutMs),
     }
@@ -553,6 +566,13 @@ export class BitbotApp {
       if (p) loco.teleport(p)
     }
     loco.step(dtS, this.held)
+    for (const e of loco.drainEvents()) {
+      if (e.kind === 'toss' && this.dev) this.log(`[bitbot] pet: tossed at ${Math.hypot(e.vx, e.vy).toFixed(0)} pt/s`)
+      // §10.4 "it lands, maybe dizzy if thrown hard".
+      if (e.kind === 'land' && e.tossSpeed !== null && e.tossSpeed >= tuning.move.toss.dizzySpeed) this.react('dizzy')
+    }
+    const pending = this.pendingSend
+    if (pending && (loco.state.behavior === 'idle' || loco.state.behavior === 'land') && loco.goTo(pending)) this.pendingSend = null
     this.presented.push(t, loco.state)
     const box = this.ready?.petBox
     const cursor = this.wakeCursor
@@ -573,6 +593,7 @@ export class BitbotApp {
       dust: f.dust,
       look: this.look,
       attach: s.attach,
+      reaction: this.reaction,
       supportY: loco.supportY,
     }
   }
@@ -587,6 +608,37 @@ export class BitbotApp {
     if (line === this.lastMovementLine) return
     this.lastMovementLine = line
     this.log(`[bitbot] pet: ${line} at ${s.x.toFixed(0)},${s.y.toFixed(0)}`)
+  }
+
+  /** A reaction the overlay plays once (petting: §10.4; boredom −30 comes with the needs model, M6). */
+  private react(kind: PetReactionKind): void {
+    this.reaction = { kind, seq: (this.reaction?.seq ?? 0) + 1 }
+    if (this.dev) this.log(`[bitbot] pet: ${kind}`)
+  }
+
+  /** §10.4 Come here: walks or climbs to the reachable point nearest the cursor. */
+  comeHere(source: string): void {
+    const loco = this.loco
+    if (!loco || !this.isPetVisible()) return
+    const cursor = this.opts.cursor ? this.opts.cursor() : screen.getCursorScreenPoint()
+    this.sendTo(cursor, `come here (${source})`)
+  }
+
+  /** §10.4 Go home: to the default home on the ground (hangout spots come with M7). */
+  goHome(source: string): void {
+    const loco = this.loco
+    if (!loco || !this.isPetVisible()) return
+    const a = loco.area
+    this.sendTo({ x: a.minX + tuning.brain.homeX * (a.maxX - a.minX), y: a.groundY }, `go home (${source})`)
+  }
+
+  /** Sends the pet to `p` (or the reachable place nearest it); a pet in the air or held goes once it can. */
+  private sendTo(p: Point, why: string): void {
+    const loco = this.loco
+    if (!loco) return
+    const ok = loco.goTo(p)
+    this.pendingSend = ok ? null : { ...p }
+    if (this.dev) this.log(`[bitbot] ${why}: ${ok ? 'on its way' : 'it goes once it can'}`)
   }
 
   /** Asks the helper for a snapshot now (the pet was shown or created: the world may be stale), off the push schedule. */
@@ -719,6 +771,14 @@ export class BitbotApp {
     if (!win) throw new Error('there is no grab area to open the menu over')
     const menu = Menu.buildFromTemplate(
       petContextMenuTemplate({
+        pet: () => {
+          this.activation.menuChoice('Pet')
+          this.react('petted')
+        },
+        goHome: () => {
+          this.activation.menuChoice('Go home')
+          this.goHome('pet menu')
+        },
         hide: () => {
           this.activation.menuChoice('Hide')
           this.hidePet('pet menu')
@@ -789,7 +849,16 @@ export class BitbotApp {
       binaryPath,
       onListenerError: (err) => this.failClosed('a bitbot-helper event handler threw', err),
     })
-    helper.on('hello', (m) => this.log(`[bitbot] helper hello: pid ${m.pid}, protocol ${m.version}`))
+    helper.on('hello', (m) => {
+      this.log(`[bitbot] helper hello: pid ${m.pid}, protocol ${m.version}`)
+      void this.startClickSend(helper)
+    })
+    // §10.4 Send to cursor: only ⌥⌘-clicks carry a location (the helper sends none for any other click).
+    helper.on('input', (m) => {
+      if (m.kind === 'mouseDown' && m.button === 0 && m.alt && m.cmd && m.x !== null && m.y !== null) {
+        this.guarded('⌥⌘-click', () => this.sendTo({ x: m.x as number, y: m.y as number }, '⌥⌘-click'))
+      }
+    })
     helper.on('protocolError', (e) => {
       if (e.reason === 'versionMismatch') {
         this.log(`[bitbot] bitbot-helper speaks protocol ${e.actual}, Bitbot expects ${e.expected}: run npm run build:helper`)
@@ -823,6 +892,25 @@ export class BitbotApp {
     helper.on('snapshot', (m) => this.guarded('window snapshot', () => this.worldDriver.onSnapshot(this.worldWindows(m.windows), clock.now(), this.loco)))
     this.helper = helper
     helper.start()
+  }
+
+  /**
+   * ⌥⌘-click send (§10.4): the helper's listen-only tap for mouse presses, only with Input Monitoring granted (checked
+   * without prompting; onboarding asks, M8). Without it the feature is off and the Come here hotkey still works.
+   */
+  private async startClickSend(helper: HelperClient): Promise<void> {
+    if (!tuning.app.altCmdClickSend || this.quitting) return
+    try {
+      const access = await helper.inputAccess()
+      if (!access.listen) {
+        this.log('[bitbot] ⌥⌘-click send is off: Input Monitoring is not granted (Come here, ⌥⌘C, still works)')
+        return
+      }
+      const tap = await helper.startInputTap({ keys: false, mouse: true })
+      this.log(tap.active ? '[bitbot] ⌥⌘-click send is on' : `[bitbot] ⌥⌘-click send is off: ${tap.reason ?? tap.error ?? 'the tap did not start'}`)
+    } catch (err) {
+      this.throttled.log('click send', `[bitbot] ⌥⌘-click send could not start: ${errorText(err)}`)
+    }
   }
 
   private onHelperExit(info: HelperExitInfo): void {
@@ -869,7 +957,11 @@ export class BitbotApp {
   // ───────────────────────────── system events ─────────────────────────────
 
   private registerHotkeys(): void {
-    const result = this.hotkeys.register({ toggleVisible: () => this.toggleVisible('⌥⌘B') })
+    const result = this.hotkeys.register({
+      toggleVisible: () => this.toggleVisible('⌥⌘B'),
+      comeHere: () => this.comeHere('⌥⌘C'),
+      goHome: () => this.goHome('⌥⌘H'),
+    })
     for (const action of result.registered) this.log(`[bitbot] hotkey registered: ${DEFAULT_HOTKEYS[action]} (${action})`)
     for (const action of result.failed) {
       this.log(`[bitbot] hotkey NOT registered: ${DEFAULT_HOTKEYS[action]} (${action}); another app may own it`)

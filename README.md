@@ -2,10 +2,11 @@
 
 A macOS desktop pet that lives on your screen and is fed by how you use your computer. The spec is [`BITBOT_SPEC.md`](BITBOT_SPEC.md).
 
-**Status:** Milestone 3 (world) is built. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
+**Status:** Milestone 4 (directing) is built. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
 - Bitbot runs as a menu-bar app with no Dock icon.
 - The Mint pet is alive: it blinks, looks at the cursor, stirs now and then, swings when you drag it, and squashes when it lands.
 - It wanders by itself (M3's stand-in for the M6 brain): it walks along the Dock, climbs the screen's edges and your windows' sides, jumps and drops between window tops, rides a window you move, and falls when you close or fling it.
+- You can direct it: throw it, pet it, call it with Come here (⌥⌘C), send it home (⌥⌘H), or ⌥⌘-click anywhere to send it there (needs Input Monitoring).
 - Every §6.4 state and mood and every §6.3 face can be shown from the developer panel (dev builds), which also draws the world it sees.
 - The tray menu and ⌥⌘B hide and show it.
 
@@ -36,8 +37,11 @@ npm run dev      # the same with hot reload of the pet page
 - **What you see.** The pet stands on the Dock at the bottom centre of the main display, and a small monitor icon appears in the menu bar.
   - If the menu bar is too full (a notch hides items), use ⌥⌘B instead of the icon.
 - **Using it.**
-  - Drag the pet to move it: it dangles and swings, and gets dizzy if shaken. Let go and it falls onto the first surface below (a window top or the Dock) and lands. A click without dragging leaves it where it is.
-  - Right-click it for **Hide**.
+  - Drag the pet to move it: it dangles and swings, and gets dizzy if shaken. Let go and it falls onto the first surface below (a window top or the Dock) and lands. Let go while moving and it is thrown: it flies on, bounces off the screen's sides, and lands dizzy after a hard throw.
+  - Click it without dragging to pet it: it blushes and wiggles happily, and stays where it was (on a wall too).
+  - **Come here** (⌥⌘C, or the menu-bar menu) sends it to the cursor, or the nearest place it can reach; **Go home** (⌥⌘H) sends it to the middle of the Dock.
+  - ⌥⌘-click anywhere sends it there. The click itself still goes to whatever you clicked; Bitbot only listens. It needs Input Monitoring, which dev runs from a terminal don't have (see "Permissions in dev"); the terminal says whether it is on.
+  - Right-click it for **Pet**, **Go home** and **Hide**.
   - ⌥⌘B or the menu-bar icon hides and shows it.
   - **Quit Bitbot** is in the menu-bar icon's menu; Ctrl+C in the terminal also quits.
 - **The helper is required for grabbing.** `bitbot-helper` tells Bitbot when its overlay is on screen, so the pet can only be grabbed while it runs. Without the built helper the pet shows but can't be grabbed, and the terminal says so.

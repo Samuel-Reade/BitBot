@@ -8,7 +8,7 @@ import {
   type MouthState,
 } from '../../../shared/faceStates'
 import { tuning } from '../../../shared/tuning'
-import type { BehaviorState, IdleMode, LookDirection, Mood } from '../../../shared/types'
+import type { BehaviorState, IdleMode, LookDirection, Mood, PetReaction, PetReactionKind } from '../../../shared/types'
 import type { PetAttach } from '../../../shared/world'
 import type { BitbotRig } from './buildBitbot'
 import { armShoulder, SPEC_ORIGIN_HEIGHT } from './construction'
@@ -51,6 +51,8 @@ export interface AnimInput {
   /** The dev panel's forced face fields. */
   faceOverride: FaceOverride | null
   idleMode: IdleMode
+  /** The newest reaction (pet:state); each seq plays once (§10.4 petting, dizzy after a hard toss). Optional: none. */
+  reaction?: PetReaction | null
 }
 
 export interface AnimResult {
@@ -209,6 +211,10 @@ export class Animator {
   private dizzyUntil = -1
   private heldFace: 'o' | 'happy' = 'o'
 
+  /** The reaction playing: its kind and time span; and the newest seq seen (null: none yet, so a page's first state replays nothing). */
+  private playing: { kind: PetReactionKind; start: number; end: number } | null = null
+  private reactionSeq: number | null = null
+
   private signature: number[] = []
   private faceKey = ''
   private dustShown = -1
@@ -268,6 +274,7 @@ export class Animator {
     const blendS = blendFor(input.state, T)
     if (tau < blendS) pose = mix(this.from, pose, smoothstep(tau / blendS))
     pose = this.moodLayers(pose, input, t, style)
+    pose = this.reactionLayer(pose, input, t)
     this.last = pose
 
     // Facing (§6.1): ease toward the walking direction (the first update starts there); a climbing pet faces the viewer.
@@ -514,6 +521,29 @@ export class Animator {
     return p
   }
 
+  /** A reaction (§10.4): a happy wiggle when petted, a wobble when dizzy; standing poses only (not climbing or in the air). */
+  private reactionLayer(pose: Pose, input: AnimInput, t: number): Pose {
+    const r = input.reaction ?? null
+    // The first update only notes the newest seq (0: none yet), so a page's first state replays nothing.
+    if (this.reactionSeq === null) this.reactionSeq = r?.seq ?? 0
+    else if (r && r.seq !== this.reactionSeq) {
+      const length = r.kind === 'petted' ? this.T.react.pettedS : this.T.react.dizzyS
+      this.playing = { kind: r.kind, start: t, end: t + length }
+      this.reactionSeq = r.seq
+    }
+    const p = this.playing
+    if (!p || t >= p.end) {
+      this.playing = null
+      return pose
+    }
+    if (input.attach !== 'floor' || ['held', 'fall', 'jump', 'climb'].includes(input.state)) return pose
+    const u = (t - p.start) / (p.end - p.start)
+    const R = this.T.react
+    if (p.kind === 'petted') pose.roll += Math.sin(TAU * R.wiggleHz * (t - p.start)) * R.wiggle * (1 - u)
+    else pose.roll += Math.sin(TAU * R.wobbleHz * (t - p.start)) * R.wobble * (1 - u)
+    return pose
+  }
+
   private moodLayers(pose: Pose, input: AnimInput, t: number, style: IdleMode): Pose {
     const T = this.T
     const p = pose
@@ -652,6 +682,19 @@ export class Animator {
       }
     }
 
+    // A reaction (§10.4): petted → happy and blushing; dizzy after a hard toss → dizzy eyes, a wavy mouth.
+    const r = this.playing
+    if (r && t < r.end) {
+      if (r.kind === 'petted') {
+        eyes = 'happy'
+        overlays.add('blush')
+      } else {
+        eyes = 'dizzy'
+        mouth = 'wavy'
+      }
+      blinks = false
+    }
+
     this.blinking = blinks
     if (blinks && t < this.blinkUntil && eyes !== 'closed') eyes = 'blink'
 
@@ -769,6 +812,7 @@ export class Animator {
     const active = (e: Timed | null): boolean => e !== null && t >= e.start && t < e.end
     if (CONTINUOUS.has(input.state)) return true
     if (IDLE_LIKE.has(input.state) && style === 'continuous') return true
+    if (this.playing !== null && t < this.playing.end) return true
     if (t - this.stateStart < blendFor(input.state, this.T)) return true
     if (this.yaw !== yawFor(input)) return true
     if (active(this.event) && this.event?.kind !== 'glance') return true

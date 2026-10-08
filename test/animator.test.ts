@@ -531,3 +531,39 @@ describe('Animator: jump (M3: the simulation moves the pet along the arc)', () =
     expect(rig.joints.armL?.rotation.z).toBeCloseTo(armRestL + A.jump.armsUp, 6)
   })
 })
+
+describe('Animator: reactions (§10.4)', () => {
+  it('petting plays once per new seq: happy, blushing, a wiggle; a page’s first state replays nothing', () => {
+    const { rig, anim } = setup()
+    const base = input({ idleMode: 'still' })
+    // The first reaction a page sees is old news (a reload): nothing plays.
+    anim.update(0, { ...base, reaction: { kind: 'petted', seq: 3 } })
+    anim.update(500, { ...base, reaction: { kind: 'petted', seq: 3 } })
+    expect(anim.face?.eyes).not.toBe('happy')
+    // A new one plays.
+    anim.update(1000, { ...base, reaction: { kind: 'petted', seq: 4 } })
+    let wiggled = false
+    for (let t = 1000; t < 1000 + A.react.pettedS * 1000; t += 16) {
+      const r = anim.update(t, { ...base, reaction: { kind: 'petted', seq: 4 } })
+      expect(anim.face?.eyes).toBe('happy')
+      expect(anim.face?.overlays).toContain('blush')
+      expect(r.wakeAt).toBe(t)
+      if (Math.abs(rig.figure.quaternion.z) > 0.01) wiggled = true
+    }
+    expect(wiggled).toBe(true)
+    // …and ends.
+    anim.update(1000 + A.react.pettedS * 1000 + 50, { ...base, reaction: { kind: 'petted', seq: 4 } })
+    anim.update(1000 + A.react.pettedS * 1000 + 600, { ...base, reaction: { kind: 'petted', seq: 4 } })
+    expect(anim.face?.eyes).not.toBe('happy')
+  })
+
+  it('dizzy after a hard toss: dizzy eyes and a wavy mouth for dizzyS', () => {
+    const { anim } = setup()
+    const base = input({ idleMode: 'still' })
+    anim.update(0, { ...base, reaction: null })
+    anim.update(100, { ...base, reaction: { kind: 'dizzy', seq: 1 } })
+    expect(anim.face).toMatchObject({ eyes: 'dizzy', mouth: 'wavy' })
+    anim.update(100 + A.react.dizzyS * 1000 + 10, { ...base, reaction: { kind: 'dizzy', seq: 1 } })
+    expect(anim.face?.eyes).not.toBe('dizzy')
+  })
+})
