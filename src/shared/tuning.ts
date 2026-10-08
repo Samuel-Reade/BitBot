@@ -701,6 +701,13 @@ export const tuning = {
         decimals: { raw: 0, credited: 1, earned: 2, multiplier: 2, lifetime: 2, wallet: 2, share: 0, rhythm: 2, nutrition: 1 },
         breakDefaultMin: 10,
       },
+      /**
+       * The Life section (M6): decimal places of the need levels (0..100), the goal scores, the minutes of continuous
+       * activity, and the dust in effect (0..1, as the Dust slider).
+       */
+      life: {
+        decimals: { need: 0, score: 2, continuousMin: 0, dust: 2 },
+      },
     },
     /**
      * The overlay's debug view of the world (§14.1, the dev panel's "Show world"): line colours and widths, CSS px.

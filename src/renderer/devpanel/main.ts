@@ -2,7 +2,10 @@
 // src/shared/devPanel.ts). Milestone 2: force the pet's state, mood, dust, facing, face and idle style, and watch what
 // it does. Milestone 3: the world section (show the world's debug view, wander, send the pet somewhere, and what the
 // simulation sees). Milestone 5: the economy section (the currency table, diet, sparks, whether input is counted, and
-// buttons that inject activity; the pure part in ./economyView.ts). Vanilla TS over the sandboxed bridge: every control
+// buttons that inject activity; the pure part in ./economyView.ts). Milestone 6: mood and dust can be left to the needs
+// ("auto", showing what is in effect), the time scale of the pet's life, and the Life section (need bars, the needs'
+// mood, stuffed, asleep, what the brain does, the goal scores; the pure part in ./lifeView.ts). Vanilla TS over the
+// sandboxed bridge: every control
 // sends a debug:panel-set with the one field it changes (the world buttons a debug:panel-action, the economy buttons a
 // debug:panel-inject), and every debug:panel-status (validated) sets the controls and the status blocks, so the page
 // always shows main's overrides, never its own idea of them.
@@ -36,7 +39,18 @@ import {
   isMood,
   MOODS,
 } from '../../shared/types'
+import type { LifeSnapshot } from '../../shared/life'
 import { breakInject, ECONOMY_INJECTS, economyDetails, economyRows, isEconomySnapshot } from './economyView'
+import {
+  dustInEffect,
+  isLifeSnapshot,
+  lifeDetails,
+  moodInEffect,
+  needBars,
+  scoreRows,
+  TIME_SCALE_CHOICES,
+  timeScaleFrom,
+} from './lifeView'
 
 /** The value of every "the pet's own" choice. */
 const AUTO = 'auto'
@@ -86,7 +100,8 @@ function isDevPanelStatus(value: unknown): value is DevPanelStatus {
     isRate(value['rendersPerS']) &&
     isRate(value['framesPerS']) &&
     (value['world'] === null || isDevWorldStatus(value['world'])) &&
-    (value['economy'] === null || isEconomySnapshot(value['economy']))
+    (value['economy'] === null || isEconomySnapshot(value['economy'])) &&
+    (value['life'] === null || isLifeSnapshot(value['life']))
   )
 }
 
@@ -144,17 +159,26 @@ const setState = radios(
 )
 
 const moodSelect = element('mood', HTMLSelectElement)
-const setMood = fillSelect(moodSelect, MOODS, null)
-moodSelect.addEventListener('change', () => {
-  if (isMood(moodSelect.value)) send({ mood: moodSelect.value })
-})
+const setMood = fillSelect(moodSelect, MOODS, 'auto (needs)')
+moodSelect.addEventListener('change', () => send({ mood: isMood(moodSelect.value) ? moodSelect.value : null }))
+const moodEffect = element('mood-effect', HTMLOutputElement)
 
 const dust = element('dust', HTMLInputElement)
-const dustValue = element('dust-value', HTMLOutputElement)
-dust.addEventListener('input', () => {
+const dustAuto = element('dust-auto', HTMLInputElement)
+const dustEffect = element('dust-effect', HTMLOutputElement)
+/** The slider's level when it is one main accepts; null otherwise. */
+function sliderDust(): number | null {
   const value = Number(dust.value)
-  dustValue.textContent = value.toFixed(2)
-  if (Number.isFinite(value) && value >= 0 && value <= 1) send({ dust: value })
+  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null
+}
+dust.addEventListener('input', () => {
+  const value = sliderDust()
+  if (value !== null) send({ dust: value })
+})
+dustAuto.addEventListener('change', () => {
+  dust.disabled = dustAuto.checked
+  // Forcing starts from where the slider is.
+  send({ dust: dustAuto.checked ? null : (sliderDust() ?? 0) })
 })
 
 const setFacing = radios(
@@ -217,6 +241,11 @@ const setIdle = radios(
   },
 )
 
+const setTimeScale = radios(element('time-scale', HTMLDivElement), 'time-scale', TIME_SCALE_CHOICES, (value) => {
+  const timeScale = timeScaleFrom(value)
+  if (timeScale !== null) send({ timeScale })
+})
+
 const showWorld = element('show-world', HTMLInputElement)
 showWorld.addEventListener('change', () => send({ showWorld: showWorld.checked }))
 const wander = element('wander', HTMLInputElement)
@@ -261,13 +290,18 @@ element('reset', HTMLButtonElement).addEventListener('click', () => {
   send(defaults)
 })
 
-/** Sets every control from main's overrides. */
-function showOverrides(o: DevOverrides): void {
+/** Sets every control from main's overrides (and what mood and dust are in effect, from the life). */
+function showOverrides(o: DevOverrides, life: LifeSnapshot | null): void {
   setState(o.state ?? AUTO)
-  setMood(o.mood ?? 'content') // M6 page work shows "auto"
-  // Not under the user's pointer: a status sent before their newest move would make the slider jump back.
-  if (document.activeElement !== dust) dust.value = String(o.dust ?? 0)
-  dustValue.textContent = (o.dust ?? 0).toFixed(2)
+  setMood(o.mood ?? AUTO)
+  moodEffect.textContent = moodInEffect(o, life)
+  dustAuto.checked = o.dust === null
+  dust.disabled = o.dust === null
+  // Not under the user's pointer: a status sent before their newest move would make the slider jump back. On auto it
+  // follows the needs' dust, so forcing starts from there.
+  const shown = o.dust ?? (life ? life.needs.dust / 100 : null)
+  if (shown !== null && document.activeElement !== dust) dust.value = String(shown)
+  dustEffect.textContent = dustInEffect(o, life)
   setFacing(o.facing === 1 ? 'right' : o.facing === -1 ? 'left' : AUTO)
   setEyes(o.face?.eyes ?? AUTO)
   setMouth(o.face?.mouth ?? AUTO)
@@ -278,6 +312,7 @@ function showOverrides(o: DevOverrides): void {
   setIdle(o.idleMode)
   showWorld.checked = o.showWorld
   wander.checked = o.wander
+  setTimeScale(String(o.timeScale))
 }
 
 // ───────────────────────────── status ─────────────────────────────
@@ -349,6 +384,62 @@ function showEconomy(economy: EconomySnapshot | null): void {
   ecInput.classList.toggle('warn', details.inputOff)
 }
 
+/** The need bars (NEEDS order), made once. */
+const lfNeeds = element('lf-needs', HTMLDivElement)
+const needCells = needBars(null).map((bar) => {
+  const name = document.createElement('span')
+  name.className = 'need'
+  name.textContent = bar.need
+  const meter = document.createElement('meter')
+  meter.min = 0
+  meter.max = 100
+  const value = document.createElement('output')
+  lfNeeds.append(name, meter, value)
+  return { meter, value }
+})
+
+const lfMood = element('lf-mood', HTMLElement)
+const lfStuffed = element('lf-stuffed', HTMLElement)
+const lfAsleep = element('lf-asleep', HTMLElement)
+const lfActivity = element('lf-activity', HTMLElement)
+const lfGoal = element('lf-goal', HTMLElement)
+const lfContinuous = element('lf-continuous', HTMLElement)
+
+/** The goal-score table's rows (GOAL_KINDS order), made once. */
+const lfScores = element('lf-scores', HTMLTableSectionElement)
+const scoreCells = scoreRows(null).map((row) => {
+  const tr = document.createElement('tr')
+  const name = document.createElement('td')
+  name.textContent = row.goal
+  const score = document.createElement('td')
+  tr.append(name, score)
+  lfScores.append(tr)
+  return { tr, score }
+})
+
+/** The Life block; "—" everywhere before the pet exists. */
+function showLife(life: LifeSnapshot | null): void {
+  needBars(life).forEach((bar, i) => {
+    const cells = needCells[i]
+    if (!cells) return
+    cells.meter.value = bar.value
+    cells.value.textContent = bar.text
+  })
+  const details = lifeDetails(life)
+  lfMood.textContent = details.mood
+  lfStuffed.textContent = details.stuffed
+  lfAsleep.textContent = details.asleep
+  lfActivity.textContent = details.activity
+  lfGoal.textContent = details.goal
+  lfContinuous.textContent = details.continuous
+  scoreRows(life).forEach((row, i) => {
+    const cells = scoreCells[i]
+    if (!cells) return
+    cells.score.textContent = row.score
+    cells.tr.classList.toggle('chosen', row.chosen)
+  })
+}
+
 function showStatus(status: DevPanelStatus): void {
   const forced = status.state !== status.simState
   stState.textContent = forced ? `${status.state} (forced)` : status.state
@@ -359,7 +450,8 @@ function showStatus(status: DevPanelStatus): void {
   stRates.textContent = `${rate(status.rendersPerS)} renders/s · ${rate(status.framesPerS)} frames/s`
   showWorldStatus(status.world)
   showEconomy(status.economy)
-  showOverrides(status.overrides)
+  showLife(status.life)
+  showOverrides(status.overrides, status.life)
 }
 
 function onStatus(payload: unknown): void {
