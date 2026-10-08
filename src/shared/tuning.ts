@@ -144,6 +144,12 @@ export const tuning = {
     safetyMarginPt: 8,
     /** While the cursor is near the pet, re-ask the helper this often whether the overlay is on screen (not on a fullscreen Space), ms. */
     onScreenRecheckMs: 500,
+    /**
+     * An on-screen question still unanswered after this long is abandoned: the overlay counts as off screen (grab area
+     * hidden) and the helper is asked again, ms. Above tuning.helper.requestTimeoutMs, so a slow helper's own timeout
+     * normally answers first. Lower = recovers sooner from a lost reply, but may give up on slow answers.
+     */
+    onScreenAnswerTimeoutMs: 3000,
     /** The cursor is re-sent to the overlay for a fresh hit test when it or the pet moved more than this, pt. */
     cursorStreamMinMovePt: 0.5,
     /** A press that moves less than this is a click, not a drag: the pet is put back where it was, pt (§10.4 petting is M4). */
