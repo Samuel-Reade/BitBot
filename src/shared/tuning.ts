@@ -633,7 +633,7 @@ export const tuning = {
     decisionS: [2, 6] as readonly [number, number],
     temperature: 0.35,
     weights: { eat: 1, nap: 1, explore: 0.8, climb: 0.3, sit: 0.35, peek: 0.15, approachCursor: 0.4, idle: 0.45 },
-    calmScale: 0.35,
+    calmScale: 0.15,
     /** §10.2 run to eat: an app launch makes eating the goal at once; the pet waits up to windowWaitS for the new app's window, else eats where it is. */
     appLaunch: { windowWaitS: 4 },
     /**
