@@ -375,6 +375,7 @@ class OverlayCheck {
     await this.directingChecks(home)
     await this.worldChecks(home)
     await this.modeChecks(home)
+    await this.lockAndSizeChecks(home)
     this.economyChecks()
     if (this.opts.measure) await this.measurements(home)
     await this.reloadCheck()
@@ -667,6 +668,58 @@ class OverlayCheck {
     await this.until('Stay: it stops where it is (§10.3)', () => loco().goal === null && loco().state.behavior === 'idle', 1000)
     bitbot.toggleStay('dev check')
     this.check('toggle Stay again: back to Roam (§10.5)', this.i().modes.mode === 'roam', this.i().modes.mode)
+    await this.goTo(home)
+  }
+
+  /**
+   * M8: the lock screen fades the pet out (§8.6: the grab area off, the simulation parked, no frames; the overlay window
+   * stays, transparent) and unlocking brings it back; a size change in settings (§15.4) reloads the overlay with the
+   * bigger pet, and back.
+   */
+  private async lockAndSizeChecks(home: Point): Promise<void> {
+    const ix = this.ix()
+    await this.goTo(home)
+    const press = this.pressPoint(home)
+    this.cursorPoint = press
+    await this.until(null, () => ix.mouseEnabled)
+    const loop = this.liveLoop()
+    this.i().setLocked(true)
+    this.check(
+      'locked: grab area off, simulation parked, overlay window kept (it fades) (§8.6)',
+      !ix.mouseEnabled && !this.hitWindow().isVisible() && !loop.running && this.overlay().isVisible(),
+    )
+    await sleep(tuning.overlay.fadeMs + 100)
+    const sA = await this.stats()
+    await sleep(T.hiddenHoldMs)
+    const sB = await this.stats()
+    const frames = sA !== null && sB !== null ? sB.frames - sA.frames : null
+    this.check('…no renderer frames while locked', frames === 0, frames === null ? 'no stats' : `${frames} frames`)
+    this.i().setLocked(false)
+    this.check('unlocked: simulation running again', loop.running)
+    await this.until('…the grab area takes the mouse on the pet again', () => ix.mouseEnabled)
+    this.cursorPoint = this.farPoint()
+
+    const before = this.i().petBox
+    const loads = this.i().loads
+    this.i().applySetting({ kind: 'size', size: 'L' })
+    let big: PetReadyMsg | null = null
+    try {
+      big = await this.i().waitForReady(T.readyTimeoutMs, loads + 1)
+    } catch {
+      big = null
+    }
+    const hM = before ? before.bottom - before.top : 0
+    const hL = big ? big.petBox.bottom - big.petBox.top : 0
+    const want = tuning.render.bodyHeightPt.L / tuning.render.bodyHeightPt.M
+    this.check(
+      'size Large in settings: the overlay reloads with the bigger pet (§15.4)',
+      big !== null && hM > 0 && Math.abs(hL / hM - want) < 0.1,
+      `box height ${hM.toFixed(1)} → ${hL.toFixed(1)} pt (×${hM > 0 ? (hL / hM).toFixed(2) : '?'}, want ×${want.toFixed(2)})`,
+    )
+    const loads2 = this.i().loads
+    this.i().applySetting({ kind: 'size', size: 'M' })
+    await this.i().waitForReady(T.readyTimeoutMs, loads2 + 1).catch(() => null)
+    await this.until('…and back to Medium, drawn', () => this.i().petDrawn && this.i().petBox?.bottom === before?.bottom)
     await this.goTo(home)
   }
 

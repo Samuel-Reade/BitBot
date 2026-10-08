@@ -169,6 +169,10 @@ export interface BitbotInspection {
   displayedPoint: Point
   /** Shows or hides the pet as the tray / ⌥⌘B would. */
   setVisible(visible: boolean): void
+  /** The screen locks or unlocks, as powerMonitor's lock-screen / unlock-screen would (§8.6). */
+  setLocked(locked: boolean): void
+  /** A change as the settings window would send it (§15.4); its notice, or null. */
+  applySetting(change: SettingsChange): SettingsNotice | null
   /** Changes the dev panel's overrides as the panel would (dev builds; the check measures each idle style with it). */
   setDevOverrides(set: DevPanelSet): void
   /** Rebuilds the world from a fresh snapshot now (after changing options.windows). */
@@ -785,6 +789,8 @@ export class BitbotApp {
       statesSent: this.states.sent,
       displayedPoint: drawnPoint(this.presented, clock.now(), this.heldPoint()),
       setVisible: (visible) => (visible ? this.showPet('dev check') : this.hidePet('dev check')),
+      setLocked: (locked) => (locked ? this.onLock() : this.onUnlock()),
+      applySetting: (change) => this.applySetting(change),
       setDevOverrides: (set) => this.applyDevPanelSet(set),
       refreshWorld: () => this.refreshWorld(),
       snapshotHz: this.worldDriver.snapshotHz,
@@ -1530,10 +1536,7 @@ export class BitbotApp {
   }
 
   private watchSystem(): void {
-    powerMonitor.on('lock-screen', () => {
-      this.cancel('the screen locked')
-      this.applyVisibility(this.visibility.set('locked', true), 'the screen locked')
-    })
+    powerMonitor.on('lock-screen', () => this.onLock())
     powerMonitor.on('suspend', () => {
       this.cancel('the Mac is going to sleep')
       this.life.suspend()
@@ -1549,12 +1552,7 @@ export class BitbotApp {
       this.ingest.wake()
       this.summary?.trigger('wake')
     })
-    powerMonitor.on('unlock-screen', () => {
-      this.applyVisibility(this.visibility.set('locked', false), 'the screen unlocked')
-      this.summary?.trigger('unlock')
-      this.redraw('the screen unlocked')
-      this.ingest.wake()
-    })
+    powerMonitor.on('unlock-screen', () => this.onUnlock())
     powerMonitor.on('user-did-become-active', () => this.redraw('the user session became active'))
     app.on('child-process-gone', (_event, details) => {
       if (details.type !== 'GPU') return
@@ -1564,6 +1562,19 @@ export class BitbotApp {
     screen.on('display-added', () => this.displaysChanged('a display was added'))
     screen.on('display-removed', () => this.displaysChanged('a display was removed'))
     screen.on('display-metrics-changed', () => this.displaysChanged('display metrics changed'))
+  }
+
+  /** §8.6 the screen locked: the pet fades out (and the grab area goes at once). */
+  private onLock(): void {
+    this.cancel('the screen locked')
+    this.applyVisibility(this.visibility.set('locked', true), 'the screen locked')
+  }
+
+  private onUnlock(): void {
+    this.applyVisibility(this.visibility.set('locked', false), 'the screen unlocked')
+    this.summary?.trigger('unlock')
+    this.redraw('the screen unlocked')
+    this.ingest.wake()
   }
 
   /** Wake, unlock: draw again (the GPU may have lost the frame) and re-check the overlay's on-screen state. */
