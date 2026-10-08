@@ -7,7 +7,7 @@ import { installSecurity } from './security'
 // Entry point. With no mode flag it runs Bitbot: the pet, its tray icon and its hotkey (src/main/bitbotApp.ts).
 // Mode flags select the dev tools and the §12 spike harnesses (throwaway):
 //   --snapshot=out.png               render the pet to a PNG (dev tool)
-//   --check=overlay                  the M1 dev check (next phase: src/main/dev/overlayCheck.ts)
+//   --check=overlay                  the M1 dev check (src/main/dev/overlayCheck.ts)
 //   --spike=overlay                  Spike A: overlay window approach
 //   --spike=input                    Spike B: global input capture
 //   --spike=windows                  Spike B: helper window snapshots, coordinates, debug rectangles
@@ -47,6 +47,10 @@ function preparePet(): BitbotApp | null {
 
 const bitbot = mode === 'pet' ? preparePet() : null
 
+// The dev check runs its own Bitbot in its own profile and never takes the pet's single-instance lock, so it runs beside
+// a dev or packaged Bitbot without touching either's state. Must be set before the app is ready.
+if (mode === 'check') app.setPath('userData', join(app.getPath('appData'), 'Bitbot-check'))
+
 app.whenReady().then(async () => {
   try {
     await dispatch()
@@ -72,13 +76,12 @@ async function dispatch(): Promise<void> {
       return
     }
     case 'check':
-      // ── NEXT PHASE: the M1 dev check (design §8) dispatches here: ──
-      //   if (args['check'] === 'overlay') {
-      //     const { runOverlayCheck } = await import('./dev/overlayCheck')
-      //     await runOverlayCheck(args)
-      //     return
-      //   }
-      console.log(`Bitbot: --check=${args['check']} is not available yet.`)
+      if (args['check'] === 'overlay') {
+        const { runOverlayCheck } = await import('./dev/overlayCheck')
+        await runOverlayCheck(args)
+        return
+      }
+      console.log(`Bitbot: unknown check --check=${args['check']}. Use --check=overlay.`)
       app.exit(2)
       return
     case 'spike':

@@ -4,7 +4,8 @@
 //   pending, and never before the current page load's pet:ready (the first state after it is always a snap).
 // - PresentedPoint: where the overlay draws the pet's ground-contact point, as main estimates it. The overlay renders
 //   one simulation step behind main's clock and interpolates (src/shared/interpolation.ts), so main does the same with
-//   its two newest steps. PetInteraction places the grab area and runs the safety net with it.
+//   its two newest steps. PetInteraction places the grab area and runs the safety net with it (drawnPoint: a held pet
+//   is the exception, drawn under the cursor).
 // - DrawnGate: whether the pet is on its canvas for the current configuration (PetInteraction's petDrawn): pet:ready
 //   counts as drawn for its configSeq (the overlay sends no pet:drawn for the configuration it started with),
 //   pet:drawn reports every change after it (context lost / restored, a new configuration applied, a failed render),
@@ -140,6 +141,17 @@ export class PresentedPoint {
   get latest(): TimedPoint {
     return { ...this.curr }
   }
+}
+
+/**
+ * Where the overlay draws the ground-contact point at `nowMs` (PetInteraction's displayedPoint): a held pet under the
+ * cursor, i.e. at `held`, the newest step's held point (the overlay draws a held pet at its newest grab-area move,
+ * which that step followed); anything else one step behind, as `presented` estimates it. Without the held rule the
+ * grab area trails a dragged pet by more than a step, and a cancelled drag drops the pet a step back (found by the
+ * dev check, src/main/dev/overlayCheck.ts).
+ */
+export function drawnPoint(presented: PresentedPoint, nowMs: number, held: Point | null): Point {
+  return held !== null && isPoint(held) ? { x: held.x, y: held.y } : presented.at(nowMs)
 }
 
 export class DrawnGate {

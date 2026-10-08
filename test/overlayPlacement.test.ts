@@ -152,6 +152,11 @@ class Driver {
     this.model.onGrabMove(grabEvent(p.x, p.y, { buttons, time: at }), at)
   }
 
+  /** A pointerrawupdate (button −1 on a move, as PointerEvent reports it). */
+  rawMove(p: Point, at: number, buttons = 0): void {
+    this.model.onGrabRawMove(grabEvent(p.x, p.y, { button: -1, buttons, time: at }), at)
+  }
+
   down(p: Point, at: number, more: Partial<GrabMouseEvent> = {}): void {
     this.model.onGrabDown(grabEvent(p.x, p.y, { buttons: 1, time: at, ...more }), at)
   }
@@ -659,6 +664,44 @@ describe('OverlayModel: press, drag and release', () => {
     expect(d.model.pressed).toBe(false)
     expect(d.take(IPC.petPointer).slice(1)).toEqual([{ kind: 'up', button: 0, screenX: 860, screenY: 950, epoch: 3 }])
     expect(d.frame(T + 7).transform).toBe(transformAt({ x: 860, y: GROUND }))
+  })
+
+  it('a press follows raw pointer moves; once they come, the frame-aligned mousemoves are left out', () => {
+    // The dev check measured drags drawn a frame late from mousemove: the grab area dispatches it with its own frame,
+    // after the overlay's frame at the same vsync. pointerrawupdate arrives at once.
+    const d = placed({ config: { debug: true } })
+    d.down(ON_PET, T)
+    d.rawMove({ x: 900, y: 700 }, T + 5, 1)
+    expect(d.frame(T + 6).transform).toBe(transformAt({ x: 900, y: 750 }))
+    // The frame-aligned mousemove for an older position arrives after it: it must not pull the pet back.
+    d.move({ x: 880, y: 720 }, T + 7, 1)
+    const plan = d.frame(T + 23)
+    expect(plan.transform).toBeNull()
+    expect(plan.again).toBe(true)
+    d.rawMove({ x: 950, y: 700 }, T + 30, 1)
+    expect(d.frame(T + 39).transform).toBe(transformAt({ x: 950, y: 750 }))
+    // Input → frame comes from the raw moves (5 → 6 and 30 → 39 ms; the left-out mousemove adds none).
+    expect(d.model.stats(0).inputToFrameMs).toEqual([1, 9])
+    d.up({ x: 950, y: 700 }, T + 40)
+    expect(d.take(IPC.petPointer).pop()).toEqual({ kind: 'up', button: 0, screenX: 950, screenY: 700, epoch: 3 })
+  })
+
+  it('raw moves never hover (hover stays on the frame-aligned mousemove); one without the left button is the lost mouseup', () => {
+    const d = placed()
+    d.rawMove(ON_PET, T, 0)
+    expect(d.hitTests).toEqual([])
+    expect(d.take(IPC.petHover)).toEqual([])
+    d.down(ON_PET, T + 1)
+    d.rawMove({ x: 850, y: 950 }, T + 5, 1)
+    d.rawMove({ x: 860, y: 950 }, T + 6, 0)
+    expect(d.model.pressed).toBe(false)
+    expect(d.take(IPC.petPointer).slice(1)).toEqual([{ kind: 'up', button: 0, screenX: 860, screenY: 950, epoch: 3 }])
+    expect(d.frame(T + 7).transform).toBe(transformAt({ x: 860, y: GROUND }))
+    // Without raw moves (no pointerrawupdate), mousemoves drive a press as before.
+    const plain = placed()
+    plain.down(ON_PET, T)
+    plain.move({ x: 900, y: 700 }, T + 5, 1)
+    expect(plain.frame(T + 6).transform).toBe(transformAt({ x: 900, y: 750 }))
   })
 
   it('never says hover:false while pressed', () => {

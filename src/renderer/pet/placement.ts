@@ -5,7 +5,10 @@
 //   interpolated one simulation step behind main's states), snapped to device pixels; the contact shadow on the
 //   support line; when a WebGL render is due; whether another animation frame is needed.
 // - Input: the grab area's mouse events and main's cursor samples become hover / press / release / right-click
-//   messages, stamped with the newest epoch seen (petProtocol.ts header), and never hover:false while pressed.
+//   messages, stamped with the newest epoch seen (petProtocol.ts header), and never hover:false while pressed. A press
+//   follows the grab area's raw pointer moves (pointerrawupdate) when they come: its frame-aligned mousemoves are
+//   dispatched with the grab area's own frames, after the overlay's frame at the same vsync, so a drag drawn from them
+//   lags the cursor by one frame (measured by the dev check, src/main/dev/overlayCheck.ts).
 //
 // OverlayModel holds that state; the small functions above it are its rules, exported so tests pin each one down.
 
@@ -221,6 +224,8 @@ interface Press {
   maxMovePt: number
   /** A snap state arrived during the press: main already released (or cancelled) it and placed the pet itself. */
   snapSeen: boolean
+  /** Raw pointer moves came during this press: they drive it, and the frame-aligned mousemoves are left out. */
+  raw: boolean
 }
 
 interface Placement {
@@ -451,22 +456,27 @@ export class OverlayModel {
 
   // ── the grab area ──
 
+  /** The grab area's (frame-aligned) mousemove: hover, and a press that gets no raw moves. */
   onGrabMove(e: GrabMouseEvent, now: number): void {
     this.lastGrabEventAt = now
-    const point = { x: e.screenX, y: e.screenY }
     const press = this.press
     if (!press) {
-      this.setHover(this.hitTestGlobal(point))
+      this.setHover(this.hitTestGlobal({ x: e.screenX, y: e.screenY }))
       return
     }
-    if ((e.buttons & 1) === 0) {
-      this.release(point, now) // its mouseup went missing
-      return
-    }
-    press.mouse = point
-    press.maxMovePt = Math.max(press.maxMovePt, distance(point, press.startMouse))
-    if (this.debug) this.pendingInputAt = e.time
-    this.requestFrame()
+    if (!press.raw) this.pressMove(press, e, now)
+  }
+
+  /**
+   * The grab area's raw pointer move (pointerrawupdate: dispatched as soon as it arrives, not with a frame). It drives
+   * a press; hover stays on the frame-aligned mousemove, which costs at most one hit test per frame.
+   */
+  onGrabRawMove(e: GrabMouseEvent, now: number): void {
+    this.lastGrabEventAt = now
+    const press = this.press
+    if (!press) return
+    press.raw = true
+    this.pressMove(press, e, now)
   }
 
   onGrabDown(e: GrabMouseEvent, now: number): void {
@@ -489,6 +499,7 @@ export class OverlayModel {
       mouse: point,
       maxMovePt: 0,
       snapSeen: false,
+      raw: false,
     }
     this.dropHold = null
     this.sendPointer({
@@ -638,6 +649,19 @@ export class OverlayModel {
     if (!sample) return null
     if (sample.starved) this.counters.starvedFrames++
     return { x: sample.x, y: sample.y }
+  }
+
+  /** A move during a press: the pet follows the mouse; a move without the left button is a lost mouseup. */
+  private pressMove(press: Press, e: GrabMouseEvent, now: number): void {
+    const point = { x: e.screenX, y: e.screenY }
+    if ((e.buttons & 1) === 0) {
+      this.release(point, now) // its mouseup went missing
+      return
+    }
+    press.mouse = point
+    press.maxMovePt = Math.max(press.maxMovePt, distance(point, press.startMouse))
+    if (this.debug) this.pendingInputAt = e.time
+    this.requestFrame()
   }
 
   private release(point: Point, now: number): void {

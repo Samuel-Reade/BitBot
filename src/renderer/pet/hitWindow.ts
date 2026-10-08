@@ -4,13 +4,19 @@
 //
 // Its document paints nothing (transparent, no content), selects and drags nothing and shows no menu of its own: it
 // only reports mouse events, in global pt (screenX/screenY), with times converted to this page's performance.now()
-// clock.
+// clock. Moves come twice where the browser has pointerrawupdate (Chromium does, in secure contexts: file: pages and
+// the dev server are): raw, as soon as they arrive, and as the usual mousemove, which is dispatched with the grab
+// area's own next frame. OverlayModel drives a press from the raw ones (one frame less drag lag) and hover from the
+// others (at most one hit test per frame).
 
 import { HIT_WINDOW_URL } from '../../shared/petProtocol'
 import type { GrabMouseEvent } from './placement'
 
 export interface GrabAreaHandlers {
+  /** mousemove (dispatched with the grab area's frames). */
   move(e: GrabMouseEvent): void
+  /** pointerrawupdate (dispatched as soon as the move arrives), where supported. */
+  rawMove(e: GrabMouseEvent): void
   down(e: GrabMouseEvent): void
   up(e: GrabMouseEvent): void
   contextmenu(e: GrabMouseEvent): void
@@ -92,6 +98,9 @@ function attachListeners(win: Window, handlers: GrabAreaHandlers, onError: (mess
       }
     }
   const onMove = guarded((e: MouseEvent) => handlers.move(read(e)))
+  // A PointerEvent (a MouseEvent) from the grab area's realm; the DOM typings call it an Event.
+  const onRawMove = guarded((e: Event) => handlers.rawMove(read(e as MouseEvent)))
+  const raw = 'onpointerrawupdate' in win
   const onDown = guarded((e: MouseEvent) => {
     // A primary press does nothing here but grab the pet (no selection, drag or focus change). Right and control
     // clicks keep their default: it is what produces the contextmenu event.
@@ -108,6 +117,7 @@ function attachListeners(win: Window, handlers: GrabAreaHandlers, onError: (mess
 
   const root = doc.documentElement
   doc.addEventListener('mousemove', onMove, { passive: true })
+  if (raw) doc.addEventListener('pointerrawupdate', onRawMove, { passive: true })
   doc.addEventListener('mousedown', onDown)
   doc.addEventListener('mouseup', onUp)
   doc.addEventListener('contextmenu', onContextMenu)
@@ -116,6 +126,7 @@ function attachListeners(win: Window, handlers: GrabAreaHandlers, onError: (mess
   root.addEventListener('mouseleave', onLeave)
   return () => {
     doc.removeEventListener('mousemove', onMove)
+    if (raw) doc.removeEventListener('pointerrawupdate', onRawMove)
     doc.removeEventListener('mousedown', onDown)
     doc.removeEventListener('mouseup', onUp)
     doc.removeEventListener('contextmenu', onContextMenu)

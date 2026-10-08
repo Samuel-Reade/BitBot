@@ -39,7 +39,14 @@ import { petAreaFor, type DisplayGeometry } from './sim/world/screenArea'
 import { ThrottledLog } from './throttledLog'
 import { ElectronHitWindow, type HitWindowCounters } from './windows/hitWindow'
 import { windowNumber, windowOnScreen } from './windows/onScreen'
-import { fullscreenOnDisplay, PetStateSender, PresentedPoint, sameArea, type PetSimState } from './windows/overlaySession'
+import {
+  drawnPoint,
+  fullscreenOnDisplay,
+  PetStateSender,
+  PresentedPoint,
+  sameArea,
+  type PetSimState,
+} from './windows/overlaySession'
 import { PetInteraction, type NativeMouseEvent } from './windows/petInteraction'
 import { PetWindow } from './windows/petWindow'
 
@@ -210,7 +217,7 @@ export class BitbotApp {
       tuning: tuning.hitArea,
       now: () => clock.now(),
       cursor: options.cursor ?? (() => screen.getCursorScreenPoint()),
-      displayedPoint: (nowMs) => this.presented.at(nowMs),
+      displayedPoint: (nowMs) => drawnPoint(this.presented, nowMs, this.heldPoint()),
       petBox: () => this.ready?.petBox ?? null,
       overlayShown: () => !this.hiddenByUser && !app.isHidden(),
       petDrawn: () => this.petWindow.petDrawn,
@@ -454,7 +461,7 @@ export class BitbotApp {
       appHidden: app.isHidden(),
       frontmostFullscreen: this.fullscreen,
       statesSent: this.states.sent,
-      displayedPoint: this.presented.at(clock.now()),
+      displayedPoint: drawnPoint(this.presented, clock.now(), this.heldPoint()),
       setVisible: (visible) => (visible ? this.showPet('dev check') : this.hidePet('dev check')),
       waitForReady: (timeoutMs, minLoad = 1) => this.waitForReady(timeoutMs, minLoad),
       requestOverlayStats: (timeoutMs) => this.requestOverlayStats(timeoutMs),
@@ -480,6 +487,12 @@ export class BitbotApp {
     const s = loco.state
     // M1 never turns (facing +1, the default 3/4 yaw): walking and turning come with M3.
     return { x: s.x, y: s.y, facing: 1, state: s.behavior, supportY: loco.supportY }
+  }
+
+  /** A held pet's newest step (the overlay draws a held pet under the cursor, which that step followed); null unless held. */
+  private heldPoint(): Point | null {
+    const s = this.loco?.state
+    return s && s.behavior === 'held' ? { x: s.x, y: s.y } : null
   }
 
   /** The pet jumped (release, cancel, shown, display change, page ready): restart the interpolation, send a snap state. */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DrawnGate,
+  drawnPoint,
   fullscreenOnDisplay,
   PetStateSender,
   PresentedPoint,
@@ -212,5 +213,19 @@ describe('fullscreenOnDisplay and sameArea', () => {
     expect(sameArea(null, null)).toBe(true)
     expect(sameArea(a, null)).toBe(false)
     expect(sameArea(null, a)).toBe(false)
+  })
+})
+
+describe('drawnPoint', () => {
+  it('a held pet is drawn where its newest step holds it (under the cursor), anything else a step behind', () => {
+    // The dev check found the grab area trailing a dragged pet: main placed it one step behind, the overlay drew the
+    // pet under the cursor.
+    const p = new PresentedPoint(STEP, { t: 0, x: 100, y: 500 })
+    p.push(STEP, { x: 120, y: 480 })
+    p.push(2 * STEP, { x: 140, y: 460 })
+    expect(drawnPoint(p, 2 * STEP, null)).toEqual({ x: 120, y: 480 })
+    expect(drawnPoint(p, 2 * STEP, { x: 140, y: 460 })).toEqual({ x: 140, y: 460 })
+    // A held point that is not a finite point falls back to the estimate.
+    expect(drawnPoint(p, 2 * STEP, { x: Number.NaN, y: 0 })).toEqual({ x: 120, y: 480 })
   })
 })

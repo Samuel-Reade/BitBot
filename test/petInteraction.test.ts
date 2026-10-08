@@ -320,7 +320,7 @@ describe('PetInteraction: placement, gating and epochs', () => {
     await h.answer(true)
     expect(h.pi.placement.shown).toBe(false) // applied on the next wake
     h.tick()
-    expect(h.pi.placement).toEqual({ shown: true, bounds: { x: 392, y: 622, width: 216, height: 230 } })
+    expect(h.pi.placement).toEqual({ shown: true, bounds: { x: 392, y: 622, width: 217, height: 231 } })
     expect(h.rec.placements.at(-1)).toEqual(h.pi.placement)
     expect(h.pi.overlayOnScreen).toBe(true)
     expect(h.pi.label).toBe('near')

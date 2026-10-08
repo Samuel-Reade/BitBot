@@ -12,7 +12,6 @@ import {
   isRect,
   rectContainsPoint,
   rectContainsRect,
-  roundRectOutward,
   type Box,
   type Point,
   type Rect,
@@ -69,7 +68,7 @@ export interface HitAreaInput {
  * - otherwise shown only when the overlay is known to be on screen and the cursor is near the pet: within nearMarginPt
  *   to appear, within farMarginPt to stay;
  * - shown, it keeps its bounds while the pet's box (+ innerMarginPt) stays inside them, else it is re-placed around the
- *   box + slackPt on whole points.
+ *   box + slackPt on whole points, always at the same size (grabAreaBounds).
  */
 export function decideHitWindow(input: HitAreaInput, tuning: HitAreaTuning): HitWindowPlacement {
   const { petBox, current } = input
@@ -84,9 +83,22 @@ export function decideHitWindow(input: HitAreaInput, tuning: HitAreaTuning): Hit
   const box = boxAt(input.pet, petBox)
   // (A non-finite box is never inside anything, so it always gets here and is caught below.)
   if (current.shown && rectContainsRect(current.bounds, inflateRect(box, tuning.innerMarginPt))) return current
-  const bounds = roundRectOutward(inflateRect(box, tuning.slackPt))
+  const bounds = grabAreaBounds(box, tuning.slackPt)
   // NaN or infinite bounds must never reach the window server: such a pet can't be covered.
-  return isRect(bounds) ? { shown: true, bounds } : HIT_WINDOW_HIDDEN
+  const finite = isRect(bounds) && Number.isFinite(bounds.x + bounds.width) && Number.isFinite(bounds.y + bounds.height)
+  return finite ? { shown: true, bounds } : HIT_WINDOW_HIDDEN
+}
+
+/**
+ * The grab area around the pet's `box` (global pt): the box grown by slackPt on each side, on whole points, and the
+ * same size wherever the box is (the position rounded down, the size rounded up plus the point a fractional position
+ * may need). Rounding the grown box outward instead gives a size that depends on the pet's fractional position, so
+ * most moves would also resize the window, which costs main, the renderer and the GPU process work (the dev check
+ * measured about 2 points of main CPU and 1 of GPU in a 600 pt/s chase, src/main/dev/overlayCheck.ts).
+ */
+export function grabAreaBounds(box: Rect, slackPt: number): Rect {
+  const r = inflateRect(box, slackPt)
+  return { x: Math.floor(r.x), y: Math.floor(r.y), width: Math.ceil(r.width) + 1, height: Math.ceil(r.height) + 1 }
 }
 
 /**

@@ -153,6 +153,7 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
         config.hitWindowName,
         {
           move: (e) => model.onGrabMove(e, now()),
+          rawMove: (e) => model.onGrabRawMove(e, now()),
           down: (e) => model.onGrabDown(e, now()),
           up: (e) => model.onGrabUp(e, now()),
           contextmenu: (e) => model.onGrabContextMenu(e, now()),

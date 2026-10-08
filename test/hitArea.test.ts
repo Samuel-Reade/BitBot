@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   cursorNearPet,
   decideHitWindow,
+  grabAreaBounds,
   HIT_WINDOW_HIDDEN,
   shouldForceClickThrough,
   type HitAreaInput,
@@ -21,8 +22,11 @@ const production: HitAreaTuning = tuning.hitArea
 const BOX: Box = { left: -60, top: -130, right: 60, bottom: 4 }
 const PET: Point = { x: 500, y: 800 }
 const ON_PET: Point = { x: 500, y: 740 }
-/** The box at PET grown by slackPt: the grab area's bounds when it is placed around the pet there. */
-const AROUND_PET: Rect = { x: 392, y: 622, width: 216, height: 230 }
+/**
+ * The grab area's bounds when it is placed around the pet at PET: the box grown by slackPt (x 392..608, y 622..852), one
+ * point wider and taller (the size every placement of this box gets, see grabAreaBounds).
+ */
+const AROUND_PET: Rect = { x: 392, y: 622, width: 217, height: 231 }
 
 function input(overrides: Partial<HitAreaInput> = {}): HitAreaInput {
   return {
@@ -101,27 +105,60 @@ describe('decideHitWindow', () => {
     const { bounds } = placement
     for (const v of [bounds.x, bounds.y, bounds.width, bounds.height]) expect(Number.isInteger(v)).toBe(true)
     expect(rectContainsRect(bounds, inflateRect(boxAt(pet, BOX), T.slackPt))).toBe(true)
-    // Rounded outward by less than a point on each side.
+    // At most a point and a bit larger on each axis (the size every placement of this box gets).
     expect(bounds.width - (120 + 2 * T.slackPt)).toBeLessThan(2)
     expect(bounds.height - (134 + 2 * T.slackPt)).toBeLessThan(2)
   })
 
+  it('keeps one size wherever the pet is, so moving it never resizes the window', () => {
+    // The dev check measured the cost: rounding the grown box outward gave 268 or 269 pt by the pet's fractional
+    // position, so most moves were resizes too (about 2 points of main CPU in a 600 pt/s chase).
+    for (const box of [BOX, { left: -85.8, top: -160.3, right: 85.8, bottom: 11.5 }]) {
+      const sizes = new Set<string>()
+      for (let i = 0; i < 300; i++) {
+        const pet = { x: 500 + i * 0.37, y: 800 - i * 0.29 }
+        const placement = decideHitWindow(input({ pet, petBox: box, cursor: { x: pet.x, y: pet.y - 60 } }), T)
+        if (!placement.shown) throw new Error('expected the grab area to be shown')
+        expect(rectContainsRect(placement.bounds, inflateRect(boxAt(pet, box), T.slackPt))).toBe(true)
+        sizes.add(`${placement.bounds.width}x${placement.bounds.height}`)
+      }
+      expect(sizes.size).toBe(1)
+    }
+    expect(grabAreaBounds({ x: 10.5, y: 20, width: 100.2, height: 50 }, 0)).toEqual({ x: 10, y: 20, width: 102, height: 51 })
+  })
+
   it('keeps its bounds while the pet box stays innerMarginPt inside them, then moves around the pet', () => {
-    const current = shownAt(AROUND_PET) // x 392..608, y 622..852
+    const current = shownAt(AROUND_PET) // x 392..609, y 622..853
     const decideAt = (pet: Point): HitWindowPlacement => decideHitWindow(input({ engaged: true, pet, current }), T)
-    // Right: the box (+4) reaches x 604 at +40 and 608 (the edge) at +44.
-    expect(decideAt({ x: 540, y: 800 })).toBe(current)
-    expect(decideAt({ x: 544, y: 800 })).toBe(current)
-    expect(decideAt({ x: 544.5, y: 800 })).toEqual(shownAt({ x: 436, y: 622, width: 217, height: 230 }))
+    // Right: the box (+4) reaches x 605 at +41 and 609 (the edge) at +45.
+    expect(decideAt({ x: 541, y: 800 })).toBe(current)
+    expect(decideAt({ x: 545, y: 800 })).toBe(current)
+    expect(decideAt({ x: 545.5, y: 800 })).toEqual(shownAt({ x: 437, y: 622, width: 217, height: 231 }))
     // Up: the box (+4) reaches y 622 (the edge) at −44.
     expect(decideAt({ x: 500, y: 756 })).toBe(current)
-    expect(decideAt({ x: 500, y: 755 })).toEqual(shownAt({ x: 392, y: 577, width: 216, height: 230 }))
+    expect(decideAt({ x: 500, y: 755 })).toEqual(shownAt({ x: 392, y: 577, width: 217, height: 231 }))
+  })
+
+  it('production tuning: a pet moving at 600 pt/s stays inside the grab area from one simulation wake to the next', () => {
+    // The dev check's chase and drag at 600 pt/s found the leading edge outside the grab area in a quarter of the wakes
+    // while innerMarginPt (4) was below the 20 pt the pet covers between two wakes.
+    const perWake = tuning.dev.overlayCheck.chase.speed / tuning.sim.hz
+    for (const dir of [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: -1 }, { x: 0.6, y: 0.8 }]) {
+      let current: HitWindowPlacement = HIT_WINDOW_HIDDEN
+      let pet: Point = { x: 800, y: 400 }
+      for (let k = 0; k < 90; k++) {
+        current = decideHitWindow(input({ engaged: true, pet, current }), production)
+        if (!current.shown) throw new Error('expected the grab area to be shown')
+        pet = { x: pet.x + dir.x * perWake, y: pet.y + dir.y * perWake }
+        expect(rectContainsRect(current.bounds, boxAt(pet, BOX))).toBe(true)
+      }
+    }
   })
 
   it('re-places around the pet when it jumped out of the current bounds', () => {
     const current = shownAt(AROUND_PET)
     const pet = { x: 1500, y: 300 }
-    expect(decideHitWindow(input({ engaged: true, pet, current }), T)).toEqual(shownAt({ x: 1392, y: 122, width: 216, height: 230 }))
+    expect(decideHitWindow(input({ engaged: true, pet, current }), T)).toEqual(shownAt({ x: 1392, y: 122, width: 217, height: 231 }))
   })
 
   it('is hidden for a non-finite pet position, even when engaged or already shown', () => {

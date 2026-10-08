@@ -150,8 +150,13 @@ export const tuning = {
     farMarginPt: 56,
     /** Its window is the pet's box grown by this much on each side, pt. Bigger = fewer window moves while the pet moves, but a larger area a stalled app could block. */
     slackPt: 48,
-    /** It moves once the pet's box comes within this many pt of its edge. */
-    innerMarginPt: 4,
+    /**
+     * It moves once the pet's box comes within this many pt of its edge. At least what the pet covers between two
+     * simulation wakes at the fastest it moves near the cursor (600 pt/s ÷ tuning.sim.hz = 20 pt), plus a little: with
+     * less, a fast pet's leading edge sticks out of the grab area until the next wake (the dev check measured 24 % of
+     * wakes at 4 pt). Higher = more window moves (each costs main a few ms of CPU), lower = gaps at speed.
+     */
+    innerMarginPt: 24,
     /** Safety net: mouse events on but the cursor this far outside the pet's box, pt → click-through is forced back on. */
     safetyMarginPt: 8,
     /** While the cursor is near the pet, re-ask the helper this often whether the overlay is on screen (not on a fullscreen Space), ms. */
@@ -317,6 +322,118 @@ export const tuning = {
     snapshotReadyTimeoutMs: 15_000,
     /** PNG snapshot tool: wait after drawing so the compositor presents the frame before capture. */
     snapshotPresentDelayMs: 100,
+    /**
+     * The M1 dev check (`electron . --check=overlay`, src/main/dev/overlayCheck.ts): functional checks of the overlay
+     * and its grab area in the real app, and the measurements that decide approach B (hardened) vs the A2 fallback
+     * (docs/decisions/overlay.md). Only the check reads these.
+     */
+    overlayCheck: {
+      /** Longest wait for bitbot-helper's hello after Bitbot started, ms. */
+      helperHelloTimeoutMs: 5000,
+      /** Longest wait for the overlay's pet:ready (first load and after the reload), ms. */
+      readyTimeoutMs: 20_000,
+      /** Default deadline for a state the check waits for (grab area shown, pet held, released…), ms. Generous: a miss is a FAIL. */
+      deadlineMs: 3000,
+      /** How often a wait re-reads the state, ms. Lower = finer timings in the log, more main-process wake-ups. */
+      pollMs: 5,
+      /** How long a state must hold to count (the grab area stays hidden while the cursor is far, the mouse stays off), ms. */
+      holdMs: 300,
+      /** Longest wait for the overlay's renderer counters (debug:overlay-stats), ms. */
+      statsTimeoutMs: 3000,
+      /** Longest run of /usr/bin/footprint, ps and pmset, ms. */
+      toolTimeoutMs: 10_000,
+      /** The whole check gives up (FAIL, clean quit) after this long, s. Above the phases' total. */
+      hardTimeoutS: 600,
+      /** Spot for "the cursor is far": this far inside the work area from its top-left corner, pt. */
+      farInsetPt: 24,
+      /**
+       * "Near the pet but off its silhouette" for the event-path check: this far inside the pet's box from its top-left
+       * corner, pt (the empty corner beside the antenna; inside the box, so the click-through safety net stays quiet).
+       */
+      boxCornerInsetPt: 6,
+      /** Presses land at this point of the pet's box, as fractions from its top-left (0.5, 0.6: the middle of the body). */
+      pressAt: { x: 0.5, y: 0.6 },
+      /**
+       * The functional drag: this many moves of stepPt each, intervalMs apart (up and left: the drop is in the air, and
+       * far enough from the start that the two captures don't overlap).
+       */
+      drag: { moves: 16, stepPt: { x: -25, y: -18 }, intervalMs: 16 },
+      /** A press that becomes a drag (lost mouseup, cancel by hiding): moves of stepPt, well past hitArea.clickMaxMovePt. */
+      shortDrag: { moves: 4, stepPt: { x: 6, y: -12 }, intervalMs: 16 },
+      /** The held pet must sit within this many pt of the cursor minus the grab offset. */
+      followTolerancePt: 1,
+      /** A drop must land within its fall time (tuning.move physics at the simulation's step) plus this, ms. */
+      landMarginMs: 300,
+      /** Captures: a pixel whose alpha is above this counts as drawn (0–255). */
+      drawnAlpha: 8,
+      /** The capture at the pet's new spot needs at least this many drawn device pixels (the M pet covers ~40k at 2×). */
+      minPetPixels: 5000,
+      /** While hidden, the simulation must not step for this long, ms. */
+      hiddenHoldMs: 500,
+      /** Wait before the last checks so the activation monitor's verdicts are in (after tuning.app.activationVerdictDelayMs), ms. */
+      verdictWaitMs: 600,
+      /** app.getAppMetrics() sampling period during a phase, ms (Spike A sampled every 1000 ms too). */
+      metricsIntervalMs: 1000,
+      /** Before each measured phase the new motion runs this long unmeasured, ms. */
+      phaseSettleMs: 1500,
+      /** Measured length of each phase, s. Longer = steadier CPU means and more latency samples, a longer check. */
+      phaseS: { idle: 10, hidden: 10, nearStill: 10, walkParked: 24, walkCursor: 15, chase: 15, drag120: 12, drag600: 12 },
+      /**
+       * Walk under a parked cursor: the pet walks ±this many pt around its home at tuning.move.walkSpeed, the cursor parked
+       * at its home x. More than the silhouette's half-width (so the cursor is clear of it at the turns) and less than
+       * that plus hitArea.nearMarginPt (so the grab area stays shown): every pass is one enter and one leave. A round trip
+       * (4 × span ÷ walkSpeed) is not a whole number of simulation steps, so successive crossings fall at different phases
+       * of the 30 Hz wake instead of all at the same one.
+       */
+      walkParkedSpanPt: 100.4,
+      /** …the parked cursor's height in the pet's box, as a fraction from its top (0.58: the middle of the body). */
+      parkedCursorAt: 0.58,
+      /** Walk with the cursor near: the pet walks ±this many pt around its home. */
+      walkCursorSpanPt: 400,
+      /**
+       * The cursor near a moving pet: gapPt right of its box at `at` of its height from the top, circling with radius
+       * wobblePt at wobbleHz (a hand that moves). Gap ± wobble stays inside hitArea.nearMarginPt and off the pet.
+       */
+      nearCursor: { gapPt: 16, at: 0.5, wobblePt: 8, wobbleHz: 1 },
+      /**
+       * The hit test's span at the parked cursor's height, measured with the pet still before the latency phase:
+       * binary-search steps per edge (each halves the uncertainty; keep the last step above hitArea.cursorStreamMinMovePt)
+       * and the wait for each probe's hover verdict, ms (above one simulation step plus the IPC round trip).
+       */
+      calibration: { steps: 7, probeMs: 100 },
+      /** Latency pairing: a mouse toggle later than this after its silhouette crossing counts as missing, ms. */
+      latencyWindowMs: 500,
+      /** …and a toggle up to this long before its crossing still pairs (a negative latency: the hit test's halo), ms. */
+      latencyEarlyMs: 50,
+      /**
+       * The chase: the pet chases a Lissajous target at up to `speed` pt/s, the target's peak speed `peakSpeed` (above
+       * `speed`, so the chase saturates). The same path as Spike A's synthetic mode, so the numbers compare.
+       */
+      chase: { speed: 600, peakSpeed: 750, freqX: 3, freqY: 2, phaseX: Math.PI / 2, fill: 0.92 },
+      /**
+       * The drag patrol: pressed at home, lifted liftPt at the patrol's speed, then back and forth ±spanPt around home;
+       * synthetic moves every eventIntervalMs (≈67 Hz, like a trackpad, and not a divisor of the 60 Hz frame period,
+       * so events land at every phase of a frame). One phase per speed, pt/s.
+       */
+      dragPatrol: { liftPt: 220, spanPt: 300, eventIntervalMs: 15, speeds: { slow: 120, fast: 600 } },
+      /** A2 spike results count as the same session's when they started at most this long before the check, min. */
+      a2MaxAgeMin: 30,
+      /** The verdict's thresholds. CPU vs A2 is report-only (it depends on the machine); the others gate the exit code. */
+      thresholds: {
+        /** Renderer frames while idle (cursor far, pet still) and while hidden. */
+        idleFrames: 0,
+        /** Drag input→frame p95 may exceed one display frame by this much, ms. */
+        dragFrameSlackMs: 2,
+        /** Share of wakes with the pet's box outside the grab area while it is shown, %. */
+        boxOutsidePct: 1,
+        /** The silhouette reached the still cursor → the grab area takes the mouse: p95, ms. */
+        enterP95Ms: 150,
+        /** The silhouette left the still cursor → click-through again: p95, ms. */
+        leaveP95Ms: 100,
+        /** phys_footprint summed over the Electron processes (not the helper), MB. */
+        footprintMB: 210,
+      },
+    },
   },
 
   /** Throwaway values for the §12 Spike A harness. Removed with the harness. */
