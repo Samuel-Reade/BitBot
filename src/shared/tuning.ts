@@ -561,15 +561,18 @@ export const tuning = {
    * All levels 0..100.
    */
   needs: {
+    /** A newly hatched pet's levels (§9.1), before any time has passed. */
+    initial: { hunger: 20, energy: 80, fullness: 0, boredom: 20, dust: 0 },
     /** §9.1 hunger: rises per hour while the user is active / idle or asleep; each payout lowers it by perNutrition × nutrition. ≥ hungryAt: hungry cues; ≥ seeksFoodAt: goes for food. */
     hunger: { activePerH: 6, idlePerH: 2, perNutrition: 0.8, hungryAt: 60, seeksFoodAt: 85 },
     /** §9.1 energy: falls per hour of continuous use, recovers per hour once the computer has been idle restAfterIdleMin (or asleep). ≤ sleepyAt: sleepy; ≤ napAt: naps wherever it is. */
     energy: { activeDropPerH: 8, restPerH: 25, restAfterIdleMin: 5, sleepyAt: 25, napAt: 10 },
     /**
      * §9.1 fullness: follows the rate of nutrition over the trailing windowMin (perNutritionPerH × that rate per hour, so
-     * an ordinary workday sits near 40 and twice its pace reaches stuffedAt), never falling faster than decayPerH.
+     * an ordinary workday sits near 40 and twice its pace reaches stuffedAt), never falling faster than decayPerH. The
+     * window keeps nutrition in buckets of bucketS seconds (smaller = a smoother edge, a longer list in the save).
      */
-    fullness: { windowMin: 30, perNutritionPerH: 0.55, decayPerH: 20, stuffedAt: 80 },
+    fullness: { windowMin: 30, perNutritionPerH: 0.55, decayPerH: 20, stuffedAt: 80, bucketS: 60 },
     /** §9.1 boredom: rises per hour without a direct interaction (pet, drag, command) or an app launch; each one takes off `interaction`. ≥ boredAt: explores, pokes the cursor, peeks. */
     boredom: { perH: 10, interaction: 30, boredAt: 70 },
     /** §9.1 dust: per local day the user didn't use the computer at all; all of it shaken off at the first interaction after the return. ≥ visibleAt: visible specks; ≥ lonelyAt: the lonely mood. */
