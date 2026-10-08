@@ -9,6 +9,7 @@ import {
 } from '../../../shared/faceStates'
 import { tuning } from '../../../shared/tuning'
 import type { BehaviorState, IdleMode, LookDirection, Mood } from '../../../shared/types'
+import type { PetAttach } from '../../../shared/world'
 import type { BitbotRig } from './buildBitbot'
 import { armShoulder, SPEC_ORIGIN_HEIGHT } from './construction'
 
@@ -25,6 +26,10 @@ import { armShoulder, SPEC_ORIGIN_HEIGHT } from './construction'
 //   so nothing is rendered in between; 'still' only blinks and looks (its outline never changes). Every other state
 //   moves all the time while it lasts.
 // - Held: the pet swings about the grab point like a damped pendulum driven by the drag.
+// - Where the pet goes is main's: walks, runs, jumps and falls move the canvas, not the figure. On a wall (attach
+//   'wallRight' / 'wallLeft', whatever the state) the figure is turned a quarter turn about its ground-contact point,
+//   feet against the wall, blended like a change of state; AnimResult.wallTurn says how far, so the overlay moves the
+//   canvas anchor with it (placement.ts, scene.ts) and the turning pet always has room.
 // - update() reports whether anything visible changed (render only then) and when the pose next changes on its own,
 //   so the overlay can sleep until then (§11 render on demand).
 
@@ -36,6 +41,8 @@ export interface AnimInput {
   dust: number
   facing: 1 | -1
   look: LookDirection | null
+  /** Standing (or in the air) vs climbing a wall on its right / left (pet:state attach). */
+  attach: PetAttach
   /**
    * While the user holds the pet: where it is held, relative to its ground-contact point (pt, y down), and the
    * cursor's x (global pt) to swing with. Null otherwise (also for a held state forced by the dev panel).
@@ -58,6 +65,11 @@ export interface AnimResult {
   fps: number
   /** Multiplies the contact shadow's strength: < 1 while a jump or hop lifts the pet off its surface. */
   shadowScale: number
+  /**
+   * How far the figure is turned onto a wall: +1 a quarter turn onto a wall on its right (feet toward +x), −1 onto one
+   * on its left, 0 standing, in between while it turns. Absent: ±1 / 0 for the input's attach.
+   */
+  wallTurn?: number
 }
 
 type AnimTuning = typeof tuning.anim
@@ -93,6 +105,8 @@ interface Pose {
   glowAmber: number
   /** Height of a hop or jump, units (for the contact shadow). */
   lift: number
+  /** Quarter turns onto a wall about the ground-contact point (+1 = feet toward +x), after the pose (AnimResult.wallTurn). */
+  wall: number
 }
 
 const REST: Readonly<Pose> = {
@@ -118,6 +132,7 @@ const REST: Readonly<Pose> = {
   glowPower: 1,
   glowAmber: 1,
   lift: 0,
+  wall: 0,
 }
 const POSE_KEYS = Object.keys(REST) as (keyof Pose)[]
 
@@ -166,6 +181,7 @@ export class Animator {
   private readonly glowRest: { tip: number; power: number; amber: number }
 
   private state: BehaviorState | null = null
+  private attach: PetAttach | null = null
   private stateStart = 0
   private from: Pose = { ...REST }
   private last: Pose = { ...REST }
@@ -238,7 +254,8 @@ export class Animator {
     const dt = this.lastT === null ? 0 : Math.min(Math.max(t - this.lastT, 0), 0.1)
     this.lastT = t
 
-    if (input.state !== this.state) this.enterState(input.state, t)
+    // Getting onto or off a wall blends like a change of state (the figure turns about its contact point).
+    if (input.state !== this.state || input.attach !== this.attach) this.enterState(input.state, input.attach, t)
     const tau = t - this.stateStart
     const idleLike = IDLE_LIKE.has(input.state)
     // The idle style applies to the idle-like states; every other state moves all the time.
@@ -247,6 +264,7 @@ export class Animator {
 
     // The pose: the state's own, blended in from the pose shown when the state changed, then the mood layers.
     let pose = this.statePose(input, tau, t, dt, style)
+    pose.wall = wallSide(input.attach)
     const blendS = blendFor(input.state, T)
     if (tau < blendS) pose = mix(this.from, pose, smoothstep(tau / blendS))
     pose = this.moodLayers(pose, input, t, style)
@@ -268,16 +286,19 @@ export class Animator {
       wakeAt,
       fps: this.fpsFor(input.state),
       shadowScale: Math.max(0, 1 - pose.lift / Math.max(T.celebrate.jump, 1e-6)),
+      wallTurn: pose.wall,
     }
   }
 
   // ───────────────────────────── states ─────────────────────────────
 
-  private enterState(state: BehaviorState, t: number): void {
+  private enterState(state: BehaviorState, attach: PetAttach, t: number): void {
     this.from = { ...this.last }
+    const newState = state !== this.state
     this.state = state
+    this.attach = attach
     this.stateStart = t
-    if (state === 'held') {
+    if (state === 'held' && newState) {
       this.theta = 0
       this.omega = 0
       this.lastMouseX = null
@@ -324,16 +345,21 @@ export class Animator {
       case 'climb': {
         const c = T.climb
         const phase = TAU * c.reachHz * tau
-        // M2 previews climbing in place: rolled a quarter turn about the body's centre, feet toward the wall on the
-        // facing side. M3 places it on real walls.
-        p.roll = f * (Math.PI / 2)
-        p.pivotY = SPEC_ORIGIN_HEIGHT
+        if (input.attach === 'floor') {
+          // Not on a wall (the dev panel forced Climb): previewed in place, rolled a quarter turn about the body's
+          // centre, feet toward the facing side.
+          p.roll = f * (Math.PI / 2)
+          p.pivotY = SPEC_ORIGIN_HEIGHT
+          p.antZ = -f * 0.6
+        } else {
+          // On a wall the figure is turned onto it (Pose.wall); the antenna hangs with gravity.
+          p.antZ = c.wallAntenna[input.attach]
+        }
         p.armLRaise = Math.max(0, Math.sin(phase)) * c.armReach
         p.armRRaise = Math.max(0, -Math.sin(phase)) * c.armReach
         p.footLY = Math.max(0, -Math.sin(phase)) * c.footStep
         p.footRY = Math.max(0, Math.sin(phase)) * c.footStep
         p.bodyY = Math.abs(Math.sin(phase)) * c.bob
-        p.antZ = -f * 0.6 // hangs with gravity
         return p
       }
       case 'sit': {
@@ -425,17 +451,13 @@ export class Animator {
         return p
       }
       case 'jump': {
+        // The simulation moves the pet along the arc: the pose only stretches and raises its arms, no lift of its own.
         const j = T.jump
-        const u = (tau % j.periodS) / j.periodS
-        // Crouch over the first third, then stretch up and come back down.
-        const crouch = u < 1 / 3 ? bump(u * 1.5) : 0
-        const up = u >= 1 / 3 ? bump((u - 1 / 3) * 1.5) : 0
-        p.squash = 1 - crouch * (1 - j.crouch) + up * (j.stretch - 1)
-        p.figY = up * j.lift
-        p.lift = p.figY
+        const up = smoothstep(tau / Math.max(j.riseS, 1e-3))
+        p.squash = 1 + up * (j.stretch - 1)
         p.armLRaise = up * j.armsUp
         p.armRRaise = up * j.armsUp
-        p.antZ = -crouch * 0.3 + up * 0.2
+        p.antZ = up * 0.2
         return p
       }
     }
@@ -819,8 +841,8 @@ export class Animator {
 
   /**
    * The figure's transform in root space: the pose's lean and spin (about the body's vertical axis) and roll (in the
-   * screen plane) about its pivot, then the held pendulum about the grab point, both rolls about the world z axis
-   * expressed in the yawed root's space.
+   * screen plane) about its pivot, then the turn onto a wall about the ground-contact point (the root origin), then the
+   * held pendulum about the grab point; the rolls are about the world z axis expressed in the yawed root's space.
    */
   private figureMatrix(p: Pose, input: AnimInput): void {
     const yaw = this.yaw
@@ -836,6 +858,12 @@ export class Animator {
     this.m.premultiply(this.m2)
     this.m2.makeTranslation(p.figX, p.pivotY + p.figY, 0)
     this.m.premultiply(this.m2)
+    // On a wall: a quarter turn about the contact point, feet against the wall and the head away from it, as boxFor()
+    // turns the pet's box (+1, a wall on the right: feet toward +x, counterclockwise as seen).
+    if (p.wall !== 0) {
+      this.m2.makeRotationAxis(this.axis, p.wall * (Math.PI / 2))
+      this.m.premultiply(this.m2)
+    }
     if (input.state !== 'held' || this.theta === 0) return
     // Pendulum about the grab point (pt, y down, relative to the ground point) → root space.
     const g = input.held
@@ -862,6 +890,11 @@ function mix(a: Pose, b: Pose, u: number): Pose {
 // blend from the fall pose swallowed the landing squash (measured: 0.99 of full height instead of 0.75).
 function blendFor(state: BehaviorState, T: AnimTuning): number {
   return state === 'land' ? T.land.blendS : T.blendS
+}
+
+/** +1 on a wall on the pet's right, −1 on its left, 0 standing (Pose.wall). */
+function wallSide(attach: PetAttach): number {
+  return attach === 'wallRight' ? 1 : attach === 'wallLeft' ? -1 : 0
 }
 
 /** The yaw the pet turns toward: its facing's 3/4 view (§6.1); a climbing pet faces the viewer. */

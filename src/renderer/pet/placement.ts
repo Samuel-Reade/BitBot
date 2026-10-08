@@ -14,10 +14,17 @@
 //   go to the animator (character/animator.ts) when its pose is due; it says whether anything changed (render) and
 //   when it next changes on its own (another frame now, or a timer for later), capped at the state's frame rate.
 //
+// - Attach (M3): a pet on a wall is drawn turned a quarter turn about its ground-contact point, which then sits on
+//   that wall's anchor in the canvas (tuning.render.climbAnchor), where the turned pet has room. The attach of the
+//   state at render time goes to the animator and picks the box hit tests are clamped to (boxFor); the anchor follows
+//   the animator's turn (AnimResult.wallTurn), so it moves in step while the pet turns onto or off the wall. The
+//   canvas is placed by the anchor and the scene draws there (overlay.ts hands it over before each render); both
+//   change only in frames that render, so the canvas's position and its content always agree.
+//
 // OverlayModel holds that state; the small functions above it are its rules, exported so tests pin each one down.
 
 import type { FaceOverride } from '../../shared/faceStates'
-import { clampToArea, distance, type Box, type PetArea, type Point } from '../../shared/geometry'
+import { clampToArea, distance, type Box, type PetArea, type Point, type Rect } from '../../shared/geometry'
 import { pushTimed, sampleBuffer, type TimedPoint } from '../../shared/interpolation'
 import { IPC } from '../../shared/ipc'
 import {
@@ -36,6 +43,7 @@ import {
 } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
 import type { BehaviorState, IdleMode, LookDirection, Mood } from '../../shared/types'
+import { boxFor, type PetAttach } from '../../shared/world'
 import type { AnimInput, AnimResult } from './character/animator'
 
 // ---- Placement rules -------------------------------------------------------------------------
@@ -137,6 +145,38 @@ export function nextAnimationAt(wakeAt: number | null, lastRenderTs: number | nu
   return Math.max(wakeAt, lastRenderTs + 1000 / fps - slackMs)
 }
 
+/**
+ * Where the ground-contact point is drawn in a width × height canvas for each attach: `anchor` standing, and
+ * tuning.render.climbAnchor on a wall.
+ */
+export function anchorsFor(width: number, height: number, anchor: Point): Record<PetAttach, Point> {
+  const climb = tuning.render.climbAnchor
+  return {
+    floor: { x: anchor.x, y: anchor.y },
+    wallRight: { x: width * climb.wallRight.x, y: height * climb.wallRight.y },
+    wallLeft: { x: width * climb.wallLeft.x, y: height * climb.wallLeft.y },
+  }
+}
+
+/** +1 on a wall on the pet's right, −1 on its left, 0 standing (AnimResult.wallTurn when fully turned). */
+export function wallSide(attach: PetAttach): number {
+  return attach === 'wallRight' ? 1 : attach === 'wallLeft' ? -1 : 0
+}
+
+/**
+ * Where the ground-contact point is drawn for a figure turned `wallTurn` onto a wall (AnimResult.wallTurn: ±1 fully,
+ * 0 standing): from the standing anchor toward that wall's, in step with the turn, so the turning pet stays inside
+ * the canvas.
+ */
+export function anchorForTurn(anchors: Readonly<Record<PetAttach, Readonly<Point>>>, wallTurn: number): Point {
+  const u = Number.isFinite(wallTurn) ? Math.min(1, Math.abs(wallTurn)) : 0
+  const from = anchors.floor
+  if (u === 0) return { x: from.x, y: from.y }
+  const to = anchors[wallTurn > 0 ? 'wallRight' : 'wallLeft']
+  if (u === 1) return { x: to.x, y: to.y }
+  return { x: from.x + (to.x - from.x) * u, y: from.y + (to.y - from.y) * u }
+}
+
 /** True if the hit test's canvas-local point is inside the pet's measured box (main's grab area and safety net use it). */
 export function insideBox(local: Point, anchor: Point, box: Box): boolean {
   const x = local.x - anchor.x
@@ -217,8 +257,10 @@ export interface OverlayModelDeps {
 export interface OverlayModelOptions {
   /** Pet canvas edge, CSS px (= pt). */
   edge: number
-  /** Canvas point where the ground-contact point is drawn (PetScene.anchor). */
+  /** Canvas point where the ground-contact point is drawn standing (PetScene.anchor). */
   anchor: Point
+  /** …for every attach (PetScene.anchors). Default: anchorsFor(edge, edge, anchor). */
+  anchors?: Readonly<Record<PetAttach, Readonly<Point>>>
   devicePixelRatio: number
 }
 
@@ -245,6 +287,7 @@ interface StateLook {
   dust: number
   look: LookDirection | null
   facing: 1 | -1
+  attach: PetAttach
 }
 
 interface BufferedState extends TimedPoint, StateLook {
@@ -264,15 +307,21 @@ interface Press {
   snapSeen: boolean
   /** Raw pointer moves came during this press: they drive it, and the frame-aligned mousemoves are left out. */
   raw: boolean
-  /** The state the pet showed when pressed: a click (no drag yet) keeps showing it. */
+  /** The state the pet showed when pressed: a click (no drag yet) keeps showing it… */
   stateAtStart: BehaviorState
+  /** …and its attach (a drag holds it standing). */
+  attachAtStart: PetAttach
 }
 
 interface Placement {
   /** Canvas top-left, overlay-local CSS px, snapped to device pixels. */
   readonly origin: Point
-  /** The ground-contact point it draws, global pt. */
+  /** The ground-contact point it draws, global pt… */
   readonly ground: Point
+  /** …at this canvas point (the anchor, moved with the turn onto a wall)… */
+  readonly anchor: Point
+  /** …for this attach (its box is boxFor(petBox, attach)). */
+  readonly attach: PetAttach
 }
 
 /**
@@ -325,6 +374,12 @@ export class OverlayModel {
   private poseChanged = false
   /** The newest cursor position this page knows (a grab-area event or main's sample); null after a hover-reset. */
   private lastPointer: Point | null = null
+  /** The attach the canvas is placed and drawn for. */
+  private drawnAttach: PetAttach = 'floor'
+  /** How far the drawn figure is turned onto a wall (AnimResult.wallTurn; without an animator, the attach's). */
+  private wallTurn = 0
+  /** Where the canvas draws the ground-contact point (anchorForTurn): the scene draws the next render there. */
+  private drawnAnchor: Point
 
   private readonly counters = {
     frames: 0,
@@ -342,14 +397,16 @@ export class OverlayModel {
   private readonly inputToFrame = new SampleList(tuning.overlay.debugSampleCap)
 
   private readonly edge: number
-  private readonly anchor: Point
+  private readonly anchors: Readonly<Record<PetAttach, Readonly<Point>>>
 
   constructor(
     options: OverlayModelOptions,
     private readonly deps: OverlayModelDeps,
   ) {
     this.edge = options.edge
-    this.anchor = { x: options.anchor.x, y: options.anchor.y }
+    const anchors = options.anchors ?? anchorsFor(options.edge, options.edge, options.anchor)
+    this.anchors = { floor: { ...anchors.floor }, wallRight: { ...anchors.wallRight }, wallLeft: { ...anchors.wallLeft } }
+    this.drawnAnchor = { ...anchors.floor }
     this.dpr = options.devicePixelRatio
   }
 
@@ -378,6 +435,31 @@ export class OverlayModel {
 
   get pressed(): boolean {
     return this.press !== null
+  }
+
+  /** The attach the canvas is placed for. */
+  get attach(): PetAttach {
+    return this.drawnAttach
+  }
+
+  /** Where the canvas draws the ground-contact point (CSS px): overlay.ts gives it to the scene before every render. */
+  get anchor(): Point {
+    return { ...this.drawnAnchor }
+  }
+
+  /** The overlay window's content bounds, global pt (null before onConfig()). */
+  get overlay(): Rect | null {
+    return this.config ? { ...this.config.overlay } : null
+  }
+
+  /**
+   * The pet's box as drawn now: the measured box (pet:ready) turned for the drawn attach (boxFor), relative to the
+   * drawn ground-contact point, global pt. Null before the pet is placed and measured (the debug view's pet hitbox).
+   */
+  get drawnBox(): { ground: Point; box: Box } | null {
+    const placement = this.placement
+    if (!placement || !this.petBox) return null
+    return { ground: { ...placement.ground }, box: boxFor(this.petBox, placement.attach) }
   }
 
   // ── main → overlay ──
@@ -420,6 +502,7 @@ export class OverlayModel {
       dust: raw.dust,
       look: raw.look,
       facing: raw.facing,
+      attach: raw.attach,
     }
     pushTimed(this.states, state, config.stepMs, tuning.overlay.stateBufferSize)
     this.supportY = raw.supportY
@@ -591,6 +674,7 @@ export class OverlayModel {
       snapSeen: false,
       raw: false,
       stateAtStart: this.lastLook?.state ?? 'idle',
+      attachAtStart: placement.attach,
     }
     this.dropHold = null
     this.sendPointer({
@@ -649,28 +733,44 @@ export class OverlayModel {
 
     const renderT = Number.isFinite(this.clockOffset) ? ts - this.clockOffset - config.stepMs : null
     const ground = this.groundAt(ts, renderT)
+    const look = this.stateLookAt(renderT)
+    const slackMs = tuning.overlay.renderIntervalSlackMs
+    const allowed = renderAllowed(this.lastRenderTs, ts, tuning.render.fps.moving, slackMs)
+    // A new attach moves the anchor and turns the pet: only in a frame that renders too, or the canvas would show the
+    // old drawing at the new place.
+    const wantAttach = this.attachFor(look)
+    if (wantAttach !== this.drawnAttach && allowed && !this.contextLost) {
+      this.drawnAttach = wantAttach
+      this.renderPending = true
+    }
+    // The pose first: the anchor moves with the animator's turn onto a wall (only in frames it poses, which render).
+    this.animateIfDue(ts, look, slackMs)
+    if (!this.deps.animate) this.wallTurn = wallSide(this.drawnAttach)
+    const anchor = anchorForTurn(this.anchors, this.wallTurn)
+    if (anchor.x !== this.drawnAnchor.x || anchor.y !== this.drawnAnchor.y) {
+      this.drawnAnchor = anchor
+      this.renderPending = true
+    }
     let transform: string | null = null
     let shadow = this.renderedShadow
     // The first placement also renders, so the canvas is never revealed with content the compositor may have dropped.
     const revealNow = !this.revealed && ground !== null
     if (ground) {
-      const origin = canvasOrigin(ground, config.overlay, this.anchor, this.dpr)
-      this.placement = { origin, ground }
+      const origin = canvasOrigin(ground, config.overlay, anchor, this.dpr)
+      this.placement = { origin, ground, anchor, attach: this.drawnAttach }
       const next = canvasTransform(origin)
       if (next !== this.transform) {
         this.transform = next
         transform = next
       }
-    }
-    const slackMs = tuning.overlay.renderIntervalSlackMs
-    this.animateIfDue(ts, renderT, slackMs)
-    if (ground) {
-      shadow = scaledShadow(contactShadowFor(this.supportY, ground.y, tuning.overlay.shadowFadePt), this.shadowScale)
+      // Turned onto a wall the feet are against it: the contact shadow (on a surface line below the feet) fades out
+      // with the turn.
+      const scale = this.shadowScale * (1 - Math.min(1, Math.abs(this.wallTurn)))
+      shadow = scaledShadow(contactShadowFor(this.supportY, ground.y, tuning.overlay.shadowFadePt), scale)
       if (revealNow || !sameShadow(shadow, this.renderedShadow)) this.renderPending = true
     }
 
     const canRender = this.renderPending && !this.contextLost
-    const allowed = renderAllowed(this.lastRenderTs, ts, tuning.render.fps.moving, slackMs)
     const render = canRender && allowed ? { ...shadow } : null
     const reveal = revealNow && render !== null
     if (reveal) this.revealed = true
@@ -685,7 +785,8 @@ export class OverlayModel {
     const needs: FrameNeeds = {
       pressed: this.press !== null,
       dropHold: this.dropHold !== null,
-      renderDue: canRender && render === null,
+      // …or a new attach waits for a frame that may render.
+      renderDue: (canRender && render === null) || (wantAttach !== this.drawnAttach && !this.contextLost),
       renderT,
       newestStateT: newest?.t ?? null,
     }
@@ -753,9 +854,8 @@ export class OverlayModel {
    * Gives the animator this frame's input and lets it pose the rig when the pose is due (its wake time came, or the
    * input changed) and its frame-rate cap allows a render; a change of input is shown at once.
    */
-  private animateIfDue(ts: number, renderT: number | null, slackMs: number): void {
+  private animateIfDue(ts: number, look: StateLook | null, slackMs: number): void {
     const animate = this.deps.animate
-    const look = this.stateLookAt(renderT)
     if (!animate || !look || this.contextLost) return
     this.lastLook = look
     const press = this.press
@@ -766,6 +866,8 @@ export class OverlayModel {
       dust: look.dust,
       look: look.look,
       facing: look.facing,
+      // The attach the canvas is placed for (a new one waits for a frame that renders, and so does this pose).
+      attach: this.drawnAttach,
       held: press && dragging ? { grabX: press.localGrab.x, grabY: press.localGrab.y, mouseX: press.mouse.x } : null,
       faceOverride: this.devFace,
       idleMode: this.idleMode,
@@ -781,6 +883,7 @@ export class OverlayModel {
     this.animWakeAt = result.wakeAt
     this.animFps = result.fps
     this.shadowScale = result.shadowScale
+    this.wallTurn = result.wallTurn ?? wallSide(input.attach)
     if (result.changed) {
       this.renderPending = true
       this.poseChanged = true
@@ -794,7 +897,14 @@ export class OverlayModel {
     let pick = states[0] as BufferedState
     if (renderT === null) pick = states[states.length - 1] as BufferedState
     else for (const s of states) if (s.t <= renderT + tuning.overlay.starveToleranceMs) pick = s
-    return { state: pick.state, mood: pick.mood, dust: pick.dust, look: pick.look, facing: pick.facing }
+    return { state: pick.state, mood: pick.mood, dust: pick.dust, look: pick.look, facing: pick.facing, attach: pick.attach }
+  }
+
+  /** The attach to draw: the state's at render time; a press keeps the one it began with until it drags (held). */
+  private attachFor(look: StateLook | null): PetAttach {
+    const press = this.press
+    if (press) return press.maxMovePt >= tuning.hitArea.clickMaxMovePt ? 'floor' : press.attachAtStart
+    return look?.attach ?? this.drawnAttach
   }
 
   private groundAt(ts: number, renderT: number | null): Point | null {
@@ -854,7 +964,8 @@ export class OverlayModel {
     // SPEC-DEVIATION: §5.2 makes the whole drawn pet clickable. An animation may draw it beyond the box main sizes the
     // grab area and the safety net with (a jump, a tumble): those parts are not grabbable, so the two never disagree
     // about where the pet is (they would fight: hover on, safety net off, every wake).
-    if (this.petBox && !insideBox(local, this.anchor, this.petBox)) return false
+    // Climbing, the box is turned with the pet about its contact point, drawn at that attach's anchor.
+    if (this.petBox && !insideBox(local, placement.anchor, boxFor(this.petBox, placement.attach))) return false
     return this.deps.hitTest(local.x, local.y)
   }
 
@@ -897,6 +1008,7 @@ function sameAnimInput(a: AnimInput, b: AnimInput): boolean {
     a.dust === b.dust &&
     a.look === b.look &&
     a.facing === b.facing &&
+    a.attach === b.attach &&
     a.idleMode === b.idleMode &&
     a.faceOverride === b.faceOverride &&
     a.held?.grabX === b.held?.grabX &&

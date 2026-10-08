@@ -7,16 +7,21 @@
 //
 // Fail closed: a malformed configuration starts nothing (no grab area, no pet:ready, so main recreates the page); a
 // grab area that did not open never reports a hover, so main never makes it clickable.
+//
+// Dev builds: debug:world shows the world's debug view (worldView.ts) over the overlay; it never takes input or asks
+// for frames of its own.
 
 import { IPC } from '../../shared/ipc'
-import type { Box } from '../../shared/geometry'
+import type { Box, Point, Rect } from '../../shared/geometry'
 import { isPetPingMsg, type PetLogMsg, type PetPongMsg, type PetReadyMsg } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
 import type { PaletteId, PetSize } from '../../shared/types'
+import { isDebugWorldMsg, type DebugWorldMsg } from '../../shared/world'
 import { Animator } from './character/animator'
 import { openGrabArea, type GrabArea } from './hitWindow'
 import { OverlayModel, STANDING_SHADOW, type ContactShadowParams } from './placement'
 import type { PetScene } from './scene'
+import { backingSize, drawWorldView, petBoxRect, worldViewShapes } from './worldView'
 
 /** What the page was loaded with (main's query: size, palette); the configuration should agree. */
 export interface OverlayQuery {
@@ -87,7 +92,7 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
   }
   const animator = new Animator(pet.rig, { ptPerUnit: pet.ptPerUnit })
   const model = new OverlayModel(
-    { edge: pet.width, anchor: pet.anchor, devicePixelRatio: pixelRatio() },
+    { edge: pet.width, anchor: pet.anchor, anchors: pet.anchors, devicePixelRatio: pixelRatio() },
     {
       hitTest: (x, y) => pet.hitTest(x, y),
       animate: (input, ts) => animator.update(ts, input),
@@ -96,6 +101,7 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
       log: reportToMain,
     },
   )
+  const worldView = new WorldDebugView(canvas, () => model.overlay, () => model.drawnBox)
   const guarded = (what: string, fn: () => void): void => {
     try {
       fn()
@@ -109,6 +115,8 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
       // Resizing the drawing buffer clears it, so a new pixel ratio is applied only right before a render.
       const ratio = Math.min(pixelRatio(), tuning.render.pixelRatioCap)
       if (pet.renderer.getPixelRatio() !== ratio) pet.renderer.setPixelRatio(ratio)
+      // Where this frame's canvas transform puts the ground-contact point (it moves only in frames that render).
+      pet.setAnchor(model.anchor)
       pet.setContactShadow(shadow.elevationPt, shadow.strength)
       pet.render()
       model.rendered(ts, shadow)
@@ -125,6 +133,8 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
       if (plan.transform !== null) canvas.style.transform = plan.transform
       if (plan.render) render(ts, plan.render)
       if (plan.reveal) canvas.style.visibility = 'visible'
+      // Only in frames that run anyway, and nothing at all while the debug view is off.
+      if (worldView.shown) worldView.petMoved()
       if (plan.again) requestFrame()
       else if (plan.wakeAt !== null) wakeAt(plan.wakeAt)
     })
@@ -145,7 +155,13 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
       }
     }),
   )
-  bridge.on(IPC.petConfigChanged, (msg) => guarded('pet:config-changed', () => model.onConfigChanged(msg)))
+  bridge.on(IPC.petConfigChanged, (msg) =>
+    guarded('pet:config-changed', () => {
+      model.onConfigChanged(msg)
+      worldView.redraw()
+    }),
+  )
+  bridge.on(IPC.debugWorld, (msg) => guarded('debug:world', () => worldView.onMessage(msg)))
   bridge.on(IPC.petRedraw, () => guarded('pet:redraw', () => model.onRedraw()))
   bridge.on(IPC.debugPet, (msg) => guarded('debug:pet', () => model.onDevPet(msg)))
   // Always answered (counters are cheap; the sample lists stay empty unless config.debug): the dev panel shows rates.
@@ -163,7 +179,12 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
     guarded('webglcontextlost', () => model.onContextLost())
   })
   canvas.addEventListener('webglcontextrestored', () => guarded('webglcontextrestored', () => model.onContextRestored()))
-  watchPixelRatio(() => guarded('pixel ratio change', () => model.onRedraw()))
+  watchPixelRatio(() =>
+    guarded('pixel ratio change', () => {
+      model.onRedraw()
+      worldView.redraw()
+    }),
+  )
   window.addEventListener('pagehide', () => grabArea?.close())
 
   bridge
@@ -171,6 +192,7 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
     .then((reply) => {
       const config = model.onConfig(reply)
       if (!config) return
+      worldView.redraw() // a debug:world that came before the configuration
       if (config.size !== query.size || config.paletteId !== query.paletteId) {
         const asked = `${config.size}, ${config.paletteId}`
         const drawn = `${query.size}, ${query.paletteId}`
@@ -206,6 +228,100 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
       bridge.send(IPC.petReady, ready)
     })
     .catch((err: unknown) => reportToMain('error', `overlay: start failed: ${errorText(err)}`))
+}
+
+/**
+ * The world's debug view (dev builds, debug:world): a 2D canvas under the pet's canvas, covering the overlay, created
+ * on the first message with show true and removed with show false, plus an outline of the pet's box above the pet.
+ * The world is redrawn only when a message comes or the configuration or pixel ratio changes; the box only follows the
+ * pet in frames that run anyway (petMoved). Neither takes input (pointer-events none; the overlay window ignores the
+ * mouse anyway, §2).
+ */
+class WorldDebugView {
+  private layer: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; box: HTMLDivElement } | null = null
+  private msg: DebugWorldMsg | null = null
+  private boxKey = ''
+
+  constructor(
+    private readonly petCanvas: HTMLCanvasElement,
+    private readonly overlay: () => Rect | null,
+    private readonly drawnBox: () => { ground: Point; box: Box } | null,
+  ) {}
+
+  get shown(): boolean {
+    return this.msg !== null
+  }
+
+  onMessage(raw: unknown): void {
+    if (!isDebugWorldMsg(raw)) {
+      reportToMain('warning', 'overlay: malformed debug:world ignored')
+      return
+    }
+    if (!raw.show) {
+      this.msg = null
+      this.layer?.canvas.remove()
+      this.layer?.box.remove()
+      this.layer = null
+      this.boxKey = ''
+      return
+    }
+    this.msg = raw
+    this.redraw()
+  }
+
+  /** Draws the newest message again (a new message, configuration or pixel ratio). Nothing while hidden. */
+  redraw(): void {
+    const msg = this.msg
+    const overlay = this.overlay()
+    if (!msg || !overlay) return
+    const layer = this.layer ?? this.create()
+    if (!layer) return
+    const dpr = pixelRatio()
+    const backing = backingSize(overlay.width, overlay.height, dpr)
+    layer.canvas.style.width = `${overlay.width}px`
+    layer.canvas.style.height = `${overlay.height}px`
+    // Assigning the size clears the canvas even when it is unchanged, so only when it changed.
+    if (layer.canvas.width !== backing.width) layer.canvas.width = backing.width
+    if (layer.canvas.height !== backing.height) layer.canvas.height = backing.height
+    drawWorldView(layer.ctx, worldViewShapes(msg, overlay), backing, dpr)
+    this.boxKey = ''
+    this.petMoved()
+  }
+
+  /** Moves the pet's box outline to where the pet is drawn now, if that changed. */
+  petMoved(): void {
+    const layer = this.layer
+    const overlay = this.overlay()
+    if (!layer || !overlay) return
+    const drawn = this.drawnBox()
+    const rect = drawn ? petBoxRect(drawn.ground, drawn.box, overlay) : null
+    const key = rect ? `${rect.x},${rect.y},${rect.width},${rect.height}` : 'none'
+    if (key === this.boxKey) return
+    this.boxKey = key
+    layer.box.style.display = rect ? 'block' : 'none'
+    if (!rect) return
+    layer.box.style.width = `${rect.width}px`
+    layer.box.style.height = `${rect.height}px`
+    layer.box.style.transform = `translate(${rect.x}px, ${rect.y}px)`
+  }
+
+  private create(): WorldDebugView['layer'] {
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      reportToMain('warning', 'overlay: no 2D context for the world debug view')
+      return null
+    }
+    canvas.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none'
+    // Under the pet's canvas, so the pet stays readable.
+    this.petCanvas.before(canvas)
+    const box = document.createElement('div')
+    const { color, width } = tuning.dev.worldView.petBox
+    box.style.cssText = `position:absolute;left:0;top:0;box-sizing:border-box;pointer-events:none;border:${width}px solid ${color}`
+    this.petCanvas.after(box)
+    this.layer = { canvas, ctx, box }
+    return this.layer
+  }
 }
 
 function pixelRatio(): number {

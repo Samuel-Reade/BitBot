@@ -12,6 +12,7 @@ import {
   type PetStateMsg,
 } from '../src/shared/petProtocol'
 import { tuning } from '../src/shared/tuning'
+import { boxFor } from '../src/shared/world'
 import {
   OverlayModel,
   SampleList,
@@ -31,6 +32,9 @@ import {
   snapToDevicePixels,
   insideBox,
   nextAnimationAt,
+  anchorForTurn,
+  anchorsFor,
+  wallSide,
   type FramePlan,
   type GrabMouseEvent,
   type OverlayModelDeps,
@@ -1014,12 +1018,18 @@ describe('OverlayModel: dev stats', () => {
 /** A fake animator: records its calls and answers with `result` (changed, wakeAt relative to the call, fps). */
 class FakeAnimator {
   readonly calls: { input: AnimInput; ts: number }[] = []
-  result: { changed: boolean; wakeIn: number | null; fps: number; shadowScale?: number } = { changed: true, wakeIn: null, fps: 60 }
+  result: { changed: boolean; wakeIn: number | null; fps: number; shadowScale?: number; wallTurn?: number } = { changed: true, wakeIn: null, fps: 60 }
 
   readonly animate = (input: AnimInput, ts: number): AnimResult => {
     this.calls.push({ input: { ...input }, ts })
     const r = this.result
-    return { changed: r.changed, wakeAt: r.wakeIn === null ? null : ts + r.wakeIn, fps: r.fps, shadowScale: r.shadowScale ?? 1 }
+    return {
+      changed: r.changed,
+      wakeAt: r.wakeIn === null ? null : ts + r.wakeIn,
+      fps: r.fps,
+      shadowScale: r.shadowScale ?? 1,
+      ...(r.wallTurn !== undefined ? { wallTurn: r.wallTurn } : {}),
+    }
   }
 }
 
@@ -1181,5 +1191,117 @@ describe('OverlayModel: hover follows an animated outline', () => {
     d.model.onRedraw()
     d.run(T + 100)
     expect(d.take(IPC.petHover)).toEqual([])
+  })
+})
+
+describe('OverlayModel: climbing a wall (attach)', () => {
+  const ANCHORS = anchorsFor(EDGE, EDGE, ANCHOR)
+  const WALL = { x: 800, y: GROUND }
+  /** Main's time of a state that the frame at ts0 = T + STEP renders. */
+  const t0 = mainAt(T)
+  const ts0 = Driver.at(t0)
+  const wallTransform = (ground: Point, anchor: Point): string => canvasTransform(canvasOrigin(ground, CONFIG.overlay, anchor, 2))
+
+  it('anchors: the standing one, the climb ones as fractions of the canvas; in between in step with the turn', () => {
+    const climb = tuning.render.climbAnchor
+    expect(ANCHORS).toEqual({
+      floor: ANCHOR,
+      wallRight: { x: EDGE * climb.wallRight.x, y: EDGE * climb.wallRight.y },
+      wallLeft: { x: EDGE * climb.wallLeft.x, y: EDGE * climb.wallLeft.y },
+    })
+    expect(anchorForTurn(ANCHORS, 0)).toEqual(ANCHOR)
+    expect(anchorForTurn(ANCHORS, 1)).toEqual(ANCHORS.wallRight)
+    expect(anchorForTurn(ANCHORS, -1)).toEqual(ANCHORS.wallLeft)
+    const half = anchorForTurn(ANCHORS, 0.5)
+    expect(half.x).toBeCloseTo((ANCHOR.x + ANCHORS.wallRight.x) / 2, 9)
+    expect(half.y).toBeCloseTo((ANCHOR.y + ANCHORS.wallRight.y) / 2, 9)
+    expect(anchorForTurn(ANCHORS, Number.NaN)).toEqual(ANCHOR)
+    expect([wallSide('floor'), wallSide('wallRight'), wallSide('wallLeft')]).toEqual([0, 1, -1])
+  })
+
+  it('places the canvas by the wall’s anchor in a frame that renders, without a contact shadow', () => {
+    const d = placed()
+    d.state(t0, WALL.x, WALL.y, { snap: true, state: 'climb', attach: 'wallRight' })
+    const plan = d.frame(ts0)
+    expect(plan.transform).toBe(wallTransform(WALL, ANCHORS.wallRight))
+    expect(plan.render).toEqual({ elevationPt: 0, strength: 0 })
+    expect(d.model.attach).toBe('wallRight')
+    expect(d.model.anchor).toEqual(ANCHORS.wallRight)
+    // Back on the floor: the standing anchor and the shadow again.
+    d.state(t0 + 1000, WALL.x, WALL.y, { snap: true, state: 'idle', attach: 'floor' })
+    const back = d.frame(Driver.at(t0 + 1000))
+    expect(back.transform).toBe(transformAt(WALL))
+    expect(back.render).toEqual(STANDING_SHADOW)
+    expect(d.model.attach).toBe('floor')
+  })
+
+  it('a change of attach waits for a frame that may render: the canvas never shows the old drawing at the new place', () => {
+    const d = placed()
+    d.model.onRedraw()
+    expect(d.frame(ts0).render).not.toBeNull() // a render just now: the next one is capped for a frame
+    d.state(t0 + 2, WALL.x, WALL.y - 100, { snap: true, state: 'climb', attach: 'wallRight' })
+    const capped = d.frame(ts0 + 5)
+    expect(capped.render).toBeNull()
+    // It still moves (a compositor transform), placed by the anchor it is drawn for.
+    expect(capped.transform).toBe(transformAt({ x: WALL.x, y: WALL.y - 100 }))
+    expect(d.model.attach).toBe('floor')
+    expect(capped.again).toBe(true)
+    const next = d.frame(ts0 + 1000 / 60)
+    expect(next.render).not.toBeNull()
+    expect(next.transform).toBe(wallTransform({ x: WALL.x, y: WALL.y - 100 }, ANCHORS.wallRight))
+    expect(d.model.attach).toBe('wallRight')
+  })
+
+  it('clamps hit tests to the box turned for the attach, around the wall’s anchor', () => {
+    const d = placed()
+    const petBox = { left: -40, top: -120, right: 40, bottom: 0 }
+    d.model.setPetBox(petBox)
+    d.state(t0, WALL.x, WALL.y - 100, { snap: true, state: 'climb', attach: 'wallRight' })
+    d.frame(ts0)
+    // The canvas is at (100 + 503, 40 + 740): the turned box spans canvas-local x 76.8..196.8, y 80..160.
+    const local = (x: number, y: number): Point => ({ x: 603 + x, y: 780 + y })
+    d.cursor(local(150, 100), T + 100) // on the fake silhouette and in the turned box
+    expect(d.take(IPC.petHover)).toEqual([{ over: true, epoch: 3 }])
+    d.cursor(local(120, 170), T + 200) // on the fake silhouette, in the standing box, not in the turned one
+    expect(d.take(IPC.petHover)).toEqual([{ over: false, epoch: 3 }])
+    expect(d.model.drawnBox).toEqual({ ground: { x: WALL.x, y: WALL.y - 100 }, box: boxFor(petBox, 'wallRight') })
+  })
+
+  it('gives the attach to the animator and moves the anchor with its turn, fading the shadow out', () => {
+    const fake = new FakeAnimator()
+    fake.result = { changed: true, wakeIn: 0, fps: 60, wallTurn: 0 }
+    const d = new Driver({ animate: fake.animate })
+    d.state(0, WALL.x, WALL.y, { snap: true, state: 'climb', attach: 'wallLeft' })
+    const ts = Driver.at(0)
+    const first = d.frame(ts)
+    expect(fake.calls.at(-1)?.input.attach).toBe('wallLeft')
+    expect(first.transform).toBe(transformAt(WALL)) // not turned yet: the standing anchor
+    expect(first.render).toEqual(STANDING_SHADOW)
+    fake.result = { ...fake.result, wallTurn: -0.5 }
+    const half = d.frame(ts + 1000 / 60)
+    const halfAnchor = anchorForTurn(ANCHORS, -0.5)
+    expect(d.model.anchor).toEqual(halfAnchor)
+    expect(half.transform).toBe(wallTransform(WALL, halfAnchor))
+    expect(half.render).toEqual({ elevationPt: 0, strength: 0.5 })
+    fake.result = { ...fake.result, wallTurn: -1 }
+    const turned = d.frame(ts + 2000 / 60)
+    expect(turned.transform).toBe(wallTransform(WALL, ANCHORS.wallLeft))
+    expect(turned.render).toEqual({ elevationPt: 0, strength: 0 })
+  })
+
+  it('a click on a climbing pet keeps it on the wall; a drag holds it standing', () => {
+    const fake = new FakeAnimator()
+    const d = new Driver({ animate: fake.animate })
+    d.state(t0, WALL.x, WALL.y - 100, { snap: true, state: 'climb', attach: 'wallRight' })
+    d.run(ts0)
+    const onPet = { x: 603 + 150, y: 780 + 100 }
+    d.down(onPet, T + 100)
+    d.frame(T + 101)
+    expect(fake.calls.at(-1)?.input).toMatchObject({ state: 'climb', attach: 'wallRight' })
+    expect(d.model.attach).toBe('wallRight')
+    d.move({ x: onPet.x - 50, y: onPet.y }, T + 110, 1)
+    d.frame(T + 120)
+    expect(fake.calls.at(-1)?.input).toMatchObject({ state: 'held', attach: 'floor' })
+    expect(d.model.attach).toBe('floor')
   })
 })
