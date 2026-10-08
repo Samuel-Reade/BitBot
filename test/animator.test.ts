@@ -5,6 +5,7 @@ import { tuning } from '../src/shared/tuning'
 import { BASE_PARTS, BEHAVIOR_STATES, type BehaviorState } from '../src/shared/types'
 import { Animator, type AnimInput } from '../src/renderer/pet/character/animator'
 import { buildBitbot, type BitbotRig } from '../src/renderer/pet/character/buildBitbot'
+import { armShoulder } from '../src/renderer/pet/character/construction'
 import type { CanvasFactory, FaceCanvas } from '../src/renderer/pet/character/face'
 
 // The procedural animator (§6.4) on a real rig in Node: the face draws into a no-op canvas, time is passed in, and the
@@ -37,7 +38,7 @@ function setup(seed = 1): { rig: BitbotRig; anim: Animator } {
 }
 
 function input(more: Partial<AnimInput> = {}): AnimInput {
-  return { state: 'idle', mood: 'content', dust: 0, facing: 1, look: null, held: null, faceOverride: null, idleMode: 'continuous', ...more }
+  return { state: 'idle', mood: 'content', dust: 0, facing: 1, look: null, attach: 'floor', held: null, faceOverride: null, idleMode: 'continuous', ...more }
 }
 
 /** Runs from `fromS` to `toS` at `fps`, returning each frame's time (s) and result. */
@@ -397,5 +398,136 @@ describe('Animator: the still style', () => {
         expect(anim.face?.overlays.some((o) => o === 'zzz' || o === 'loading'), state).toBe(false)
       }
     }
+  })
+})
+
+describe('Animator: climbing a wall (M3)', () => {
+  /** World-space bounds of the meshes the pet camera draws (layer 0) under `object` (hit proxies left out). */
+  function drawnBounds(rig: BitbotRig, object: THREE.Object3D | undefined): THREE.Box3 {
+    if (!object) throw new Error('part missing')
+    rig.root.updateMatrixWorld(true)
+    const box = new THREE.Box3()
+    object.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.layers.isEnabled(0)) box.expandByObject(o, true)
+    })
+    return box
+  }
+
+  /** Where the figure puts its ground-contact point (its origin), world space. */
+  function contactPoint(rig: BitbotRig): THREE.Vector3 {
+    rig.root.updateMatrixWorld(true)
+    return rig.figure.localToWorld(new THREE.Vector3(0, 0, 0))
+  }
+
+  const armRest = { L: armShoulder(1).rotationZ, R: armShoulder(-1).rotationZ }
+
+  it('turns a quarter turn about the contact point onto a wall on its right: feet toward +x, nothing past the wall', () => {
+    const { rig, anim } = setup()
+    anim.update(0, input({ state: 'walk' }))
+    // Turning onto the wall: the contact point stays put the whole time.
+    let mid: number | null = null
+    for (let t = 0.5; t < 2; t += 1 / 60) {
+      const r = anim.update(t * 1000, input({ state: 'climb', attach: 'wallRight' }))
+      if (mid === null && t > 0.5 + A.blendS / 2) mid = r.wallTurn ?? null
+      expect(contactPoint(rig).length()).toBeLessThan(1e-9)
+    }
+    expect(mid).toBeGreaterThan(0.2)
+    expect(mid).toBeLessThan(0.8)
+    const r = anim.update(2000, input({ state: 'climb', attach: 'wallRight' }))
+    expect(r.wallTurn).toBe(1)
+    // The climbing pet faces the viewer, so world space is the root's (y up, x to the right on screen).
+    expect(rig.root.rotation.y).toBeCloseTo(0, 6)
+    const feet = drawnBounds(rig, rig.parts.feet)
+    const figure = drawnBounds(rig, rig.figure)
+    // The feet's bottom (y = 0 standing) is now the wall plane x = 0 through the contact point; the head is away from it.
+    expect(feet.max.x).toBeCloseTo(0, 6)
+    expect(figure.max.x).toBeLessThan(1e-6)
+    expect(figure.min.x).toBeLessThan(-1.5)
+    expect(drawnBounds(rig, rig.parts.body).getCenter(new THREE.Vector3()).x).toBeLessThan(-0.5)
+  })
+
+  it('a wall on its left mirrors it: feet toward −x', () => {
+    const { rig, anim } = setup()
+    for (let t = 0; t < 1; t += 1 / 60) anim.update(t * 1000, input({ state: 'climb', attach: 'wallLeft' }))
+    const r = anim.update(1000, input({ state: 'climb', attach: 'wallLeft' }))
+    expect(r.wallTurn).toBe(-1)
+    expect(contactPoint(rig).length()).toBeLessThan(1e-9)
+    expect(drawnBounds(rig, rig.parts.feet).min.x).toBeCloseTo(0, 6)
+    expect(drawnBounds(rig, rig.figure).min.x).toBeGreaterThan(-1e-6)
+  })
+
+  it('the antenna hangs with gravity on either wall, and the reach alternates', () => {
+    for (const attach of ['wallRight', 'wallLeft'] as const) {
+      const { rig, anim } = setup()
+      const raised = new Set<string>()
+      for (let t = 0; t < 2; t += 1 / 60) {
+        anim.update(t * 1000, input({ state: 'climb', attach }))
+        const left = (rig.joints.armL?.rotation.z ?? 0) > armRest.L + 0.1
+        const right = (rig.joints.armR?.rotation.z ?? 0) < armRest.R - 0.1
+        if (t > 1) raised.add(`${left}/${right}`)
+      }
+      rig.root.updateMatrixWorld(true)
+      const base = rig.joints.antenna?.getWorldPosition(new THREE.Vector3())
+      const tip = rig.attachPoints.antenna_tip.getWorldPosition(new THREE.Vector3())
+      expect(base, attach).toBeDefined()
+      expect(tip.y, attach).toBeLessThan(base?.y ?? 0)
+      // Left arm up, then right arm up.
+      expect(raised.has('true/false'), attach).toBe(true)
+      expect(raised.has('false/true'), attach).toBe(true)
+    }
+  })
+
+  it('getting off the wall turns back about the contact point (a fall from a wall)', () => {
+    const { rig, anim } = setup()
+    for (let t = 0; t < 1; t += 1 / 60) anim.update(t * 1000, input({ state: 'climb', attach: 'wallRight' }))
+    const turns: number[] = []
+    for (let t = 1; t < 1.5; t += 1 / 60) {
+      turns.push(anim.update(t * 1000, input({ state: 'idle', attach: 'floor' })).wallTurn ?? Number.NaN)
+      expect(contactPoint(rig).length()).toBeLessThan(1e-9)
+    }
+    expect(turns[0]).toBeGreaterThan(0.9)
+    expect(turns.some((x) => x > 0.1 && x < 0.9)).toBe(true)
+    expect(turns.at(-1)).toBe(0)
+  })
+
+  it('any state on a wall is turned onto it, blended like a change of state', () => {
+    const { rig, anim } = setup()
+    anim.update(0, input({ idleMode: 'event' }))
+    anim.update(1000, input({ idleMode: 'event' }))
+    // Put on a wall at 1.1 s (main never does that to an idle pet, but the dev panel's forced state may).
+    expect(anim.update(1100, input({ idleMode: 'event', attach: 'wallRight' })).wallTurn).toBe(0)
+    const mid = anim.update(1100 + (A.blendS * 1000) / 2, input({ idleMode: 'event', attach: 'wallRight' }))
+    expect(mid.changed).toBe(true)
+    expect(mid.wallTurn).toBeGreaterThan(0)
+    expect(mid.wallTurn).toBeLessThan(1)
+    expect(anim.update(2000, input({ idleMode: 'event', attach: 'wallRight' })).wallTurn).toBe(1)
+    expect(drawnBounds(rig, rig.figure).max.x).toBeLessThan(1e-6)
+  })
+
+  it('a climb forced on the floor keeps the in-place preview (rolled about the body centre, no turn)', () => {
+    const { rig, anim } = setup()
+    let r = anim.update(0, input({ state: 'climb' }))
+    for (let t = 0; t < 1; t += 1 / 60) r = anim.update(t * 1000, input({ state: 'climb' }))
+    expect(r.wallTurn).toBe(0)
+    // Rolled about the body's centre, so the figure's origin moved off the contact point.
+    expect(contactPoint(rig).length()).toBeGreaterThan(0.5)
+  })
+})
+
+describe('Animator: jump (M3: the simulation moves the pet along the arc)', () => {
+  it('adds no lift of its own: stretches and raises its arms only', () => {
+    const { rig, anim } = setup()
+    const restBodyY = rig.body.position.y
+    const armRestL = armShoulder(1).rotationZ
+    let maxStretch = 0
+    for (let t = 0; t < 1.5; t += 1 / 60) {
+      const r = anim.update(t * 1000, input({ state: 'jump' }))
+      expect(r.shadowScale).toBe(1)
+      expect(Math.abs(rig.figure.position.y)).toBeLessThan(1e-9)
+      expect(rig.body.position.y).toBeCloseTo(restBodyY, 9)
+      maxStretch = Math.max(maxStretch, rig.body.scale.y)
+    }
+    expect(maxStretch).toBeCloseTo(A.jump.stretch, 6)
+    expect(rig.joints.armL?.rotation.z).toBeCloseTo(armRestL + A.jump.armsUp, 6)
   })
 })

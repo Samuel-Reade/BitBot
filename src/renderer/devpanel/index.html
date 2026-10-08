@@ -46,7 +46,7 @@
         letter-spacing: 0.04em;
         color: var(--muted);
       }
-      #status {
+      .status {
         display: grid;
         grid-template-columns: auto 1fr;
         gap: 2px 10px;
@@ -55,11 +55,20 @@
         background: var(--panel);
         font-variant-numeric: tabular-nums;
       }
-      #status dt {
+      .status dt {
         color: var(--muted);
       }
-      #status dd {
+      .status dd {
         margin: 0;
+      }
+      .actions + .status {
+        margin-top: 6px;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 6px;
+        margin-top: 6px;
       }
       .choices {
         display: flex;
@@ -101,7 +110,7 @@
     <main>
       <section>
         <h2>Status</h2>
-        <dl id="status">
+        <dl id="status" class="status">
           <dt>pet:state</dt>
           <dd id="st-state">–</dd>
           <dt>Simulation</dt>
@@ -153,6 +162,33 @@
       <section>
         <h2>Idle style</h2>
         <div class="choices" id="idle"></div>
+      </section>
+      <section>
+        <h2>World</h2>
+        <div class="choices">
+          <label><input id="show-world" type="checkbox" /> Show world</label>
+          <label><input id="wander" type="checkbox" /> Wander</label>
+        </div>
+        <div class="actions">
+          <button id="go-random" type="button">Go somewhere</button>
+          <button id="go-window" type="button">Onto a window</button>
+          <button id="climb-wall" type="button">Climb a wall</button>
+          <button id="stop" type="button">Stop</button>
+        </div>
+        <dl class="status">
+          <dt>Windows</dt>
+          <dd id="wd-windows">—</dd>
+          <dt>Segments</dt>
+          <dd id="wd-segments">—</dd>
+          <dt>Walls</dt>
+          <dd id="wd-walls">—</dd>
+          <dt>Snapshots</dt>
+          <dd id="wd-hz">—</dd>
+          <dt>Surface</dt>
+          <dd id="wd-surface">—</dd>
+          <dt>Goal</dt>
+          <dd id="wd-goal">—</dd>
+        </dl>
       </section>
       <section>
         <button id="reset" type="button">Reset everything</button>

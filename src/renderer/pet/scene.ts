@@ -1,10 +1,12 @@
 import * as THREE from 'three'
-import type { Box } from '../../shared/geometry'
+import type { Box, Point } from '../../shared/geometry'
 import { tuning } from '../../shared/tuning'
 import { BASE_PARTS, type Palette, type PetSize } from '../../shared/types'
+import type { PetAttach } from '../../shared/world'
 import { buildBitbot, type BitbotRig } from './character/buildBitbot'
 import { framePetCamera, framingReference, projectedBoundingBox, supportLineShadow } from './character/framing'
 import { createHitTester } from './character/hitTest'
+import { anchorsFor } from './placement'
 
 // The pet's three.js scene: renderer, camera, lights and rig, laid out so that the pet's ground
 // line lands exactly on `anchor` (CSS px) inside a viewport of width × height. Works the same for
@@ -15,6 +17,17 @@ import { createHitTester } from './character/hitTest'
 // tuning.render.lights.followFacing, mirror the lights. Other motion (bob, jumps, tumbles) goes
 // on rig.body / rig.figure and never moves the camera. setContactShadow() puts the shadow on the
 // surface line under a lifted pet.
+//
+// Climbing (M3): on a wall the animator turns the figure a quarter turn about the ground-contact point (the root
+// origin); turned, it reaches ~1.8 body heights to the side, past the canvas's half-width. setAnchor() moves the whole
+// image within the viewport (camera.setViewOffset: a 2D translation, the perspective unchanged) so the contact point
+// is drawn elsewhere: on the wall's anchor (tuning.render.climbAnchor, `anchors`), or in between while the pet turns.
+// The hit tester raycasts through the same camera, so it follows the shift.
+//
+// The shift moves `anchor` (the rest pose's ground line, under the root origin) onto the new point. So the root
+// origin, and with it the turned feet's line against the wall, lands exactly on the point's column, but ≈2 pt above
+// its row at size M: the root origin is drawn that much above the ground line, the camera looking slightly down at the
+// feet's front edge.
 
 export interface PetSceneOptions {
   canvas: HTMLCanvasElement
@@ -37,11 +50,17 @@ export interface PetScene {
    * drawn below the row: the contact shadow is clipped there.
    */
   readonly anchor: Readonly<{ x: number; y: number }>
+  /** Where the ground-contact point is drawn for each attach (CSS px): `anchor` standing, tuning.render.climbAnchor on a wall. */
+  readonly anchors: Readonly<Record<PetAttach, Readonly<Point>>>
+  /** Where the ground-contact point is drawn now (setAnchor; initially `anchor`). */
+  readonly drawnAnchor: Readonly<Point>
   readonly width: number
   readonly height: number
   /** Scene units → points at the root's depth. The drawn body box is tuning.render.bodyHeightPt tall at the default yaw. */
   readonly ptPerUnit: number
   render(): void
+  /** Draws (and hit-tests) the ground-contact point at this viewport point (CSS px) from now on: see the header. */
+  setAnchor(point: Point): void
   /** True if the viewport point (CSS px) is over the pet. */
   hitTest(x: number, y: number): boolean
   /**
@@ -50,8 +69,9 @@ export interface PetScene {
    */
   setContactShadow(elevationPt: number, strength: number): void
   /**
-   * The pet's projected box relative to `anchor` (pt) as the union over `yaws`: everything the rig can draw or be
-   * hit at, hit proxies and the resting contact shadow included. Restores the current yaw. Null for an empty rig.
+   * The pet's projected box relative to `anchor` (pt) as the union over `yaws`, standing: everything the rig can draw
+   * or be hit at, hit proxies and the resting contact shadow included. Restores the current yaw and anchor. Null for an
+   * empty rig.
    */
   measureBox(yaws: readonly number[]): Box | null
   dispose(): void
@@ -118,6 +138,17 @@ export function createPetScene(opts: PetSceneOptions): PetScene {
   const shadowRestY = rig.shadow?.mesh.position.y ?? 0
   let shadowElevation = 0
 
+  const anchors = anchorsFor(width, height, framing.anchor)
+  let drawnAnchor: Point = { ...framing.anchor }
+  /** Shifts the image so `anchor` is drawn at `point` (a view offset of the opposite amount). */
+  const placeView = (point: Point): void => {
+    drawnAnchor = { x: point.x, y: point.y }
+    const dx = framing.anchor.x - point.x
+    const dy = framing.anchor.y - point.y
+    if (dx === 0 && dy === 0) camera.clearViewOffset()
+    else camera.setViewOffset(width, height, dx, dy, width, height)
+  }
+
   let syncedYaw = Number.NaN
   let syncedElevation = Number.NaN
   const sync = (): void => {
@@ -144,12 +175,19 @@ export function createPetScene(opts: PetSceneOptions): PetScene {
     camera,
     rig,
     anchor: framing.anchor,
+    anchors,
+    get drawnAnchor() {
+      return drawnAnchor
+    },
     width,
     height,
     ptPerUnit: framing.ptPerUnit,
     render() {
       sync()
       renderer.render(scene, camera)
+    },
+    setAnchor(point) {
+      if (Number.isFinite(point.x) && Number.isFinite(point.y) && (point.x !== drawnAnchor.x || point.y !== drawnAnchor.y)) placeView(point)
     },
     hitTest(x, y) {
       sync()
@@ -162,7 +200,9 @@ export function createPetScene(opts: PetSceneOptions): PetScene {
     measureBox(yaws) {
       const savedYaw = rig.root.rotation.y
       const savedElevation = shadowElevation
+      const savedAnchor = drawnAnchor
       shadowElevation = 0
+      placeView(framing.anchor)
       let left = Infinity
       let top = Infinity
       let right = -Infinity
@@ -179,6 +219,7 @@ export function createPetScene(opts: PetSceneOptions): PetScene {
       }
       rig.root.rotation.y = savedYaw
       shadowElevation = savedElevation
+      placeView(savedAnchor)
       sync()
       rig.root.updateMatrixWorld(true)
       if (!Number.isFinite(left)) return null

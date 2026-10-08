@@ -361,8 +361,12 @@ export const tuning = {
     walk: { stepHz: 2, bobAmp: 0.04, lean: 0.08, footLift: 0.08, stride: 0.1, armSwing: 0.35, antennaBack: -0.15 },
     /** Run (§6.4): as walk, faster and bigger, plus little hops (units). */
     run: { stepHz: 3.4, bobAmp: 0.06, lean: 0.18, footLift: 0.12, stride: 0.16, armSwing: 0.8, antennaBack: -0.5, hop: 0.04 },
-    /** Climb (§6.4): alternating reaches per second, arm reach (rad), foot step (units), bob along the wall (units). */
-    climb: { reachHz: 1.6, armReach: 0.9, footStep: 0.06, bob: 0.03 },
+    /**
+     * Climb (§6.4): alternating reaches per second, arm reach (rad), foot step (units), bob along the wall (units). On a
+     * wall the antenna hangs with gravity: it turns by wallAntenna (rad, + = toward the pet's back, as antZ) on a wall to
+     * its right / left (the antenna leans to the pet's left, so the two sides differ). Bigger = a floppier antenna.
+     */
+    climb: { reachHz: 1.6, armReach: 0.9, footStep: 0.06, bob: 0.03, wallAntenna: { wallRight: 1.2, wallLeft: -0.6 } },
     /** Sit (§6.4): body lowered (units), feet forward (units), dangling feet swing (units, Hz), arms resting in (rad), antenna relaxed (rad). */
     sit: { lower: 0.12, feetForward: 0.22, feetSwing: 0.05, feetSwingHz: 1.1, armsIn: -0.15, antenna: -0.1 },
     /** Sleep (§6.4: slow bob 0.9 rad/s, amp 0.02; slumped; antenna droops −0.5; power light dims). */
@@ -400,8 +404,12 @@ export const tuning = {
     peek: { lean: 0.35, armUp: 2.2 },
     /** Greet (§10.1; not in the §6.4 table): one arm waves (rad up, Hz, ± rad), a small bounce (units). */
     greet: { armUp: 2.3, waveHz: 3, wave: 0.45, bounceAmp: 0.02 },
-    /** Jump (§10.1; not in the §6.4 table): crouch then stretch per periodS (scale), lift (units), arms up (rad). */
-    jump: { periodS: 0.9, crouch: 0.85, stretch: 1.1, lift: 0.18, armsUp: 1.4 },
+    /**
+     * Jump (§10.1; not in the §6.4 table): the simulation moves the pet along the arc (tuning.move.jumpApexPt), so the
+     * pose adds no lift of its own: it stretches to `stretch` of its height and raises its arms (rad) over riseS, then
+     * holds. Shorter riseS = a snappier take-off.
+     */
+    jump: { riseS: 0.15, stretch: 1.1, armsUp: 1.4 },
     /**
      * Mood cues (§6.4), layered on any state: hungry antenna droop (rad) and amber light blink (Hz); sleepy idle runs
      * at sleepyRate of its speed and yawns (gap, duration s); stuffed burps (gap, duration s); happy hops (units) or
@@ -484,6 +492,24 @@ export const tuning = {
   dev: {
     /** The developer panel window (§14.1, dev builds): its size, pt, and how often its status refreshes, ms. */
     panel: { width: 380, height: 720, statusIntervalMs: 1000 },
+    /**
+     * The overlay's debug view of the world (§14.1, the dev panel's "Show world"): line colours and widths, CSS px.
+     * Eligible windows thin, walkable segments and climbable walls thick, moves between surfaces thin and dashed
+     * (coloured by kind), the route as a polyline, the pet's box (boxFor its attach) thin. Wider = easier to see, hides
+     * more of what is underneath.
+     */
+    worldView: {
+      window: { color: 'rgba(120, 160, 255, 0.7)', width: 1 },
+      segment: { color: 'rgba(40, 210, 120, 0.9)', width: 4 },
+      wall: { color: 'rgba(230, 70, 200, 0.9)', width: 4 },
+      link: {
+        colors: { walk: '#9be38c', drop: '#5ac8fa', jump: '#ffd60a', climb: '#ff6ad5', mount: '#bf9bff' },
+        width: 1,
+        dash: [5, 4] as readonly number[],
+      },
+      path: { color: '#ff9500', width: 3 },
+      petBox: { color: 'rgba(255, 59, 48, 0.9)', width: 1 },
+    },
     /** PNG snapshot tool: give up if the hidden renderer hasn't drawn within this many ms. */
     snapshotReadyTimeoutMs: 15_000,
     /** PNG snapshot tool: wait after drawing so the compositor presents the frame before capture. */

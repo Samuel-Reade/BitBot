@@ -1,10 +1,18 @@
 // The developer panel's page (BITBOT_SPEC.md §14.1, dev builds only; main side src/main/dev/devPanel.ts, messages in
 // src/shared/devPanel.ts). Milestone 2: force the pet's state, mood, dust, facing, face and idle style, and watch what
-// it does. Vanilla TS over the sandboxed bridge: every control sends a debug:panel-set with the one field it changes,
-// and every debug:panel-status (validated) sets the controls and the status block, so the page always shows main's
-// overrides, never its own idea of them.
+// it does. Milestone 3: the world section (show the world's debug view, wander, send the pet somewhere, and what the
+// simulation sees). Vanilla TS over the sandboxed bridge: every control sends a debug:panel-set with the one field it
+// changes (the world buttons a debug:panel-action), and every debug:panel-status (validated) sets the controls and the
+// status blocks, so the page always shows main's overrides, never its own idea of them.
 
-import { isDevOverrides, type DevOverrides, type DevPanelSet, type DevPanelStatus } from '../../shared/devPanel'
+import {
+  isDevOverrides,
+  type DevOverrides,
+  type DevPanelAction,
+  type DevPanelSet,
+  type DevPanelStatus,
+  type DevWorldStatus,
+} from '../../shared/devPanel'
 import {
   EYES_STATES,
   FACE_OVERLAYS,
@@ -45,6 +53,24 @@ function isRate(value: unknown): value is number | null {
   return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0)
 }
 
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
+function isDevWorldStatus(value: unknown): value is DevWorldStatus {
+  if (!isRecord(value)) return false
+  const goal = value['goal']
+  return (
+    isCount(value['windows']) &&
+    isCount(value['segments']) &&
+    isCount(value['walls']) &&
+    isRate(value['snapshotHz']) &&
+    value['snapshotHz'] !== null &&
+    (value['surface'] === null || typeof value['surface'] === 'string') &&
+    (goal === null || (isRecord(goal) && Number.isFinite(goal['x']) && Number.isFinite(goal['y'])))
+  )
+}
+
 function isDevPanelStatus(value: unknown): value is DevPanelStatus {
   return (
     isRecord(value) &&
@@ -54,7 +80,8 @@ function isDevPanelStatus(value: unknown): value is DevPanelStatus {
     (value['look'] === null || isLookDirection(value['look'])) &&
     typeof value['visible'] === 'boolean' &&
     isRate(value['rendersPerS']) &&
-    isRate(value['framesPerS'])
+    isRate(value['framesPerS']) &&
+    (value['world'] === null || isDevWorldStatus(value['world']))
   )
 }
 
@@ -185,6 +212,27 @@ const setIdle = radios(
   },
 )
 
+const showWorld = element('show-world', HTMLInputElement)
+showWorld.addEventListener('change', () => send({ showWorld: showWorld.checked }))
+const wander = element('wander', HTMLInputElement)
+wander.addEventListener('change', () => send({ wander: wander.checked }))
+
+function sendAction(action: DevPanelAction): void {
+  try {
+    bridge.send(IPC.debugPanelAction, action)
+  } catch (err) {
+    showError(`Could not send to Bitbot: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+const ACTION_BUTTONS: readonly (readonly [string, DevPanelAction])[] = [
+  ['go-random', 'goRandom'],
+  ['go-window', 'goWindow'],
+  ['climb-wall', 'climbWall'],
+  ['stop', 'stop'],
+]
+for (const [id, action] of ACTION_BUTTONS) element(id, HTMLButtonElement).addEventListener('click', () => sendAction(action))
+
 element('reset', HTMLButtonElement).addEventListener('click', () => {
   const defaults: DevOverrides = { state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode: tuning.anim.idleMode, showWorld: false, wander: true }
   send(defaults)
@@ -205,6 +253,8 @@ function showOverrides(o: DevOverrides): void {
   for (const [name, input] of overlayBoxes) input.checked = overlays?.includes(name) ?? false
   setOverlaysEnabled()
   setIdle(o.idleMode)
+  showWorld.checked = o.showWorld
+  wander.checked = o.wander
 }
 
 // ───────────────────────────── status ─────────────────────────────
@@ -217,6 +267,24 @@ const stRates = element('st-rates', HTMLElement)
 
 const rate = (value: number | null): string => (value === null ? '–' : value.toFixed(1))
 
+const wdWindows = element('wd-windows', HTMLElement)
+const wdSegments = element('wd-segments', HTMLElement)
+const wdWalls = element('wd-walls', HTMLElement)
+const wdHz = element('wd-hz', HTMLElement)
+const wdSurface = element('wd-surface', HTMLElement)
+const wdGoal = element('wd-goal', HTMLElement)
+
+/** The world status block; "—" for whatever the simulation doesn't know (no snapshot yet, in the air, no goal). */
+function showWorldStatus(world: DevWorldStatus | null): void {
+  const none = '—'
+  wdWindows.textContent = world ? String(world.windows) : none
+  wdSegments.textContent = world ? String(world.segments) : none
+  wdWalls.textContent = world ? String(world.walls) : none
+  wdHz.textContent = world ? `${world.snapshotHz.toFixed(1)} Hz` : none
+  wdSurface.textContent = world?.surface ?? none
+  wdGoal.textContent = world?.goal ? `${Math.round(world.goal.x)}, ${Math.round(world.goal.y)}` : none
+}
+
 function showStatus(status: DevPanelStatus): void {
   const forced = status.state !== status.simState
   stState.textContent = forced ? `${status.state} (forced)` : status.state
@@ -225,6 +293,7 @@ function showStatus(status: DevPanelStatus): void {
   stLook.textContent = status.look ?? 'ahead (or not looking)'
   stVisible.textContent = status.visible ? 'shown' : 'hidden'
   stRates.textContent = `${rate(status.rendersPerS)} renders/s · ${rate(status.framesPerS)} frames/s`
+  showWorldStatus(status.world)
   showOverrides(status.overrides)
 }
 
