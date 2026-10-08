@@ -38,6 +38,10 @@ export const IPC = {
   petHover: 'pet:hover',
   /** overlay → main: pointer interaction on the pet. Payload: PetPointerMsg */
   petPointer: 'pet:pointer',
+  /** main → overlay: show or hide the speech bubble (§9.4 daily summary); main runs its timer. Payload: PetBubbleMsg */
+  petBubble: 'pet:bubble',
+  /** overlay → main: the bubble is drawn, with its measured size (the grab area covers it). Payload: PetBubbleShownMsg */
+  petBubbleShown: 'pet:bubble-shown',
   /** main → overlay (the dev check, the dev panel): send the renderer's counters. No payload. */
   debugOverlayStatsRequest: 'debug:overlay-stats-request',
   /** overlay → main: the renderer's counters (sample lists only with PetConfig.debug). Payload: OverlayStatsMsg */

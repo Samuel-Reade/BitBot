@@ -143,9 +143,31 @@ export interface PetHoverMsg {
  * pet by exactly the grab offset the overlay uses.
  */
 export type PetPointerMsg =
-  | { kind: 'down'; button: number; screenX: number; screenY: number; groundX: number; groundY: number; epoch: number }
-  | { kind: 'up'; button: number; screenX: number; screenY: number; epoch: number }
+  | { kind: 'down'; button: number; screenX: number; screenY: number; groundX: number; groundY: number; epoch: number; target?: PointerTarget }
+  | { kind: 'up'; button: number; screenX: number; screenY: number; epoch: number; target?: PointerTarget }
   | { kind: 'contextmenu'; screenX: number; screenY: number; epoch: number }
+
+/**
+ * What a press or release is over: the pet (the default, also when absent) or the speech bubble (§9.4), which is
+ * drawn on top. A press that begins on the bubble never grabs or pets the pet; released over the bubble it dismisses
+ * it (PetInteraction routes it).
+ */
+export type PointerTarget = 'pet' | 'bubble'
+
+/** Longest bubble text main sends (a summary line is ~120 characters). */
+export const BUBBLE_TEXT_MAX = 400
+/** Largest bubble size the overlay may report, pt (tuning.ui.bubble.maxWidthPt is 240; anything far above is wrong). */
+export const BUBBLE_SIZE_MAX_PT = 1000
+
+/** pet:bubble — main → overlay: show speech bubble `id` saying `text` (§9.4), or hide it. Main owns its timer. */
+export type PetBubbleMsg = { id: number; text: string } | { id: number; hide: true }
+
+/** pet:bubble-shown — overlay → main: bubble `id` is drawn, measured at this size, pt (main lays it out the same way). */
+export interface PetBubbleShownMsg {
+  id: number
+  width: number
+  height: number
+}
 
 /** pet:ping — main → overlay, every tuning.overlay.watchdog.pingMs while a page is ready: answer with pet:pong. */
 export interface PetPingMsg {
@@ -294,12 +316,33 @@ export function isPetPointerMsg(value: unknown): value is PetPointerMsg {
     case 'contextmenu':
       return true
     case 'up':
-      return isFiniteNumber(value['button'])
+      return isFiniteNumber(value['button']) && isPointerTargetField(value['target'])
     case 'down':
-      return isFiniteNumber(value['button']) && isFiniteNumber(value['groundX']) && isFiniteNumber(value['groundY'])
+      return (
+        isFiniteNumber(value['button']) &&
+        isFiniteNumber(value['groundX']) &&
+        isFiniteNumber(value['groundY']) &&
+        isPointerTargetField(value['target'])
+      )
     default:
       return false
   }
+}
+
+function isPointerTargetField(value: unknown): boolean {
+  return value === undefined || value === 'pet' || value === 'bubble'
+}
+
+export function isPetBubbleMsg(value: unknown): value is PetBubbleMsg {
+  if (!isRecord(value) || !isCount(value['id'])) return false
+  if ('hide' in value) return value['hide'] === true && !('text' in value)
+  const text = value['text']
+  return typeof text === 'string' && text.trim().length > 0 && text.length <= BUBBLE_TEXT_MAX
+}
+
+export function isPetBubbleShownMsg(value: unknown): value is PetBubbleShownMsg {
+  const size = (v: unknown): boolean => isFiniteNumber(v) && v > 0 && v <= BUBBLE_SIZE_MAX_PT
+  return isRecord(value) && isCount(value['id']) && size(value['width']) && size(value['height'])
 }
 
 export function isPetLogMsg(value: unknown): value is PetLogMsg {

@@ -13,11 +13,19 @@
 
 import { IPC } from '../../shared/ipc'
 import type { Box, Point, Rect } from '../../shared/geometry'
-import { isPetPingMsg, type PetLogMsg, type PetPongMsg, type PetReadyMsg } from '../../shared/petProtocol'
+import {
+  isPetBubbleMsg,
+  isPetPingMsg,
+  type PetBubbleShownMsg,
+  type PetLogMsg,
+  type PetPongMsg,
+  type PetReadyMsg,
+} from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
 import type { PaletteId, PetSize } from '../../shared/types'
 import { isDebugWorldMsg, type DebugWorldMsg } from '../../shared/world'
 import { Animator } from './character/animator'
+import { createBubble } from './bubble'
 import { openGrabArea, type GrabArea } from './hitWindow'
 import { OverlayModel, STANDING_SHADOW, type ContactShadowParams } from './placement'
 import type { PetScene } from './scene'
@@ -102,6 +110,7 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
     },
   )
   const worldView = new WorldDebugView(canvas, () => model.overlay, () => model.drawnBox)
+  const bubble = createBubble(document)
   const guarded = (what: string, fn: () => void): void => {
     try {
       fn()
@@ -133,12 +142,27 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
       if (plan.transform !== null) canvas.style.transform = plan.transform
       if (plan.render) render(ts, plan.render)
       if (plan.reveal) canvas.style.visibility = 'visible'
+      bubble.place(model.bubbleLayout, model.overlay, pixelRatio()) // §9.4: follows the pet (no-op without a bubble)
       // Only in frames that run anyway, and nothing at all while the debug view is off.
       if (worldView.shown) worldView.petMoved()
       if (plan.again) requestFrame()
       else if (plan.wakeAt !== null) wakeAt(plan.wakeAt)
     })
   }
+
+  // §9.4 the speech bubble (bubble.ts): drawn and measured here, laid out by the model, timed and dismissed by main.
+  bridge.on(IPC.petBubble, (msg) =>
+    guarded('pet:bubble', () => {
+      if (!isPetBubbleMsg(msg)) return reportToMain('warning', 'overlay: malformed pet:bubble ignored')
+      if ('hide' in msg) {
+        if (model.bubbleId === msg.id) model.setBubble(null)
+        return bubble.hide(msg.id)
+      }
+      const size = bubble.show(msg.id, msg.text)
+      model.setBubble({ id: msg.id, ...size })
+      bridge.send(IPC.petBubbleShown, { id: msg.id, ...size } satisfies PetBubbleShownMsg)
+    }),
+  )
 
   // Subscribe before asking for the configuration, so nothing main sends meanwhile is lost.
   bridge.on(IPC.petState, (msg) => guarded('pet:state', () => model.onState(msg, performance.now())))

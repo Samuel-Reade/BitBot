@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cursorNearPet, type HitWindowPlacement } from '../src/main/windows/hitArea'
+import { cursorNearPet, withBubbleBox, type HitWindowPlacement } from '../src/main/windows/hitArea'
 import {
   PetInteraction,
   type NativeMouseEvent,
@@ -39,6 +39,10 @@ const EDGE: Point = { x: 566, y: 740 }
 /** 40 pt right of the box: between the near (32) and far (56) margins. */
 const BETWEEN: Point = { x: 600, y: 740 }
 const FAR: Point = { x: 900, y: 740 }
+/** A speech bubble above the pet (relative to the ground point): global x 390..610, y 604..660. */
+const BUBBLE: Box = { left: -110, top: -196, right: 110, bottom: -140 }
+/** On the bubble, 40 pt right of and above the pet's box: not near the pet alone (32), within its far margin (56). */
+const ON_BUBBLE: Point = { x: 600, y: 630 }
 
 interface Deferred<V> {
   promise: Promise<V>
@@ -79,6 +83,8 @@ type Dep =
   | 'sendHoverReset'
   | 'sendCursor'
   | 'log'
+  | 'bubbleBox'
+  | 'bubbleClicked'
 
 const ALL_DEPS: Dep[] = [
   'place',
@@ -99,6 +105,8 @@ const ALL_DEPS: Dep[] = [
   'sendHoverReset',
   'sendCursor',
   'log',
+  'bubbleBox',
+  'bubbleClicked',
 ]
 
 class Harness {
@@ -111,6 +119,8 @@ class Harness {
     overlayShown: true,
     petDrawn: true,
     fullscreen: false,
+    /** The speech bubble's box relative to the ground point (§9.4); null: none shown. */
+    bubble: null as Box | null,
     /** Dependencies that throw when called. */
     fail: new Set<Dep>(),
   }
@@ -130,6 +140,9 @@ class Harness {
     closeMenus: 0,
     logs: [] as string[],
     questions: [] as Deferred<boolean | null>[],
+    bubbleClicks: 0,
+    /** What bubbleBox was asked with. */
+    bubbleAsks: [] as { ground: Point; petBox: Box }[],
   }
   readonly pi: PetInteraction
 
@@ -221,6 +234,15 @@ class Harness {
         boom('log')
         rec.logs.push(line)
       },
+      bubbleBox: (ground, petBox) => {
+        boom('bubbleBox')
+        rec.bubbleAsks.push({ ground: { ...ground }, petBox: { ...petBox } })
+        return world.bubble
+      },
+      bubbleClicked: () => {
+        boom('bubbleClicked')
+        rec.bubbleClicks++
+      },
     }
     this.pi = new PetInteraction(deps)
   }
@@ -258,13 +280,13 @@ class Harness {
     this.pi.handleHover({ over, epoch })
   }
 
-  down(at: Point = ON_PET, epoch = this.pi.epoch, button = 0): void {
+  down(at: Point = ON_PET, epoch = this.pi.epoch, button = 0, target?: 'pet' | 'bubble'): void {
     const ground = this.world.drawn
-    this.pi.handlePointer({ kind: 'down', button, screenX: at.x, screenY: at.y, groundX: ground.x, groundY: ground.y, epoch })
+    this.pi.handlePointer({ kind: 'down', button, screenX: at.x, screenY: at.y, groundX: ground.x, groundY: ground.y, epoch, ...(target ? { target } : {}) })
   }
 
-  up(at: Point, epoch = this.pi.epoch, button = 0): void {
-    this.pi.handlePointer({ kind: 'up', button, screenX: at.x, screenY: at.y, epoch })
+  up(at: Point, epoch = this.pi.epoch, button = 0, target?: 'pet' | 'bubble'): void {
+    this.pi.handlePointer({ kind: 'up', button, screenX: at.x, screenY: at.y, epoch, ...(target ? { target } : {}) })
   }
 
   contextMenu(at: Point = ON_PET, epoch = this.pi.epoch): void {
@@ -1344,6 +1366,165 @@ describe('PetInteraction: dependency failures', () => {
   })
 })
 
+// ───────────────────────────── the speech bubble (§9.4) ─────────────────────────────
+
+describe('PetInteraction: the speech bubble', () => {
+  /** A bubble shown, the cursor on it, the grab area shown and taking the mouse (the overlay reported hover). */
+  async function onBubble(): Promise<Harness> {
+    const h = new Harness()
+    h.world.bubble = BUBBLE
+    h.world.cursor = { ...ON_BUBBLE }
+    h.tick()
+    await h.answer(true)
+    h.tick()
+    expect(h.pi.placement.shown).toBe(true)
+    h.hover(true)
+    expect(h.pi.mouseEnabled).toBe(true)
+    return h
+  }
+
+  it('the grab area covers the pet and the bubble together, and appears near the bubble', async () => {
+    const h = new Harness()
+    h.world.cursor = { ...ON_BUBBLE }
+    h.tick()
+    expect(h.rec.questions).toHaveLength(0) // not near the pet alone
+    h.world.bubble = BUBBLE
+    h.tick()
+    await h.answer(true)
+    h.tick()
+    const placement = h.pi.placement
+    if (!placement.shown) throw new Error('hidden')
+    const covered = inflateRect(boxAt(GROUND, withBubbleBox(BOX, BUBBLE)), T.innerMarginPt)
+    expect(rectContainsRect(placement.bounds, covered)).toBe(true)
+    // bubbleBox is asked with the drawn ground point and the pet's own box.
+    expect(h.rec.bubbleAsks.at(-1)).toEqual({ ground: GROUND, petBox: BOX })
+  })
+
+  it('hover over the bubble keeps the mouse on; once the bubble goes, the safety net turns it off', async () => {
+    const h = await onBubble()
+    h.tick()
+    expect(h.pi.mouseEnabled).toBe(true) // inside the union: no safety net
+    const epoch = h.pi.epoch
+    h.world.bubble = null
+    h.tick()
+    expect(h.pi.mouseEnabled).toBe(false)
+    expect(h.pi.epoch).toBe(epoch + 1)
+    expect(h.logged('safety net')).toBe(true)
+  })
+
+  it('a click on the bubble dismisses it: no grab, no release, no petting, no menu', async () => {
+    const h = await onBubble()
+    h.down(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    expect(h.pi.held).toBe(false)
+    expect(h.pi.engaged).toBe(false)
+    expect(h.rec.grabs).toBe(0)
+    h.up(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    expect(h.rec.bubbleClicks).toBe(1)
+    expect(h.rec.releases).toEqual([])
+    expect(h.rec.menus).toEqual([])
+    // A second up is not another click.
+    h.up(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    expect(h.rec.bubbleClicks).toBe(1)
+  })
+
+  it('released off the bubble (target pet), or with another button, it is no click', async () => {
+    const h = await onBubble()
+    h.down(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    h.up(ON_PET, h.pi.epoch, 0, 'pet')
+    expect(h.rec.bubbleClicks).toBe(0)
+    h.down(ON_BUBBLE, h.pi.epoch, 2, 'bubble') // right button: never a press
+    h.up(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    expect(h.rec.bubbleClicks).toBe(0)
+    h.down(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    h.up(ON_BUBBLE, h.pi.epoch, 2, 'bubble') // right up: ignored, the press goes on
+    h.up(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    expect(h.rec.bubbleClicks).toBe(1)
+  })
+
+  it('an up on the bubble without a press that began there is no click (a pet press released over it is a pet release)', async () => {
+    const h = await onBubble()
+    h.up(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    expect(h.rec.bubbleClicks).toBe(0)
+    h.down(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    h.down(ON_PET) // a pet press replaces it (the overlay never sends this pair, but main must not mix them up)
+    expect(h.pi.held).toBe(true)
+    h.up(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    expect(h.rec.bubbleClicks).toBe(0)
+    expect(h.rec.releases).toHaveLength(1)
+    expect(h.pi.held).toBe(false)
+  })
+
+  it('no bubble press while the menu is open', async () => {
+    const h = await onBubble()
+    h.contextMenu(ON_BUBBLE)
+    expect(h.pi.engaged).toBe(true)
+    h.down(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    h.up(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    expect(h.rec.bubbleClicks).toBe(0)
+  })
+
+  it('a reset between press and release drops the click (stale epoch, or a fresh epoch’s up)', async () => {
+    const h = await onBubble()
+    h.down(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    const old = h.pi.epoch
+    h.pi.cancel('test')
+    h.up(ON_BUBBLE, old, 0, 'bubble') // dropped: old epoch
+    h.up(ON_BUBBLE, h.pi.epoch, 0, 'bubble') // the new epoch never saw the press
+    expect(h.rec.bubbleClicks).toBe(0)
+  })
+
+  it('without a bubble shown in main, a bubble press is ignored (fail closed: neither a click nor a grab)', async () => {
+    const h = await onBubble()
+    h.world.bubble = null
+    h.world.cursor = { ...ON_PET } // inside the pet's box: no safety net, the grab area stays
+    h.tick()
+    h.hover(true)
+    h.down(ON_PET, h.pi.epoch, 0, 'bubble')
+    h.up(ON_PET, h.pi.epoch, 0, 'bubble')
+    expect(h.rec.bubbleClicks).toBe(0)
+    expect(h.rec.grabs).toBe(0)
+  })
+
+  it('the bubble going away between press and release drops the click', async () => {
+    const h = await onBubble()
+    h.down(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    h.world.bubble = null
+    h.world.cursor = { ...ON_PET }
+    h.tick()
+    h.up(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    expect(h.rec.bubbleClicks).toBe(0)
+  })
+
+  it('a throwing or malformed bubbleBox counts as no bubble (logged once); the pet still works', async () => {
+    const h = new Harness()
+    h.world.bubble = BUBBLE
+    h.world.fail.add('bubbleBox')
+    await h.showOnPet()
+    expect(h.logged('bubbleBox failed')).toBe(true)
+    const placement = h.pi.placement
+    if (!placement.shown) throw new Error('hidden')
+    expect(rectContainsRect(placement.bounds, boxAt(GROUND, withBubbleBox(BOX, BUBBLE)))).toBe(false)
+    h.world.fail.delete('bubbleBox')
+    h.world.bubble = { left: 10, top: 10, right: 0, bottom: 0 } // malformed
+    h.tick()
+    h.hover(true)
+    h.down(ON_PET)
+    expect(h.pi.held).toBe(true)
+    h.up(ON_PET)
+    expect(h.rec.releaseKinds).toEqual(['click'])
+  })
+
+  it('a throwing bubbleClicked is logged and nothing else changes', async () => {
+    const h = await onBubble()
+    h.world.fail.add('bubbleClicked')
+    h.down(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    h.up(ON_BUBBLE, h.pi.epoch, 0, 'bubble')
+    expect(h.logged('bubbleClicked failed')).toBe(true)
+    expect(h.pi.placement.shown).toBe(true)
+    expect(h.pi.mouseEnabled).toBe(true)
+  })
+})
+
 // ───────────────────────────── random sequences ─────────────────────────────
 
 /** Small deterministic PRNG (mulberry32). */
@@ -1362,11 +1543,12 @@ describe('PetInteraction: invariants under random event sequences', () => {
   const SEEDS = [1, 2, 3, 0xb17b07]
 
   /** Plays 3000 random steps from `seed`, asserting the invariants after each; returns how often the rare paths ran. */
-  async function runSeed(seed: number): Promise<{ menuCancels: number; heldCancels: number }> {
+  async function runSeed(seed: number, bubble = false): Promise<{ menuCancels: number; heldCancels: number; bubbleClicks: number }> {
     const rand = mulberry32(seed)
     const pick = <V>(items: readonly V[]): V => items[Math.floor(rand() * items.length)] as V
     const h = new Harness()
-    const spots = [ON_PET, NEAR, EDGE, BETWEEN, FAR, { x: 445, y: 675 }, { x: 1400, y: 100 }]
+    if (bubble) h.world.bubble = BUBBLE
+    const spots = [ON_PET, NEAR, EDGE, BETWEEN, FAR, { x: 445, y: 675 }, { x: 1400, y: 100 }, ...(bubble ? [ON_BUBBLE] : [])]
     const settled = new Set<Deferred<boolean | null>>()
     const pending = (): Deferred<boolean | null>[] => h.rec.questions.filter((q) => !settled.has(q))
     const settle = async (q: Deferred<boolean | null>, how: 'true' | 'false' | 'null' | 'reject'): Promise<void> => {
@@ -1397,9 +1579,12 @@ describe('PetInteraction: invariants under random event sequences', () => {
       } else if (r < weights.hover) {
         h.hover(rand() < 0.7, epochFor())
       } else if (r < weights.down) {
-        h.down(h.world.cursor, epochFor(), rand() < 0.9 ? 0 : 2)
+        const onBubble = bubble && rand() < 0.4
+        h.down(h.world.cursor, epochFor(), rand() < 0.9 ? 0 : 2, onBubble ? 'bubble' : undefined)
+        // A quick click on the bubble: the up right after (else they rarely meet within one epoch).
+        if (onBubble && rand() < 0.5) h.up(h.world.cursor, h.pi.epoch, 0, rand() < 0.8 ? 'bubble' : 'pet')
       } else if (r < weights.up) {
-        h.up(h.world.cursor, epochFor(), rand() < 0.9 ? 0 : 2)
+        h.up(h.world.cursor, epochFor(), rand() < 0.9 ? 0 : 2, bubble && rand() < 0.5 ? 'bubble' : undefined)
       } else if (r < weights.menu) {
         h.contextMenu(h.world.cursor, epochFor())
       } else if (r < weights.native) {
@@ -1425,6 +1610,7 @@ describe('PetInteraction: invariants under random event sequences', () => {
         h.world.petDrawn = rand() < 0.9
         h.world.fullscreen = rand() < 0.08
         h.world.petBox = rand() < 0.92 ? BOX : null
+        if (bubble) h.world.bubble = rand() < 0.6 ? BUBBLE : null
       }
 
       const pi = h.pi
@@ -1448,31 +1634,36 @@ describe('PetInteraction: invariants under random event sequences', () => {
         expect(h.rec.placements.length, where).toBe(placeBefore + 1)
         expect(h.rec.placements.at(-1), where).toEqual(pi.placement)
         const w = h.world
+        // With a bubble shown, everything holds for the pet's and the bubble's box together.
+        const box = w.petBox ? withBubbleBox(w.petBox, w.bubble) : null
         if (pi.placement.shown) {
           expect(w.overlayShown && w.petDrawn && w.petBox !== null, where).toBe(true)
           if (pi.engaged) expect(pi.overlayOnScreen, where).not.toBe(false)
           else expect(pi.overlayOnScreen, where).toBe(true)
-          if (!pi.engaged && w.petBox) expect(cursorNearPet(w.cursor, w.drawn, w.petBox, T.farMarginPt), where).toBe(true)
-          if (w.petBox) {
-            const covered = inflateRect(boxAt(w.drawn, w.petBox), T.innerMarginPt)
+          if (!pi.engaged && box) expect(cursorNearPet(w.cursor, w.drawn, box, T.farMarginPt), where).toBe(true)
+          if (box) {
+            const covered = inflateRect(boxAt(w.drawn, box), T.innerMarginPt)
             expect(rectContainsRect(pi.placement.bounds, covered), where).toBe(true)
           }
         }
         // The safety net holds after every wake.
-        if (pi.mouseEnabled && !pi.engaged && w.petBox) {
-          expect(cursorNearPet(w.cursor, w.drawn, w.petBox, T.safetyMarginPt), where).toBe(true)
+        if (pi.mouseEnabled && !pi.engaged && box) {
+          expect(cursorNearPet(w.cursor, w.drawn, box, T.safetyMarginPt), where).toBe(true)
         }
       }
     }
     // The sequence exercised the interesting states: hover, presses, drags, the menu.
     expect(h.rec.mouse).toContain(true)
-    expect(h.rec.grabs).toBeGreaterThan(3)
+    expect(h.rec.grabs).toBeGreaterThan(bubble ? 1 : 3) // with a bubble, some presses are the bubble's
     expect(h.rec.releases.some((at) => at.x !== GROUND.x || at.y !== GROUND.y)).toBe(true)
     expect(h.rec.menus.length).toBeGreaterThan(1)
     expect(h.pi.epoch).toBeGreaterThan(20)
+    // A bubble click never grabs or releases anything (checked above: grabs − releases stays 0 or 1).
+    if (!bubble) expect(h.rec.bubbleClicks).toBe(0)
     return {
       menuCancels: h.rec.closeMenus,
       heldCancels: h.rec.logs.filter((line) => line.includes('let the pet go where it is drawn')).length,
+      bubbleClicks: h.rec.bubbleClicks,
     }
   }
 
@@ -1481,6 +1672,18 @@ describe('PetInteraction: invariants under random event sequences', () => {
       await runSeed(seed)
     })
   }
+
+  for (const seed of SEEDS) {
+    it(`holds the safety invariants with the speech bubble coming and going (seed ${seed})`, async () => {
+      await runSeed(seed, true)
+    })
+  }
+
+  it('reached bubble clicks across the seeds with a bubble', async () => {
+    let clicks = 0
+    for (const seed of SEEDS) clicks += (await runSeed(seed, true)).bubbleClicks
+    expect(clicks).toBeGreaterThan(0)
+  })
 
   // Runs the seeds itself, so it passes on its own too (vitest -t, .only, shuffled order).
   it('reached a cancel of an open menu and of a held pet across the seeds', async () => {

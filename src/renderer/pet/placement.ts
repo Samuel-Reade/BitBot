@@ -21,10 +21,16 @@
 //   canvas is placed by the anchor and the scene draws there (overlay.ts hands it over before each render); both
 //   change only in frames that render, so the canvas's position and its content always agree.
 //
+// - Bubble (M8, §9.4): while main shows the speech bubble (setBubble), it is laid out above the pet in every frame
+//   (bubbleLayout, src/shared/bubbleLayout.ts, the same layout main sizes the grab area with) and its body counts as
+//   hovered like the pet's silhouette. A press on it is sent with target 'bubble' (never a grab: main routes it), and
+//   its release with target 'bubble' while still over it, which main takes as the click that dismisses it.
+//
 // OverlayModel holds that state; the small functions above it are its rules, exported so tests pin each one down.
 
+import { layoutBubble, type BubbleLayout, type BubbleSize } from '../../shared/bubbleLayout'
 import type { FaceOverride } from '../../shared/faceStates'
-import { clampToArea, distance, type Box, type PetArea, type Point, type Rect } from '../../shared/geometry'
+import { clampToArea, distance, rectContainsPoint, type Box, type PetArea, type Point, type Rect } from '../../shared/geometry'
 import { pushTimed, sampleBuffer, type TimedPoint } from '../../shared/interpolation'
 import { IPC } from '../../shared/ipc'
 import {
@@ -381,6 +387,10 @@ export class OverlayModel {
   private wallTurn = 0
   /** Where the canvas draws the ground-contact point (anchorForTurn): the scene draws the next render there. */
   private drawnAnchor: Point
+  /** The speech bubble main shows (§9.4): its id and measured size, pt; null: none. */
+  private bubble: { id: number; size: BubbleSize } | null = null
+  /** A press began on the bubble and hasn't been released. */
+  private bubblePressed = false
 
   private readonly counters = {
     frames: 0,
@@ -463,7 +473,34 @@ export class OverlayModel {
     return { ground: { ...placement.ground }, box: boxFor(this.petBox, placement.attach) }
   }
 
+  /** The id of the speech bubble shown, or null. */
+  get bubbleId(): number | null {
+    return this.bubble?.id ?? null
+  }
+
+  /**
+   * Where the speech bubble is drawn now: laid out for the drawn ground point and the pet's box turned for the drawn
+   * attach, inside the overlay (global pt). Null without a bubble, or before the pet is placed and measured.
+   */
+  get bubbleLayout(): BubbleLayout | null {
+    const bubble = this.bubble
+    const placement = this.placement
+    if (!bubble || !placement || !this.petBox || !this.config) return null
+    return layoutBubble(placement.ground, boxFor(this.petBox, placement.attach), bubble.size, this.config.overlay)
+  }
+
   // ── main → overlay ──
+
+  /**
+   * pet:bubble, after bubble.ts drew and measured it: bubble `id` is up at this size (pt); null: it went down. Hover is
+   * tested again where the cursor was last seen (a bubble appearing or vanishing under a still cursor).
+   */
+  setBubble(bubble: { id: number; width: number; height: number } | null): void {
+    this.bubble = bubble ? { id: bubble.id, size: { width: bubble.width, height: bubble.height } } : null
+    if (!bubble) this.bubblePressed = false
+    if (!this.press && this.lastPointer) this.setHover(this.overPetOrBubble(this.lastPointer))
+    this.requestFrame()
+  }
 
   /** The pet:config reply. Returns the configuration adopted, or null if it is malformed (then nothing starts). */
   onConfig(raw: unknown): PetConfig | null {
@@ -523,7 +560,7 @@ export class OverlayModel {
       return
     }
     this.lastPointer = { x: raw.x, y: raw.y }
-    this.setHover(this.hitTestGlobal(raw))
+    this.setHover(this.overPetOrBubble(this.lastPointer))
   }
 
   /** Main reset the grab area (new epoch): forget hover and any press (main cancelled it; its snap state places the pet). */
@@ -534,6 +571,7 @@ export class OverlayModel {
     }
     this.adoptEpoch(raw.epoch)
     this.hover = false
+    this.bubblePressed = false
     this.lastPointer = null
     // Main's next cursor sample is the authority now: the grab area's older events must not make it ignored (main sends
     // just one while the cursor and the pet stay still, so an ignored one would leave a dropped pet unclickable).
@@ -554,6 +592,7 @@ export class OverlayModel {
     if (!raw.visible) {
       this.shown = false
       this.hover = false
+      this.bubblePressed = false
       this.press = null
       this.dropHold = null
       this.pendingInputAt = null
@@ -636,7 +675,7 @@ export class OverlayModel {
     const press = this.press
     if (!press) {
       this.lastPointer = { x: e.screenX, y: e.screenY }
-      this.setHover(this.hitTestGlobal(this.lastPointer))
+      this.setHover(this.overPetOrBubble(this.lastPointer))
       return
     }
     if (!press.raw) this.pressMove(press, e, now)
@@ -661,6 +700,23 @@ export class OverlayModel {
     if (isSecondaryClick(e.button, e.ctrlKey) || e.button !== 0) return
     const point = { x: e.screenX, y: e.screenY }
     const placement = this.placement
+    // The bubble is drawn over the pet: a press on it is the bubble's, never a grab.
+    if (placement && this.overBubble(point)) {
+      this.setHover(true)
+      this.bubblePressed = true
+      const ground = placement.ground
+      this.sendPointer({
+        kind: 'down',
+        button: 0,
+        screenX: point.x,
+        screenY: point.y,
+        groundX: ground.x,
+        groundY: ground.y,
+        epoch: this.epochSeen,
+        target: 'bubble',
+      })
+      return
+    }
     if (!placement || !this.hitTestGlobal(point)) {
       this.setHover(false)
       return
@@ -692,6 +748,15 @@ export class OverlayModel {
   }
 
   onGrabUp(e: GrabMouseEvent, now: number): void {
+    if (!this.press && this.bubblePressed && e.button === 0) {
+      // The end of a press on the bubble: a click if it is still over it (main dismisses it).
+      this.lastGrabEventAt = now
+      this.bubblePressed = false
+      const point = { x: e.screenX, y: e.screenY }
+      const target = this.overBubble(point) ? 'bubble' : 'pet'
+      this.sendPointer({ kind: 'up', button: 0, screenX: point.x, screenY: point.y, epoch: this.epochSeen, target })
+      return
+    }
     // Only an up that ends a press is newer news than main's samples; a stray one (after a hover-reset) is not.
     if (!this.press) return
     this.lastGrabEventAt = now
@@ -702,8 +767,10 @@ export class OverlayModel {
     this.lastGrabEventAt = now
     if (this.press || !this.config || !this.shown) return
     const point = { x: e.screenX, y: e.screenY }
-    const over = this.hitTestGlobal(point)
-    this.setHover(over)
+    // The bubble has no menu: a right-click on it only keeps the hover.
+    const onBubble = this.overBubble(point)
+    const over = !onBubble && this.hitTestGlobal(point)
+    this.setHover(over || onBubble)
     if (over) this.sendPointer({ kind: 'contextmenu', screenX: point.x, screenY: point.y, epoch: this.epochSeen })
   }
 
@@ -821,7 +888,7 @@ export class OverlayModel {
     // area never stays clickable where the pet no longer is (and becomes clickable where it now is).
     if (this.poseChanged) {
       this.poseChanged = false
-      if (!this.press && this.lastPointer) this.setHover(this.hitTestGlobal(this.lastPointer))
+      if (!this.press && this.lastPointer) this.setHover(this.overPetOrBubble(this.lastPointer))
     }
   }
 
@@ -960,8 +1027,20 @@ export class OverlayModel {
       const current = heldGroundPoint(point, press.localGrab, config.area)
       this.dropHold = { point: dropPoint(press, current, tuning.hitArea.clickMaxMovePt), until: now + tuning.overlay.dropHoldMs }
     }
-    this.setHover(this.hitTestGlobal(point))
+    this.setHover(this.overPetOrBubble(point))
     this.requestFrame()
+  }
+
+  /** Over the speech bubble's body (drawn where bubbleLayout says), while the pet is shown and placed. */
+  private overBubble(p: Point): boolean {
+    if (!this.bubble || !this.revealed || !this.shown) return false
+    const layout = this.bubbleLayout
+    return layout !== null && rectContainsPoint(layout.rect, p)
+  }
+
+  /** Hover counts over the bubble (drawn on top) and over the pet's silhouette. */
+  private overPetOrBubble(p: Point): boolean {
+    return this.overBubble(p) || this.hitTestGlobal(p)
   }
 
   /** Global pt → overlay-local → canvas-local → pet.hitTest. False until the pet is drawn for this configuration. */

@@ -34,6 +34,7 @@ import {
   isPetHoverMsg,
   isPetLogMsg,
   isPetPointerMsg,
+  isPetBubbleShownMsg,
   isPetPongMsg,
   isPetReadyMsg,
   type OverlayStatsMsg,
@@ -41,6 +42,7 @@ import {
   type PetHoverMsg,
   type PetPingMsg,
   type PetPointerMsg,
+  type PetBubbleShownMsg,
   type PetReadyMsg,
 } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
@@ -69,6 +71,8 @@ export interface PetWindowEvents {
   nativeMouse(e: NativeMouseEvent): void
   /** The grab area's window crashed or closed by itself. */
   hitWindowGone(reason: string): void
+  /** pet:bubble-shown (§9.4): the speech bubble is drawn at its measured size (SummaryBubble.onShown). */
+  bubbleShown?(msg: PetBubbleShownMsg): void
 }
 
 /** The parts of a PetConfig the app decides when it is sent. */
@@ -413,6 +417,7 @@ export class PetWindow {
     this.listen(IPC.petDrawn, isPetDrawnMsg, (msg) => this.drawnGate.drawn(msg))
     this.listen(IPC.petHover, isPetHoverMsg, (msg) => this.opts.events.hover(msg))
     this.listen(IPC.petPointer, isPetPointerMsg, (msg) => this.opts.events.pointer(msg))
+    this.listen(IPC.petBubbleShown, isPetBubbleShownMsg, (msg) => this.opts.events.bubbleShown?.(msg))
     this.listen(IPC.debugOverlayStats, isOverlayStatsMsg, (msg) => this.opts.events.stats(msg))
     // pet:log may come before pet:config (e.g. WebGL failed to start), so it doesn't wait for the configuration.
     ipcMain.on(IPC.petLog, (event, payload: unknown) => {

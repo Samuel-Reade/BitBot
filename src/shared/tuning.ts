@@ -360,7 +360,112 @@ export const tuning = {
   /** Character animation (§6.4). */
   /** §9.4 the daily summary bubble and other speech (M8). */
   ui: {
-    // (M8: filled in by the summary bubble's work.)
+    /**
+     * The speech bubble the overlay draws above the pet (src/renderer/pet/bubble.ts; laid out by
+     * src/shared/bubbleLayout.ts, which main uses too, so the grab area covers exactly where it is drawn). All pt.
+     */
+    bubble: {
+      /** Text wraps at this width (the bubble's widest, padding included). Wider = fewer lines but a bigger grab area. */
+      maxWidthPt: 240,
+      /** Inner padding, horizontal and vertical. */
+      paddingXPt: 14,
+      paddingYPt: 10,
+      /** System font size and line height (multiple of the size). ~13 pt reads like a macOS notification. */
+      fontSizePt: 13,
+      lineHeight: 1.35,
+      cornerRadiusPt: 14,
+      /** The tail pointing at the pet: its height (its base is twice that). */
+      tailPt: 8,
+      /** Between the tail's tip and the pet's box. */
+      gapPt: 2,
+      /** Kept at least this far inside the display's sides and bottom… */
+      screenMarginPt: 8,
+      /** …and this far below its top (the menu bar, notch included, sits above the overlay's level). */
+      topInsetPt: 40,
+      /** The tail stays at least this far from the bubble's left and right edges (clear of the rounded corners). */
+      tailInsetPt: 20,
+      /** Pop in / fade out, ms (opacity only with prefers-reduced-motion). Longer = gentler but laggier. */
+      popInMs: 200,
+      popOutMs: 160,
+      /** The faded-out element is removed this long after the fade's end (a timer: hidden pages run no transitions), ms. */
+      removeAfterFadeMs: 50,
+      /** Scale the bubble pops in from (1 = no pop). */
+      popFromScale: 0.85,
+      /** Warm cream in light mode, warm charcoal in dark mode (prefers-color-scheme). */
+      light: { background: '#FFF9EF', text: '#3A2E28', border: 'rgba(70, 50, 30, 0.14)', shadow: 'rgba(40, 25, 10, 0.22)' },
+      dark: { background: '#2E2925', text: '#F6EEE4', border: 'rgba(255, 240, 220, 0.16)', shadow: 'rgba(0, 0, 0, 0.45)' },
+    },
+    /** §9.4 the daily summary (src/main/summary.ts picks the words, src/main/summaryBubble.ts shows them). */
+    summary: {
+      /** Auto-dismiss after this long on screen (§9.4: 12 s), ms. A click dismisses it sooner. */
+      autoDismissMs: 12_000,
+      /**
+       * After the wake / unlock / launch that triggers it, wait this long before showing it (the screen lights up and
+       * the pet stretches and greets first), ms. Longer = calmer, but it may come after the user started working.
+       */
+      showDelayMs: 2_500,
+      /**
+       * Bitbot didn't run yesterday: the newest earlier day it ran is summarized with "last time" words, if it is at most
+       * this many days back; older than that, nothing is shown.
+       */
+      lastTimeMaxDays: 14,
+      /**
+       * "Best day this week!": yesterday's nutrition (tuning.economy.nutritionWeights) beat every other day Bitbot ran
+       * in the bestDayWindowDays ending yesterday, and it ran on at least bestDayMinDays of them (else it's no contest).
+       */
+      bestDayWindowDays: 7,
+      bestDayMinDays: 3,
+      /**
+       * A day under this much nutrition gets a cosy "quiet day" line (never a sad one; it is not compared with other
+       * days). A full working day is ~10,000.
+       */
+      quietBelowNutrition: 1_000,
+      /** Sparks gave at least this share of the day's nutrition, and at least sparksMin of them: the breaks line. */
+      sparksShareMin: 0.2,
+      sparksMin: 3,
+      /** What each currency is called: [one, many]. Mileage is its earned number as "miles" (§9.4), not converted. */
+      units: {
+        crumbs: ['crumb', 'crumbs'],
+        pellets: ['pellet', 'pellets'],
+        treats: ['treat', 'treats'],
+        mileage: ['mile', 'miles'],
+        sparks: ['spark', 'sparks'],
+      },
+      /** {When} at a sentence's start, {when} inside one: the day before today, or an older one ("last time"). */
+      when: { yesterday: ['Yesterday', 'yesterday'], lastTime: ['Last time', 'last time'] },
+      /**
+       * The lines, one picked at random per kind (src/main/summary.ts summaryKind). Placeholders: {When} / {when};
+       * {list}: everything earned ("11,240 crumbs, 830 pellets, 9 treats, 41 miles, and 6 sparks"); {food}: the same
+       * without sparks; {sparks}: "6 sparks". Never guilt-trippy (§9.4; test/summary.test.ts checks the words): no
+       * "only", no "should", no comparing down. A quiet day gets a cosy line.
+       */
+      templates: {
+        normal: [
+          '{When} I ate {list}. Yum!',
+          '{When} I ate {list}. What a feast!',
+          '{When} I munched {list}. Thank you!',
+          'Mmm, {when} was tasty: {list}.',
+        ],
+        /** Only with "yesterday" (a week's best needs a week around it). */
+        best: [
+          'Yesterday I ate {list}. Best day this week!',
+          'Yesterday I ate {list}. Our best day this week!',
+        ],
+        quiet: [
+          '{When} was a cosy, slow one: {list}, and lots of naps.',
+          '{When} was nice and calm. I nibbled {list} and daydreamed.',
+          'A gentle day {when}: {list}. Very relaxing!',
+        ],
+        sparks: [
+          '{When} I ate {food}, and {sparks}. I loved our breaks!',
+          '{When} I ate {food}, plus {sparks} from our breaks. Lovely!',
+        ],
+        /** The first day Bitbot ever ran. */
+        first: ['Our first day together! I ate {list}.', 'What a first day! I ate {list}.'],
+        /** Bitbot ran but nothing was earned. */
+        nothing: ['{When} was a sleepy one. Lots of naps, very cosy!', '{When} I mostly napped. So cosy!'],
+      },
+    },
   },
   anim: {
     /**
