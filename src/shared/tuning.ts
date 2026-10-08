@@ -219,6 +219,11 @@ export const tuning = {
      */
     altCmdClickSend: true,
     /**
+     * While Input Monitoring is not granted, re-check it (the preflight check: never prompts) this often, s, so turning it
+     * on in System Settings starts counting by itself. Lower = counting starts sooner after the grant, more checks.
+     */
+    inputAccessPollS: 5,
+    /**
      * Quitting waits at most this long for bitbot-helper to exit, ms. Its own stop escalates quit → SIGTERM → SIGKILL,
      * tuning.helper.stopGraceMs apart, so this covers that with a little to spare. Lower = a faster quit that may leave
      * the helper to exit on its own (it also exits when Bitbot does).
