@@ -307,6 +307,94 @@ export const tuning = {
      * holds until another one wins by hysteresisPt, so a cursor on a boundary doesn't make the eyes flicker.
      */
     look: { radiusPt: 300, eyeHeight: 0.55, upPt: 40, sidePt: 24, hysteresisPt: 8 },
+    /** Seconds a change of state blends over (§6.4: 150–250 ms). Higher = softer, mushier transitions. */
+    blendS: 0.2,
+    /** Turning to face the walking direction (§6.1 "eased"): yaw approaches its target at this rate, 1/s. Higher = snappier turns. */
+    yawEaseRate: 10,
+    /** Blinks (§6.3: every 2–5 s, 120 ms). Sleepy: more often and longer (§6.4 "frequent long blinks"). */
+    blink: { gapS: [2, 5], durationS: 0.12, sleepyGapS: [1, 2.5], sleepyDurationS: 0.3 },
+    /**
+     * Continuous idle (§6.4): body bob (rad/s, scene units), squash/stretch (±fraction), arm swing (rad, rad/s),
+     * antenna sway (rad, rad/s) with a slower wobble. Higher = livelier, busier.
+     */
+    idle: { bobRate: 2.4, bobAmp: 0.045, squash: 0.012, armSwing: 0.12, armRate: 1.3, antennaSway: 0.12, antennaRate: 0.9 },
+    /**
+     * Event-driven idle (IdleMode 'event'): still between short events, one every gapS (random in the range): a glance
+     * (eyes aside, glanceS), a breath (one bob cycle, breathS) or an antenna wiggle (wiggleS). Animated face overlays
+     * (zzz asleep, the stuffed spinner) and the hungry light run in bursts of burstS every burstS + burstGapS.
+     * Shorter gaps = livelier, more renders.
+     */
+    event: { gapS: [3, 8], glanceS: [0.7, 1.3], breathS: 2.6, wiggleS: 1.2, burstS: 2, burstGapS: 6 },
+    /** Walk (§6.4): steps per second per foot, bob (units), forward lean (rad), foot lift and stride (units), arm swing (rad), antenna lag (rad, negative = back). */
+    walk: { stepHz: 2, bobAmp: 0.04, lean: 0.08, footLift: 0.08, stride: 0.1, armSwing: 0.35, antennaBack: -0.15 },
+    /** Run (§6.4): as walk, faster and bigger, plus little hops (units). */
+    run: { stepHz: 3.4, bobAmp: 0.06, lean: 0.18, footLift: 0.12, stride: 0.16, armSwing: 0.8, antennaBack: -0.5, hop: 0.04 },
+    /** Climb (§6.4): alternating reaches per second, arm reach (rad), foot step (units), bob along the wall (units). */
+    climb: { reachHz: 1.6, armReach: 0.9, footStep: 0.06, bob: 0.03 },
+    /** Sit (§6.4): body lowered (units), feet forward (units), dangling feet swing (units, Hz), arms resting in (rad), antenna relaxed (rad). */
+    sit: { lower: 0.12, feetForward: 0.22, feetSwing: 0.05, feetSwingHz: 1.1, armsIn: -0.15, antenna: -0.1 },
+    /** Sleep (§6.4: slow bob 0.9 rad/s, amp 0.02; slumped; antenna droops −0.5; power light dims). */
+    sleep: { bobRate: 0.9, bobAmp: 0.02, slump: 0.12, lower: 0.05, armsLimp: 0.12, antennaDroop: -0.5, powerGlow: 0.25 },
+    /** Eat (§6.4): rapid bounces (Hz, units), arms pumping in (Hz, rad), antenna perks up (rad), chewing (Hz, §6.3 ~12), antenna tip flashes (Hz, × rest glow). */
+    eat: { bounceHz: 3.5, bounceAmp: 0.03, pumpHz: 3, pump: 0.3, antennaPerk: 0.25, chewHz: 12, tipFlashHz: 3, tipFlash: 2.2 },
+    /** Fall (§6.4): tumble (rad/s), arm flail (Hz, rad), antenna whip (Hz, rad). */
+    fall: { tumbleRate: 7, flailHz: 8, flail: 0.8, whipHz: 10, whip: 0.6 },
+    /**
+     * Land (§6.4, for tuning.move.landS): squash to `squash` of the height, overshoot to `stretch`, settle; arms out
+     * (rad), antenna boing (rad); wide eyes for the first wideFraction of it.
+     */
+    land: { squash: 0.75, stretch: 1.08, armsOut: 0.6, boing: 0.5, wideFraction: 0.4 },
+    /**
+     * Held (§6.4): the pet swings about the grab point like a pendulum of lengthPt under gravityPt (pt/s²), damped
+     * (1/s), at most maxAngle (rad); idleSway (rad) without a drag to follow. Shaking it (summed speed changes over
+     * ~shakeWindowS above dizzyShakePt pt/s) makes it dizzy for dizzyS. Longer = lazier swings.
+     */
+    held: {
+      lengthPt: 80,
+      gravityPt: 2600,
+      damping: 3.5,
+      maxAngle: 0.9,
+      idleSway: 0.05,
+      shakeWindowS: 0.5,
+      dizzyShakePt: 9000,
+      dizzyS: 1.5,
+      armsOut: 0.25,
+      feetDrop: 0.05,
+    },
+    /** Celebrate (§6.4): one jump with a full spin per periodS, height (units), arms up (rad), fast antenna wiggle (Hz, rad). */
+    celebrate: { periodS: 1.2, jump: 0.25, armsUp: 2.4, antennaWiggleHz: 8, antennaWiggle: 0.35 },
+    /** Peek (§6.4): leans out (rad), one arm up on the edge (rad). */
+    peek: { lean: 0.35, armUp: 2.2 },
+    /** Greet (§10.1; not in the §6.4 table): one arm waves (rad up, Hz, ± rad), a small bounce (units). */
+    greet: { armUp: 2.3, waveHz: 3, wave: 0.45, bounceAmp: 0.02 },
+    /** Jump (§10.1; not in the §6.4 table): crouch then stretch per periodS (scale), lift (units), arms up (rad). */
+    jump: { periodS: 0.9, crouch: 0.85, stretch: 1.1, lift: 0.18, armsUp: 1.4 },
+    /**
+     * Mood cues (§6.4), layered on any state: hungry antenna droop (rad) and amber light blink (Hz); sleepy idle runs
+     * at sleepyRate of its speed and yawns (gap, duration s); stuffed burps (gap, duration s); happy hops (units) or
+     * wiggles (rad) now and then (gap, duration s); bored glances around more often (gap s).
+     */
+    mood: {
+      hungryAntenna: -0.9,
+      amberBlinkHz: 3,
+      sleepyRate: 0.6,
+      yawnGapS: [10, 20],
+      yawnS: 1.2,
+      burpGapS: [8, 15],
+      burpS: 0.5,
+      happyGapS: [6, 12],
+      happyS: 0.4,
+      hop: 0.06,
+      wiggle: 0.12,
+      boredGlanceGapS: [2, 4],
+    },
+    /** Animated face overlays (zzz, loading, static, heart-pop) step this many frames per second (§6.3). */
+    face: { frameHz: 8 },
+    /**
+     * Dust (§6.4 "dusty"): grey specks on the body, as many as level × maxSpecks, shown from visibleFrom (§9.1: dust
+     * ≥ 30 → visible). radius in scene units. More specks = reads dustier.
+     */
+    dust: { visibleFrom: 0.3, maxSpecks: 36, radius: 0.028, color: '#8C8A7E', seed: 7 },
     /**
      * Rest emissive intensities of the glowing bits (§6.1). M2 animates them: the antenna tip
      * flashes while eating, the power light dims asleep, the amber light blinks when hungry.

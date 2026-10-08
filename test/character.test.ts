@@ -404,7 +404,9 @@ describe('buildBitbot: §6.1 construction', () => {
     bodyOnly.root.traverse((o) => {
       if (o instanceof THREE.Mesh && o.layers.isEnabled(0)) drawn.push(o.name)
     })
-    expect(drawn).toEqual(['part:body'])
+    // The body carries its dust specks (§6.4 "dusty"; hidden until dust shows).
+    expect(drawn).toEqual(['part:body', 'dust'])
+    expect(bodyOnly.dust?.count).toBe(0)
     expect(bodyOnly.face).toBeNull()
     expect(bodyOnly.shadow).toBeNull()
     bodyOnly.dispose()

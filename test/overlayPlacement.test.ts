@@ -347,7 +347,7 @@ describe('OverlayModel: placement and frames', () => {
   it('draws nothing and hit-tests nothing before the first state', () => {
     const d = new Driver()
     expect(d.frameRequests).toBe(0)
-    expect(d.frame(Driver.at(0))).toEqual({ transform: null, render: null, reveal: false, again: false })
+    expect(d.frame(Driver.at(0))).toEqual({ transform: null, render: null, reveal: false, again: false, wakeAt: null })
     d.cursor(ON_PET, T)
     d.move(ON_PET, T + 100)
     expect(d.hitTests).toHaveLength(0)
@@ -825,7 +825,7 @@ describe('OverlayModel: shown, hidden, configuration and context loss', () => {
     expect(d.model.visible).toBe(false)
     expect(d.model.pressed).toBe(false)
     expect(d.model.hovering).toBe(false)
-    expect(d.frame(T + 1)).toEqual({ transform: null, render: null, reveal: false, again: false })
+    expect(d.frame(T + 1)).toEqual({ transform: null, render: null, reveal: false, again: false, wakeAt: null })
     const requests = d.frameRequests
     const m = mainAt(T + 400)
     d.state(m, 900)

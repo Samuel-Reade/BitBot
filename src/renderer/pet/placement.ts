@@ -10,12 +10,18 @@
 //   dispatched with the grab area's own frames, after the overlay's frame at the same vsync, so a drag drawn from them
 //   lags the cursor by one frame (measured by the dev check, src/main/dev/overlayCheck.ts).
 //
+// - Animation: what main says about the pet (state, mood, dust, look, facing; the dev panel's overrides) and the press
+//   go to the animator (character/animator.ts) when its pose is due; it says whether anything changed (render) and
+//   when it next changes on its own (another frame now, or a timer for later), capped at the state's frame rate.
+//
 // OverlayModel holds that state; the small functions above it are its rules, exported so tests pin each one down.
 
-import { clampToArea, distance, type PetArea, type Point } from '../../shared/geometry'
+import type { FaceOverride } from '../../shared/faceStates'
+import { clampToArea, distance, type Box, type PetArea, type Point } from '../../shared/geometry'
 import { pushTimed, sampleBuffer, type TimedPoint } from '../../shared/interpolation'
 import { IPC } from '../../shared/ipc'
 import {
+  isDevPetMsg,
   isPetConfig,
   isPetCursorMsg,
   isPetHoverResetMsg,
@@ -29,6 +35,8 @@ import {
   type PetPointerMsg,
 } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
+import type { BehaviorState, IdleMode, LookDirection, Mood } from '../../shared/types'
+import type { AnimInput, AnimResult } from './character/animator'
 
 // ---- Placement rules -------------------------------------------------------------------------
 
@@ -119,6 +127,23 @@ export interface FrameNeeds {
   newestStateT: number | null
 }
 
+/**
+ * When the animation next needs a render (renderer ms): when the animator says its pose changes (`wakeAt`), but not
+ * before its frame-rate cap allows the next render after the last one. Null: not until something changes.
+ */
+export function nextAnimationAt(wakeAt: number | null, lastRenderTs: number | null, fps: number, slackMs: number): number | null {
+  if (wakeAt === null) return null
+  if (lastRenderTs === null || !(fps > 0)) return wakeAt
+  return Math.max(wakeAt, lastRenderTs + 1000 / fps - slackMs)
+}
+
+/** True if the hit test's canvas-local point is inside the pet's measured box (main's grab area and safety net use it). */
+export function insideBox(local: Point, anchor: Point, box: Box): boolean {
+  const x = local.x - anchor.x
+  const y = local.y - anchor.y
+  return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom
+}
+
 /** True if another animation frame is needed; false lets the loop stop until something changes (render on demand, §11). */
 export function frameNeeded(needs: FrameNeeds, starveToleranceMs: number): boolean {
   if (needs.pressed || needs.dropHold || needs.renderDue) return true
@@ -180,6 +205,8 @@ export interface GrabMouseEvent {
 export interface OverlayModelDeps {
   /** pet.hitTest: is the canvas-local point (CSS px, inside the canvas) over the pet's silhouette? */
   hitTest(x: number, y: number): boolean
+  /** The animator: poses the rig for frame time `ts` (renderer ms). Absent: the pet never animates. */
+  animate?(input: AnimInput, ts: number): AnimResult
   /** An overlay → main message (window.bitbot.send). */
   send(channel: string, payload: unknown): void
   /** Asks for one animation frame; repeated requests before it runs are one request. */
@@ -205,11 +232,22 @@ export interface FramePlan {
   reveal: boolean
   /** Ask for another frame. */
   again: boolean
+  /** No frame needed now, but the animation needs one at this renderer time (ms): set a timer. Null: none. */
+  wakeAt: number | null
 }
 
-const IDLE_PLAN: Readonly<FramePlan> = { transform: null, render: null, reveal: false, again: false }
+const IDLE_PLAN: Readonly<FramePlan> = { transform: null, render: null, reveal: false, again: false, wakeAt: null }
 
-interface BufferedState extends TimedPoint {
+/** What a state says about the pet besides where it is. */
+interface StateLook {
+  state: BehaviorState
+  mood: Mood
+  dust: number
+  look: LookDirection | null
+  facing: 1 | -1
+}
+
+interface BufferedState extends TimedPoint, StateLook {
   supportY: number | null
 }
 
@@ -226,6 +264,8 @@ interface Press {
   snapSeen: boolean
   /** Raw pointer moves came during this press: they drive it, and the frame-aligned mousemoves are left out. */
   raw: boolean
+  /** The state the pet showed when pressed: a click (no drag yet) keeps showing it. */
+  stateAtStart: BehaviorState
 }
 
 interface Placement {
@@ -270,6 +310,17 @@ export class OverlayModel {
   private lastFrameTs: number | null = null
   /** Time of the newest grab-area mousemove of the press not drawn yet (dev stats). */
   private pendingInputAt: number | null = null
+  /** The pet's box (PetReadyMsg.petBox): hit tests outside it never count, whatever an animation draws there. */
+  private petBox: Box | null = null
+  // Animation (see the header).
+  private devFace: FaceOverride | null = null
+  private idleMode: IdleMode = tuning.anim.idleMode
+  private animInput: AnimInput | null = null
+  private animDirty = true
+  private animWakeAt: number | null = null
+  private animFps: number = tuning.render.fps.moving
+  private shadowScale = 1
+  private lastLook: StateLook | null = null
 
   private readonly counters = {
     frames: 0,
@@ -355,8 +406,17 @@ export class OverlayModel {
       this.dropHold = null
       if (this.press) this.press.snapSeen = true
     }
-    // M1 draws the default facing (+1) only: turning comes with walking (M3), so raw.facing is not used yet.
-    const state: BufferedState = { t: raw.t, x: raw.x, y: raw.y, supportY: raw.supportY }
+    const state: BufferedState = {
+      t: raw.t,
+      x: raw.x,
+      y: raw.y,
+      supportY: raw.supportY,
+      state: raw.state,
+      mood: raw.mood,
+      dust: raw.dust,
+      look: raw.look,
+      facing: raw.facing,
+    }
     pushTimed(this.states, state, config.stepMs, tuning.overlay.stateBufferSize)
     this.supportY = raw.supportY
     this.requestFrame()
@@ -411,7 +471,25 @@ export class OverlayModel {
     }
     this.shown = true
     this.renderPending = true
+    this.animDirty = true
     this.requestFrame()
+  }
+
+  /** debug:pet (dev builds): the dev panel's face override and idle style. */
+  onDevPet(raw: unknown): void {
+    if (!isDevPetMsg(raw)) {
+      this.deps.log('warning', 'malformed debug:pet ignored')
+      return
+    }
+    this.devFace = raw.face
+    this.idleMode = raw.idleMode
+    this.animDirty = true
+    this.requestFrame()
+  }
+
+  /** The pet's measured box (relative to the ground-contact point, pt), as sent in pet:ready. */
+  setPetBox(box: Box): void {
+    this.petBox = { ...box }
   }
 
   /** Display change or the pet's area became known: adopt it, redraw, then confirm with pet:drawn. */
@@ -441,6 +519,7 @@ export class OverlayModel {
   /** GPU process restart, wake, unlock, pixel ratio change: draw again even though nothing changed. */
   onRedraw(): void {
     this.renderPending = true
+    this.animDirty = true
     this.requestFrame()
   }
 
@@ -503,6 +582,7 @@ export class OverlayModel {
       maxMovePt: 0,
       snapSeen: false,
       raw: false,
+      stateAtStart: this.lastLook?.state ?? 'idle',
     }
     this.dropHold = null
     this.sendPointer({
@@ -573,12 +653,16 @@ export class OverlayModel {
         this.transform = next
         transform = next
       }
-      shadow = contactShadowFor(this.supportY, ground.y, tuning.overlay.shadowFadePt)
+    }
+    const slackMs = tuning.overlay.renderIntervalSlackMs
+    this.animateIfDue(ts, renderT, slackMs)
+    if (ground) {
+      shadow = scaledShadow(contactShadowFor(this.supportY, ground.y, tuning.overlay.shadowFadePt), this.shadowScale)
       if (revealNow || !sameShadow(shadow, this.renderedShadow)) this.renderPending = true
     }
 
     const canRender = this.renderPending && !this.contextLost
-    const allowed = renderAllowed(this.lastRenderTs, ts, tuning.render.fps.moving, tuning.overlay.renderIntervalSlackMs)
+    const allowed = renderAllowed(this.lastRenderTs, ts, tuning.render.fps.moving, slackMs)
     const render = canRender && allowed ? { ...shadow } : null
     const reveal = revealNow && render !== null
     if (reveal) this.revealed = true
@@ -597,9 +681,19 @@ export class OverlayModel {
       renderT,
       newestStateT: newest?.t ?? null,
     }
-    const again = frameNeeded(needs, tuning.overlay.starveToleranceMs)
+    let again = frameNeeded(needs, tuning.overlay.starveToleranceMs)
+    // The animation's next render: another frame if it falls before the one after this, else a timer.
+    const renderTs = render ? ts : this.lastRenderTs
+    const animating = this.deps.animate !== undefined && this.states.length > 0 && !this.contextLost
+    const nextAnim = !animating
+      ? null
+      : this.animDirty
+        ? nextAnimationAt(ts, renderTs, this.animFps, slackMs)
+        : nextAnimationAt(this.animWakeAt, renderTs, this.animFps, slackMs)
+    if (!again && nextAnim !== null && nextAnim <= ts + FRAME_MS) again = true
+    const wakeAt = !again && nextAnim !== null ? nextAnim : null
     this.lastFrameTs = again ? ts : null
-    return { transform, render, reveal, again }
+    return { transform, render, reveal, again, wakeAt }
   }
 
   /** The planned render ran (`ts` its frame's timestamp; null outside the frame loop, e.g. the first frame). */
@@ -640,6 +734,51 @@ export class OverlayModel {
   }
 
   // ── internals ──
+
+  /**
+   * Gives the animator this frame's input and lets it pose the rig when the pose is due (its wake time came, or the
+   * input changed) and its frame-rate cap allows a render; a change of input is shown at once.
+   */
+  private animateIfDue(ts: number, renderT: number | null, slackMs: number): void {
+    const animate = this.deps.animate
+    const look = this.stateLookAt(renderT)
+    if (!animate || !look || this.contextLost) return
+    this.lastLook = look
+    const press = this.press
+    const dragging = press !== null && press.maxMovePt >= tuning.hitArea.clickMaxMovePt
+    const input: AnimInput = {
+      state: press ? (dragging ? 'held' : press.stateAtStart) : look.state,
+      mood: look.mood,
+      dust: look.dust,
+      look: look.look,
+      facing: look.facing,
+      held: press && dragging ? { grabX: press.localGrab.x, grabY: press.localGrab.y, mouseX: press.mouse.x } : null,
+      faceOverride: this.devFace,
+      idleMode: this.idleMode,
+    }
+    const changed = this.animInput === null || !sameAnimInput(input, this.animInput)
+    if (changed) this.animDirty = true
+    const due = this.animDirty || (this.animWakeAt !== null && ts + FRAME_MS / 2 >= this.animWakeAt)
+    const fps = changed ? tuning.render.fps.moving : this.animFps
+    if (!due || !renderAllowed(this.lastRenderTs, ts, fps, slackMs)) return
+    const result = animate(input, ts)
+    this.animInput = input
+    this.animDirty = false
+    this.animWakeAt = result.wakeAt
+    this.animFps = result.fps
+    this.shadowScale = result.shadowScale
+    if (result.changed) this.renderPending = true
+  }
+
+  /** What the pet is doing at render time `renderT`: the newest state at or before it (else the oldest); null: none yet. */
+  private stateLookAt(renderT: number | null): StateLook | null {
+    const states = this.states
+    if (states.length === 0) return null
+    let pick = states[0] as BufferedState
+    if (renderT === null) pick = states[states.length - 1] as BufferedState
+    else for (const s of states) if (s.t <= renderT + tuning.overlay.starveToleranceMs) pick = s
+    return { state: pick.state, mood: pick.mood, dust: pick.dust, look: pick.look, facing: pick.facing }
+  }
 
   private groundAt(ts: number, renderT: number | null): Point | null {
     const config = this.config
@@ -694,7 +833,11 @@ export class OverlayModel {
     const placement = this.placement
     if (!config || !placement || !this.revealed || !this.shown || this.contextLost || this.renderBroken) return false
     const local = canvasLocalPoint(p, config.overlay, placement.origin)
-    return insideCanvas(local, this.edge) && this.deps.hitTest(local.x, local.y)
+    if (!insideCanvas(local, this.edge)) return false
+    // An animation may draw the pet beyond the box main sizes the grab area and the safety net with (a jump, a
+    // tumble): those parts are not grabbable, so the two never disagree about where the pet is.
+    if (this.petBox && !insideBox(local, this.anchor, this.petBox)) return false
+    return this.deps.hitTest(local.x, local.y)
   }
 
   private setHover(over: boolean): void {
@@ -717,6 +860,31 @@ export class OverlayModel {
   private requestFrame(): void {
     if (this.config && this.shown) this.deps.requestFrame()
   }
+}
+
+/** One display frame at tuning.render.fps.moving, ms. */
+const FRAME_MS = 1000 / tuning.render.fps.moving
+
+/** The contact shadow with its strength scaled (an animation lifting the pet off its surface). */
+function scaledShadow(shadow: ContactShadowParams, scale: number): ContactShadowParams {
+  if (scale >= 1) return shadow
+  const strength = shadow.strength * Math.max(0, scale)
+  return strength > 0 ? { elevationPt: shadow.elevationPt, strength } : { elevationPt: 0, strength: 0 }
+}
+
+function sameAnimInput(a: AnimInput, b: AnimInput): boolean {
+  return (
+    a.state === b.state &&
+    a.mood === b.mood &&
+    a.dust === b.dust &&
+    a.look === b.look &&
+    a.facing === b.facing &&
+    a.idleMode === b.idleMode &&
+    a.faceOverride === b.faceOverride &&
+    a.held?.grabX === b.held?.grabX &&
+    a.held?.grabY === b.held?.grabY &&
+    a.held?.mouseX === b.held?.mouseX
+  )
 }
 
 /** `base` with the fields a pet:config-changed may change taken from `next` (size, palette, step and grab area stay). */

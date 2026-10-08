@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { tuning } from '../../../shared/tuning'
 import type { AttachPoint, CharacterSpec, Palette, PartId } from '../../../shared/types'
 import { createAttachPoints } from './attachPoints'
-import { ARM_CENTER_OFFSET, BASE_FORM, BODY_BOTTOM_Y, SPEC_ORIGIN_HEIGHT, armShoulder, type Side, type Vec3 } from './construction'
+import { ARM_CENTER_OFFSET, BASE_FORM, BODY_BOTTOM_Y, BODY_OUTER, SPEC_ORIGIN_HEIGHT, armShoulder, type Side, type Vec3 } from './construction'
 import { createFaceMaterial, createPixelFace, type CanvasFactory, type FaceState, type PixelFace } from './face'
 import { bulgedScreenGeometry, instancedMerge, mergeAll, roundedBoxGeometry } from './geometry'
 import {
@@ -83,6 +83,14 @@ export interface ContactShadow {
   clipTo(plane: THREE.Plane | null): void
 }
 
+/** §6.4 "dusty": grey specks on the body's top and sides, shown when dust is visible (the animator sets how many). */
+export interface DustSpecks {
+  readonly mesh: THREE.InstancedMesh
+  /** Specks shown (0 hides the mesh: no draw call); clamped to the number built. */
+  readonly count: number
+  setCount(count: number): void
+}
+
 export interface BitbotRig {
   /**
    * Root group. Its local origin is the pet's ground-contact point (bottom of the feet, centered).
@@ -107,6 +115,8 @@ export interface BitbotRig {
   face: PixelFace | null
   shadow: ContactShadow | null
   glow: BitbotGlow
+  /** Dust specks on the body (null if the body part is not built). */
+  dust: DustSpecks | null
   dispose(): void
 }
 
@@ -130,6 +140,7 @@ interface BuildContext {
   readonly glow: Mutable<BitbotGlow>
   face: PixelFace | null
   shadow: ContactShadow | null
+  dust: DustSpecks | null
   own<T extends { dispose(): void }>(resource: T): T
   standard(name: string, color: string, roughness: number): THREE.MeshStandardMaterial
   /** A part that glows in `color`: see BitbotGlow. */
@@ -148,7 +159,9 @@ const PART_BUILDERS: Record<PartId, PartBuilder> = {
   body(ctx) {
     const b = BASE_FORM.body
     ctx.proxy('body', bodyProxyGeometry(), ctx.bodyContent, b.position)
-    return ctx.mesh('part:body', roundedBoxGeometry(b), ctx.materials.primary, ctx.bodyContent, b.position)
+    const mesh = ctx.mesh('part:body', roundedBoxGeometry(b), ctx.materials.primary, ctx.bodyContent, b.position)
+    ctx.dust = dustSpecks(ctx)
+    return mesh
   },
 
   rearCasing(ctx) {
@@ -342,6 +355,7 @@ export function buildBitbot(spec: CharacterSpec, options: BuildBitbotOptions = {
     glow: { antennaTip: null, powerLight: null, amberLight: null },
     face: null,
     shadow: null,
+    dust: null,
     own,
     standard,
     glowing,
@@ -378,6 +392,7 @@ export function buildBitbot(spec: CharacterSpec, options: BuildBitbotOptions = {
     face: ctx.face,
     shadow: ctx.shadow,
     glow: ctx.glow,
+    dust: ctx.dust,
     dispose() {
       root.removeFromParent()
       for (const resource of owned) resource.dispose()
@@ -389,6 +404,77 @@ export function buildBitbot(spec: CharacterSpec, options: BuildBitbotOptions = {
 function named<T extends THREE.Object3D>(object: T, name: string): T {
   object.name = name
   return object
+}
+
+/**
+ * Dust specks: small flat grey dots lying on the body's flat top and side faces, at fixed pseudo-random spots
+ * (tuning.anim.dust.seed), so the same specks appear in the same order as dust builds up. One instanced mesh.
+ */
+function dustSpecks(ctx: BuildContext): DustSpecks {
+  const d = tuning.anim.dust
+  const outer = BODY_OUTER
+  // The flat parts of the faces (the rounded corners and bevels are left bare).
+  const r = BASE_FORM.body.r
+  const halfW = BASE_FORM.body.w / 2 - r
+  const halfH = BASE_FORM.body.h / 2 - r
+  const halfD = BASE_FORM.body.depth / 2 - d.radius
+  const random = mulberry32(d.seed)
+  const geometry = ctx.own(new THREE.CircleGeometry(d.radius, 8))
+  const material = ctx.own(new THREE.MeshStandardMaterial({ name: 'dust', color: d.color, roughness: 1, metalness: 0 }))
+  const mesh = new THREE.InstancedMesh(geometry, material, d.maxSpecks)
+  mesh.name = 'dust'
+  const lift = 0.002
+  const m = new THREE.Matrix4()
+  const q = new THREE.Quaternion()
+  const up = new THREE.Vector3(0, 0, 1)
+  for (let i = 0; i < d.maxSpecks; i++) {
+    // Half on the top face, a quarter on each side.
+    const face = i % 4 < 2 ? 'top' : i % 4 === 2 ? 'left' : 'right'
+    const a = random() * 2 - 1
+    const c = random() * 2 - 1
+    const scale = 0.6 + random() * 0.8
+    let position: THREE.Vector3
+    let normal: THREE.Vector3
+    if (face === 'top') {
+      position = new THREE.Vector3(a * halfW, outer.h / 2 + lift, c * halfD)
+      normal = new THREE.Vector3(0, 1, 0)
+    } else {
+      const side = face === 'left' ? 1 : -1
+      position = new THREE.Vector3(side * (outer.w / 2 + lift), a * halfH, c * halfD)
+      normal = new THREE.Vector3(side, 0, 0)
+    }
+    q.setFromUnitVectors(up, normal)
+    m.compose(position, q, new THREE.Vector3(scale, scale, scale))
+    mesh.setMatrixAt(i, m)
+  }
+  mesh.instanceMatrix.needsUpdate = true
+  mesh.count = 0
+  mesh.visible = false
+  ctx.bodyContent.add(mesh)
+  ctx.own({ dispose: () => mesh.dispose() })
+  return {
+    mesh,
+    get count() {
+      return mesh.count
+    },
+    setCount(count) {
+      const n = Math.max(0, Math.min(d.maxSpecks, Math.floor(Number.isFinite(count) ? count : 0)))
+      mesh.count = n
+      mesh.visible = n > 0
+    },
+  }
+}
+
+/** Deterministic pseudo-random numbers in [0, 1) (mulberry32). */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
 }
 
 function contactShadowControl(mesh: THREE.Mesh, material: THREE.MeshBasicMaterial): ContactShadow {

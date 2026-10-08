@@ -1,8 +1,9 @@
 // The production pet page: the overlay renderer of approach B, hardened (docs/decisions/overlay.md "Decision").
 // Main owns the simulation and says where the pet is (pet:state); this page draws it on a small canvas that it moves
-// with a compositor transform, renders WebGL only when something visible changed (§11 render on demand), and takes
-// the pet's mouse input through the grab area it opens (hitWindow.ts). The decisions are OverlayModel's
-// (placement.ts); this file wires them to the DOM, three.js and IPC.
+// with a compositor transform, animates it (character/animator.ts), renders WebGL only when something visible changed
+// (§11 render on demand) and sleeps on a timer until the animation's next change, and takes the pet's mouse input
+// through the grab area it opens (hitWindow.ts). The decisions are OverlayModel's (placement.ts); this file wires them
+// to the DOM, three.js and IPC.
 //
 // Fail closed: a malformed configuration starts nothing (no grab area, no pet:ready, so main recreates the page); a
 // grab area that did not open never reports a hover, so main never makes it clickable.
@@ -12,6 +13,7 @@ import type { Box } from '../../shared/geometry'
 import type { PetLogMsg, PetReadyMsg } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
 import type { PaletteId, PetSize } from '../../shared/types'
+import { Animator } from './character/animator'
 import { openGrabArea, type GrabArea } from './hitWindow'
 import { OverlayModel, STANDING_SHADOW, type ContactShadowParams } from './placement'
 import type { PetScene } from './scene'
@@ -64,14 +66,31 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
   canvas.style.willChange = 'transform'
 
   let rafId: number | null = null
+  let wakeTimer: ReturnType<typeof setTimeout> | null = null
   let grabArea: GrabArea | null = null
+  const clearWake = (): void => {
+    if (wakeTimer !== null) clearTimeout(wakeTimer)
+    wakeTimer = null
+  }
   const requestFrame = (): void => {
+    clearWake()
     if (rafId === null) rafId = requestAnimationFrame(onFrame)
   }
+  /** No frames until `at` (renderer ms): a timer asks for the frame just before it (the frame lands on the next vsync). */
+  const wakeAt = (at: number): void => {
+    clearWake()
+    const delay = Math.max(0, at - performance.now() - 1000 / tuning.render.fps.moving)
+    wakeTimer = setTimeout(() => {
+      wakeTimer = null
+      requestFrame()
+    }, delay)
+  }
+  const animator = new Animator(pet.rig, { ptPerUnit: pet.ptPerUnit })
   const model = new OverlayModel(
     { edge: pet.width, anchor: pet.anchor, devicePixelRatio: pixelRatio() },
     {
       hitTest: (x, y) => pet.hitTest(x, y),
+      animate: (input, ts) => animator.update(ts, input),
       send: (channel, payload) => bridge.send(channel, payload),
       requestFrame,
       log: reportToMain,
@@ -107,6 +126,7 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
       if (plan.render) render(ts, plan.render)
       if (plan.reveal) canvas.style.visibility = 'visible'
       if (plan.again) requestFrame()
+      else if (plan.wakeAt !== null) wakeAt(plan.wakeAt)
     })
   }
 
@@ -117,14 +137,17 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
   bridge.on(IPC.petVisible, (msg) =>
     guarded('pet:visible', () => {
       model.onVisible(msg)
-      if (!model.visible && rafId !== null) {
-        cancelAnimationFrame(rafId) // hidden: no frames until shown again
+      if (!model.visible) {
+        // Hidden: no frames until shown again.
+        if (rafId !== null) cancelAnimationFrame(rafId)
         rafId = null
+        clearWake()
       }
     }),
   )
   bridge.on(IPC.petConfigChanged, (msg) => guarded('pet:config-changed', () => model.onConfigChanged(msg)))
   bridge.on(IPC.petRedraw, () => guarded('pet:redraw', () => model.onRedraw()))
+  bridge.on(IPC.debugPet, (msg) => guarded('debug:pet', () => model.onDevPet(msg)))
   bridge.on(IPC.debugOverlayStatsRequest, () =>
     guarded('debug:overlay-stats-request', () => {
       if (model.debug) bridge.send(IPC.debugOverlayStats, model.stats(performance.now()))
@@ -164,10 +187,12 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
       // The first frame: the rest pose at the default 3/4 yaw (facing +1: M1 never turns, so no yaw easing).
       pet.rig.root.rotation.y = tuning.render.defaultYaw
       render(null, STANDING_SHADOW)
+      const petBox = measurePetBox(pet)
+      model.setPetBox(petBox)
       const ready: PetReadyMsg = {
         configSeq: config.configSeq,
         anchor: { x: pet.anchor.x, y: pet.anchor.y },
-        petBox: measurePetBox(pet),
+        petBox,
         edge: pet.width,
         devicePixelRatio: pixelRatio(),
         glRenderer: glRenderer(pet),
