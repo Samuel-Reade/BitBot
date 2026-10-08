@@ -27,7 +27,7 @@ import { IPC } from '../shared/ipc'
 import { DEFAULT_PALETTE_ID } from '../shared/palettes'
 import type { OverlayStatsMsg, PetCursorMsg, PetHoverResetMsg, PetReadyMsg, PetVisibleMsg } from '../shared/petProtocol'
 import { tuning } from '../shared/tuning'
-import type { LookDirection, PaletteId, PetReaction, PetReactionKind, PetSize } from '../shared/types'
+import type { BehaviorState, LookDirection, Mood, PaletteId, PetReaction, PetReactionKind, PetSize } from '../shared/types'
 import { boxFor } from '../shared/world'
 import { ActivationMonitor, type ActivationCounters, type FocusEventSource } from './activationMonitor'
 import { Debouncer } from './debounce'
@@ -47,6 +47,10 @@ import { lookDirection } from './sim/look'
 import { defaultSimTiming, globalScheduler, SimLoop } from './sim/loop'
 import { petAreaFor, type DisplayGeometry } from './sim/world/screenArea'
 import { ActivityIngest } from './activityIngest'
+import { PetLife } from './petLife'
+import { Brain } from './sim/brain/brain'
+import { LifeClock } from './sim/lifeClock'
+import { Needs } from './sim/needs/needs'
 import { Economy } from './economy/economy'
 import { InputTap } from './inputTap'
 import { WorldDriver } from './sim/worldDriver'
@@ -210,6 +214,12 @@ export class BitbotApp {
   /** The helper's input tap, kept in step with the Input Monitoring grant (inputTap.ts). */
   private readonly inputTap: InputTap
   private trayTimer: ReturnType<typeof setInterval> | null = null
+  /** The pet's life clock (real time × the dev time scale), needs, brain, and their coordinator (petLife.ts). */
+  private readonly lifeClock = new LifeClock(() => Date.now())
+  private readonly needs: Needs
+  private readonly brain: Brain
+  private readonly life: PetLife
+  private lifeTimer: ReturnType<typeof setInterval> | null = null
   /** Dev builds only. */
   private readonly devPanel: DevPanel | null
 
@@ -262,7 +272,23 @@ export class BitbotApp {
       forwardMouseMoves: tuning.hitArea.forwardMouseMoves,
       log: (line) => this.log(`[bitbot] ${line}`),
     })
-    this.economy = new Economy({ clock: { now: () => Date.now() } })
+    this.needs = new Needs(tuning.needs, tuning.economy.activity.activeIdleS, undefined, this.lifeClock.now())
+    this.brain = new Brain(tuning.brain, tuning.needs, Math.random)
+    // §9.3 stuffed halves every payout.
+    this.economy = new Economy({
+      clock: { now: () => Date.now() },
+      stuffedFactor: () => (this.needs.stuffed ? tuning.needs.stuffed.payoutFactor : 1),
+    })
+    this.life = new PetLife({
+      clock: this.lifeClock,
+      needs: this.needs,
+      brain: this.brain,
+      nutritionLifetime: () => this.economy.snapshot().nutritionLifetime,
+      dayKey: () => this.economy.snapshot().day,
+      systemIdleS: () => powerMonitor.getSystemIdleTime(),
+      wallNowMs: () => Date.now(),
+      react: (kind) => this.react(kind),
+    })
     this.ingest = new ActivityIngest({
       sink: this.economy,
       scheduler: globalScheduler,
@@ -308,11 +334,15 @@ export class BitbotApp {
         grab: () => {
           if (!this.loco) throw new Error('the pet has no place yet')
           this.pendingSend = null // the user has it now
+          this.life.interaction('drag')
           this.loco.grab()
         },
         release: (at, how) => {
           this.loco?.release(at, how)
-          if (how === 'click') this.react('petted')
+          if (how === 'click') {
+            this.react('petted')
+            this.life.interaction('pet')
+          }
         },
       },
       tuning: tuning.hitArea,
@@ -358,6 +388,7 @@ export class BitbotApp {
       afterSteps: (wakeMs) => {
         this.watchAppHidden()
         this.worldDriver.tick(wakeMs, this.loco)
+        this.tickBrain()
         if (this.dev) this.logMovement()
         this.interaction.tick(wakeMs)
         this.observe()
@@ -483,6 +514,8 @@ export class BitbotApp {
     // The tray's "Today:" line follows the economy (rebuilt only when a whole number changes).
     this.trayTimer = setInterval(() => this.guarded('tray refresh', () => this.tray.refresh()), tuning.app.trayRefreshMs)
     this.trayTimer.unref()
+    this.lifeTimer = setInterval(() => this.guarded('life tick', () => this.tickLife()), 1000 / tuning.needs.hiddenTickHz)
+    this.lifeTimer.unref()
     this.registerHotkeys()
     this.tray.create(this.isPetVisible())
     this.log('[bitbot] tray icon created')
@@ -543,8 +576,8 @@ export class BitbotApp {
     this.observe()
     this.petWindow.send(IPC.petVisible, { visible: false, epoch: this.interaction.epoch } satisfies PetVisibleMsg)
     this.petWindow.hide()
-    // SPEC-DEVIATION: §8.6 keeps the simulation running at a low rate while hidden (needs and economy still tick).
-    // Nothing ticks in M1, so the loop is parked; M6 adds the low-rate tick.
+    // §8.6 "while hidden, the simulation continues at low rate": the 30 Hz loop parks; the needs keep ticking on their own
+    // timer (tuning.needs.hiddenTickHz) and the economy on its activity sources.
     this.loop.stop()
     this.worldDriver.setHidden(true, clock.now(), this.loco)
     this.tray.update(false)
@@ -575,6 +608,8 @@ export class BitbotApp {
       this.inputTap.stop()
       if (this.trayTimer !== null) clearInterval(this.trayTimer)
       this.trayTimer = null
+      if (this.lifeTimer !== null) clearInterval(this.lifeTimer)
+      this.lifeTimer = null
     })
     await this.stopHelper()
     this.guarded('quit: dev panel', () => this.devPanel?.destroy())
@@ -649,7 +684,7 @@ export class BitbotApp {
   /** pet:state's fields: the simulation's, with the dev panel's overrides (dev/devOverrides.ts) applied. */
   private simState(loco: Locomotion): PetSimState {
     const s = loco.state
-    const f = overriddenFields(this.overrides.current, { behavior: s.behavior, facing: s.facing })
+    const f = this.shownFields()
     return {
       x: s.x,
       y: s.y,
@@ -722,6 +757,8 @@ export class BitbotApp {
   private sendTo(p: Point, why: string): void {
     const loco = this.loco
     if (!loco) return
+    // A command (§9.1 an interaction): the brain lets go of its own plan first.
+    this.life.interaction('command')
     const ok = loco.goTo(p)
     this.pendingSend = ok ? null : { ...p }
     if (this.dev) this.log(`[bitbot] ${why}: ${ok ? 'on its way' : 'it goes once it can'}`)
@@ -860,6 +897,7 @@ export class BitbotApp {
         pet: () => {
           this.activation.menuChoice('Pet')
           this.react('petted')
+          this.life.interaction('pet')
         },
         goHome: () => {
           this.activation.menuChoice('Go home')
@@ -946,7 +984,11 @@ export class BitbotApp {
         this.guarded('⌥⌘-click', () => this.sendTo({ x: m.x as number, y: m.y as number }, '⌥⌘-click'))
       }
     })
-    helper.on('appLaunched', (m) => this.ingest.appLaunched(m.bundleId, m.pid))
+    helper.on('appLaunched', (m) => {
+      this.ingest.appLaunched(m.bundleId, m.pid)
+      // §10.2 run to the new app's window and eat (not for Bitbot itself).
+      if (m.bundleId && m.pid !== process.pid && m.bundleId !== BUNDLE_ID) this.life.appLaunched(m.bundleId, this.worldDriver.windowTopFor(m.bundleId))
+    })
     helper.on('protocolError', (e) => {
       if (e.reason === 'versionMismatch') {
         this.log(`[bitbot] bitbot-helper speaks protocol ${e.actual}, Bitbot expects ${e.expected}: run npm run build:helper`)
@@ -1041,12 +1083,16 @@ export class BitbotApp {
 
   private watchSystem(): void {
     powerMonitor.on('lock-screen', () => this.cancel('the screen locked'))
-    powerMonitor.on('suspend', () => this.cancel('the Mac is going to sleep'))
+    powerMonitor.on('suspend', () => {
+      this.cancel('the Mac is going to sleep')
+      this.life.suspend()
+    })
     powerMonitor.on('user-did-resign-active', () => this.cancel('the user session became inactive'))
     powerMonitor.on('resume', () => {
       // Timers and the overlay's renderer both paused during the sleep: the pings missed meanwhile don't count.
       this.petWindow.resetWatchdog()
       this.redraw('woke from sleep')
+      this.life.resume()
       this.ingest.wake()
     })
     powerMonitor.on('unlock-screen', () => {
@@ -1159,9 +1205,8 @@ export class BitbotApp {
 
   /** The app's part of the panel's status. */
   private devPanelStatus(): DevPanelAppStatus {
-    const s = this.loco?.state
-    const behavior = s?.behavior ?? 'idle'
-    const f = overriddenFields(this.overrides.current, { behavior, facing: s?.facing ?? 1 })
+    const behavior = this.loco?.state.behavior ?? 'idle'
+    const f = this.shownFields()
     return {
       overrides: this.overrides.overrides,
       state: f.state,
@@ -1170,7 +1215,7 @@ export class BitbotApp {
       visible: this.isPetVisible(),
       world: this.worldDriver.status(this.loco),
       economy: this.economy.snapshot(),
-      life: null,
+      life: this.loco ? this.life.snapshot(this.overrides.current.timeScale) : null,
     }
   }
 
@@ -1181,11 +1226,50 @@ export class BitbotApp {
     this.applyOverridesToWorld()
   }
 
-  /** Wandering only while it is on and no state is forced; the debug view while "show world" is on (dev builds). */
+  /** The debug view while "show world" is on (dev builds); the life clock's time scale (1 in packaged builds). */
   private applyOverridesToWorld(): void {
     const o = this.overrides.current
-    this.worldDriver.setWandering(o.wander && o.state === null)
     this.worldDriver.setShowWorld(this.dev && o.showWorld)
+    this.lifeClock.setScale(this.dev ? o.timeScale : 1)
+  }
+
+  /**
+   * pet:state's state, facing, mood and dust (§10.1 resolveState over the brain's activity; the needs' mood and dust),
+   * with the dev panel's overrides where it forces something.
+   */
+  private shownFields(): { state: BehaviorState; facing: 1 | -1; mood: Mood; dust: number } {
+    const o = this.overrides.current
+    const s = this.loco?.state
+    const behavior = s?.behavior ?? 'idle'
+    const f = overriddenFields(o, { behavior, facing: s?.facing ?? 1, mood: this.life.mood(), dust: this.life.dust })
+    return { state: this.life.stateFor(behavior, o.state), facing: f.facing, mood: f.mood, dust: f.dust }
+  }
+
+  /** Each simulation wake: a launched app's window, the stuffed speed, the brain (when it acts by itself). */
+  private tickBrain(): void {
+    const loco = this.loco
+    if (!loco) return
+    const launch = this.life.pendingLaunch
+    if (launch) {
+      const top = this.worldDriver.windowTopFor(launch)
+      if (top) this.life.launchTarget(top)
+    }
+    loco.setSpeedFactor(this.life.stuffed ? tuning.move.stuffedSpeedFactor : 1)
+    const o = this.overrides.current
+    const a = loco.area
+    this.life.tickBrain(loco, {
+      cursor: this.opts.cursor ? this.opts.cursor() : screen.getCursorScreenPoint(),
+      home: { x: a.minX + tuning.brain.homeX * (a.maxX - a.minX), y: a.groundY },
+      foodSpot: this.worldDriver.foodSpot(),
+      enabled: o.wander && o.state === null && this.pendingSend === null,
+    })
+  }
+
+  /** The life tick (tuning.needs.hiddenTickHz, shown or hidden): needs, sleep, economy events, the asleep snapshot rate. */
+  private tickLife(): void {
+    this.life.advance()
+    for (const e of this.economy.drainEvents()) this.life.economyEvent(e)
+    this.worldDriver.setAsleep(this.life.asleep, clock.now(), this.loco)
   }
 
   /** debug:pet (dev builds only): the overrides the overlay applies itself. */

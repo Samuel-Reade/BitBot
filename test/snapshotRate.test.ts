@@ -21,6 +21,12 @@ describe('snapshotHz', () => {
     expect(snapshotHz({ hidden: false, riding: false, sinceRideMovedS: 0 }, W)).toBe(W.snapshotHz.normal)
   })
 
+  it('asleep: 1 Hz (§5.3), unless the window it sleeps on is moving', () => {
+    expect(snapshotHz({ hidden: false, riding: false, sinceRideMovedS: Infinity, asleep: true }, W)).toBe(W.snapshotHz.asleep)
+    expect(snapshotHz({ hidden: false, riding: true, sinceRideMovedS: 0, asleep: true }, W)).toBe(W.snapshotHz.attached)
+    expect(snapshotHz({ hidden: true, riding: false, sinceRideMovedS: Infinity, asleep: true }, W)).toBe(0)
+  })
+
   it('the decided rates: 4 Hz normally, 15 Hz riding a moving window', () => {
     expect(W.snapshotHz.normal).toBe(4)
     expect(W.snapshotHz.attached).toBe(15)

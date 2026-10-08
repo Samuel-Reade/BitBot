@@ -4,8 +4,8 @@
 // (test/worldDriver.test.ts).
 // - The scene: the primary display and the pet's measured box decide the area; a change rebuilds the world.
 // - Snapshot rate (snapshotRate.ts, decided adaptive): normal, fast while the ridden window moves, none while hidden.
-// - Wandering (sim/brain/wander.ts): M3's stand-in for Roam, while on and nothing is forced; the dev panel's actions
-//   send the pet somewhere once, or stop it.
+// - The dev panel's actions send the pet somewhere once (sim/brain/wander.ts pickTarget), or stop it. (What the pet
+//   does by itself is the brain's, petLife.ts.)
 // - The debug view (debug:world, dev builds): sent when the world or the route changes while it is shown.
 
 import type { DevPanelAction, DevWorldStatus } from '../../shared/devPanel'
@@ -13,7 +13,7 @@ import type { Box, Point } from '../../shared/geometry'
 import { tuning } from '../../shared/tuning'
 import type { DebugWorldMsg } from '../../shared/world'
 import type { HelperWindow } from '../helper/protocol'
-import { pickTarget, Wanderer, type WanderKind } from './brain/wander'
+import { pickTarget, type WanderKind } from './brain/wander'
 import type { Locomotion } from './locomotion/locomotion'
 import type { DisplayGeometry } from './world/screenArea'
 import { snapshotHz } from './world/snapshotRate'
@@ -38,14 +38,10 @@ export class WorldDriver {
   private hz: number | null = null
   private rideMovedAtMs = Number.NEGATIVE_INFINITY
   private hidden = false
-  private wandering = true
+  private asleep = false
   private showWorld = false
   private debugKey: string | null = null
-  private readonly wanderer: Wanderer
-
-  constructor(private readonly deps: WorldDriverDeps) {
-    this.wanderer = new Wanderer(tuning.brain.wander, deps.random)
-  }
+  constructor(private readonly deps: WorldDriverDeps) {}
 
   /** The newest world; null until the scene is known. */
   get world(): World | null {
@@ -85,9 +81,11 @@ export class WorldDriver {
     this.updateRate(tMs, loco)
   }
 
-  /** The pet wanders by itself (dev panel "wander", and nothing forced). */
-  setWandering(on: boolean): void {
-    this.wandering = on
+  /** The pet sleeps (§9.3): snapshots at the asleep rate. */
+  setAsleep(asleep: boolean, tMs: number, loco: Locomotion | null): void {
+    if (asleep === this.asleep) return
+    this.asleep = asleep
+    this.updateRate(tMs, loco)
   }
 
   /** The dev panel's "show world". Off sends one hidden message. */
@@ -103,15 +101,8 @@ export class WorldDriver {
     this.debugKey = null
   }
 
-  /** Every simulation wake: wandering, the snapshot rate, the debug view. */
+  /** Every simulation wake: the snapshot rate, the debug view. */
   tick(nowMs: number, loco: Locomotion | null): void {
-    const world = this.current
-    if (loco && world) {
-      const s = loco.state
-      const idle = s.behavior === 'idle' && loco.goal === null && this.wandering && !this.hidden
-      const target = this.wanderer.tick(nowMs / 1000, idle, world, { x: s.x, y: s.y })
-      if (target) loco.goTo(target)
-    }
     this.updateRate(nowMs, loco)
     this.sendDebug(loco)
   }
@@ -174,7 +165,12 @@ export class WorldDriver {
   private updateRate(nowMs: number, loco: Locomotion | null): void {
     if (!loco) return
     const hz = snapshotHz(
-      { hidden: this.hidden, riding: loco.state.windowId !== null, sinceRideMovedS: (nowMs - this.rideMovedAtMs) / 1000 },
+      {
+        hidden: this.hidden,
+        riding: loco.state.windowId !== null,
+        sinceRideMovedS: (nowMs - this.rideMovedAtMs) / 1000,
+        asleep: this.asleep,
+      },
       tuning.world,
     )
     if (hz === this.hz) return

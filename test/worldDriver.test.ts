@@ -6,7 +6,7 @@ import { WorldDriver } from '../src/main/sim/worldDriver'
 import { BOX, DISPLAY, PARAMS, W1, W3, win } from './worldFixtures'
 
 // The world as the running app keeps it (src/main/sim/worldDriver.ts): snapshots → world → the pet, the snapshot
-// rate, wandering, the dev panel's actions and the debug view, with a real Locomotion and fake helper outputs.
+// rate, the dev panel's actions and the debug view, with a real Locomotion and fake helper outputs.
 
 const STEP_S = 1 / tuning.sim.hz
 
@@ -61,8 +61,7 @@ describe('WorldDriver', () => {
     expect(rates.at(-1)).toBe(0)
     driver.setHidden(false, 20, loco)
     expect(rates.at(-1)).toBe(tuning.world.snapshotHz.normal)
-    // Onto W1's top (and staying there), then W1 moves under it.
-    driver.setWandering(false)
+    // Onto W1's top, then W1 moves under it.
     driver.action('goWindow', loco)
     run(15)
     expect(loco.state.surface).toMatch(/^top:1:/)
@@ -75,28 +74,8 @@ describe('WorldDriver', () => {
     expect(rates.filter((r, i) => i > 0 && r === rates[i - 1])).toEqual([])
   })
 
-  it('wanders while on and idle, never while hidden or off', () => {
-    const on = setup()
-    on.driver.onSnapshot([W1, W3], 0, on.loco)
-    on.run(tuning.brain.wander.pauseS[1] + 1)
-    expect(on.loco.goal ?? on.loco.state.x !== 300).toBeTruthy()
-
-    const off = setup()
-    off.driver.onSnapshot([W1, W3], 0, off.loco)
-    off.driver.setWandering(false)
-    off.run(20)
-    expect(off.loco.state.x).toBe(300)
-
-    const hidden = setup()
-    hidden.driver.onSnapshot([W1, W3], 0, hidden.loco)
-    hidden.driver.setHidden(true, 0, hidden.loco)
-    hidden.run(20)
-    expect(hidden.loco.state.x).toBe(300)
-  })
-
   it('the dev panel actions: onto a window, up a wall, somewhere, stop', () => {
     const { driver, loco, run } = setup()
-    driver.setWandering(false)
     driver.onSnapshot([W1, W3], 0, loco)
     driver.action('goWindow', loco)
     expect(loco.goal).not.toBeNull()
@@ -113,7 +92,6 @@ describe('WorldDriver', () => {
 
   it('a ridden window that closes drops the pet onto what is below', () => {
     const { driver, loco, run } = setup()
-    driver.setWandering(false)
     driver.onSnapshot([W1], 0, loco)
     driver.action('goWindow', loco)
     run(15)
@@ -125,7 +103,6 @@ describe('WorldDriver', () => {
 
   it('sends the debug view while shown, only when the world or the route changes; one hidden message when turned off', () => {
     const { driver, loco, debugMsgs, run } = setup()
-    driver.setWandering(false)
     driver.onSnapshot([W1], 0, loco)
     driver.tick(1, loco)
     expect(debugMsgs).toEqual([])
@@ -178,5 +155,16 @@ describe('WorldDriver food spots', () => {
     driver.onSnapshot([win(8, 100, 100, 50, 50, { bundleId: 'com.tiny' }), W1], 10, loco)
     expect(driver.windowTopFor('com.tiny')).toBeNull()
     expect(driver.foodSpot()?.y).toBe(W1.y)
+  })
+})
+
+describe('WorldDriver asleep', () => {
+  it('a sleeping pet asks for the asleep snapshot rate (§5.3)', () => {
+    const { driver, loco, rates } = setup()
+    driver.onSnapshot([W1], 0, loco)
+    driver.setAsleep(true, 10, loco)
+    expect(rates.at(-1)).toBe(tuning.world.snapshotHz.asleep)
+    driver.setAsleep(false, 20, loco)
+    expect(rates.at(-1)).toBe(tuning.world.snapshotHz.normal)
   })
 })
