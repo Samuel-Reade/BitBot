@@ -155,6 +155,13 @@ The helper's `diag` reports its *responsible process* (`responsibility_get_pid_r
    - ⌥⌘-click send-to-point is unavailable without the grant; the "Come here" hotkey still works.
 5. **Signing and bundle ID: decided 2026-10-08.** Keep `com.bitbot.desktop` as the bundle ID. Sign dev builds with a self-signed "Bitbot Dev" certificate so an Input Monitoring grant survives rebuilds (the user creates it once; steps in README "Permissions in dev").
 
+## M5: activity and economy (2026-10-08)
+
+- **Built:** the economy (src/main/economy/: anti-gaming, daily curves, ledger, rhythm and sparks, §14.2 tests), activity ingest (helper keys / clicks / scrolls, a 20 Hz cursor sample for mileage, app launches and activations, the system idle time for breaks, wake and unlock), the input tap kept in step with the grant (re-checked every 5 s without prompting), the tray's "Today:" line and Input Monitoring reminder, and the developer panel's economy table and inject buttons.
+- **Signing:** `npm run package:dir` (scripts/package-dir.sh) signs with a "Bitbot Dev" certificate and the hardened runtime when one exists (entitlements: only V8's JIT), ad-hoc otherwise. The certificate path has not run yet: the certificate doesn't exist on this Mac.
+- **Not observed yet:** real counting. Dev runs from VS Code have no Input Monitoring (by design); test with the packaged app (README "Testing counting").
+- **Cost:** the 20 Hz cursor sample costs main about 0.9 points of a core, also while the pet is hidden (hidden: 0.3% → 1.2%, over §11's 1%). For the M9 performance pass: reuse the simulation's cursor reads while the pet is shown, and lower the rate or pause while the Mac is idle.
+
 ## 7. Manual tests
 
 Exact steps: `spikes/README-input-helper.md`. Use the packaged app, launched with `open`. **Rebuild it first with `npm run package:dir`**: the copy in `dist/` predates Milestone 1 and still contains uiohook-napi. **Don't grant VS Code Input Monitoring.**

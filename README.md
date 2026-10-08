@@ -2,11 +2,12 @@
 
 A macOS desktop pet that lives on your screen and is fed by how you use your computer. The spec is [`BITBOT_SPEC.md`](BITBOT_SPEC.md).
 
-**Status:** Milestone 4 (directing) is built. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
+**Status:** Milestone 5 (activity & economy) is built. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
 - Bitbot runs as a menu-bar app with no Dock icon.
 - The Mint pet is alive: it blinks, looks at the cursor, stirs now and then, swings when you drag it, and squashes when it lands.
 - It wanders by itself (M3's stand-in for the M6 brain): it walks along the Dock, climbs the screen's edges and your windows' sides, jumps and drops between window tops, rides a window you move, and falls when you close or fling it.
 - You can direct it: throw it, pet it, call it with Come here (⌥⌘C), send it home (⌥⌘H), or ⌥⌘-click anywhere to send it there (needs Input Monitoring).
+- It is fed by how you use your Mac (§7): crumbs from keys, pellets from clicks and scrolls, treats from opening apps, mileage from moving the mouse, sparks from breaks and healthy habits. Only counts are kept, in memory until saving arrives (M8); never what you type or click. The menu-bar menu shows today's totals.
 - Every §6.4 state and mood and every §6.3 face can be shown from the developer panel (dev builds), which also draws the world it sees.
 - The tray menu and ⌥⌘B hide and show it.
 
@@ -93,7 +94,22 @@ macOS charges a permission to the app that *launched* the process.
 
 **Don't grant your terminal or VS Code Input Monitoring.** Everything running under it (extensions, agents, shells) could then read keystrokes. Test input with the packaged app instead (`npm run package:dir`, then `open dist/mac-arm64/Bitbot.app --args …`). Milestone 1 itself asks for no permission at all.
 
-Ad-hoc signed builds are expected to lose a grant whenever the app's contents change. Details: [`docs/decisions/input-and-helper.md`](docs/decisions/input-and-helper.md).
+Ad-hoc signed builds lose a grant whenever the app's contents change, so sign dev builds with a "Bitbot Dev" certificate (decided 2026-10-08). Create it once:
+
+1. Open **Keychain Access** (in Applications → Utilities).
+2. Menu **Keychain Access → Certificate Assistant → Create a Certificate…**
+3. Name: `Bitbot Dev`. Identity Type: **Self Signed Root**. Certificate Type: **Code Signing**. Click **Create**, then **Done**.
+
+From then on `npm run package:dir` signs with it (and the hardened runtime); without it, it signs ad-hoc and says so. Details: [`docs/decisions/input-and-helper.md`](docs/decisions/input-and-helper.md).
+
+**Testing counting with the packaged app:**
+
+```sh
+npm run package:dir
+open dist/mac-arm64/Bitbot.app
+```
+
+Then menu-bar icon → **Input Monitoring is off — Turn on…** → switch **Bitbot** on in System Settings. Counting starts by itself within a few seconds (the menu's "Today:" line starts moving). Quit the dev copy first if one runs: they share nothing, but both draw a pet.
 
 ## Where things live
 

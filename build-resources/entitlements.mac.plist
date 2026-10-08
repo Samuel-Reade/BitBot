@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for dev builds signed with the "Bitbot Dev" certificate (scripts/package-dir.sh).
+  Only what Electron's JavaScript engine needs to run (V8's JIT). Deliberately absent: allow-dyld-environment-variables
+  and disable-library-validation, which would let injected code run as Bitbot and inherit its Input Monitoring grant
+  (docs/decisions/input-and-helper.md §4).
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

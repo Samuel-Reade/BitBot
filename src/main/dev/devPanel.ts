@@ -12,6 +12,7 @@
 // Construct it only in dev builds: a packaged build registers no handler, so the channels don't exist there.
 
 import { BrowserWindow, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { isDevInject, type DevInject } from '../../shared/economy'
 import { isDevPanelAction, isDevPanelSet, type DevPanelAction, type DevPanelSet, type DevPanelStatus } from '../../shared/devPanel'
 import { IPC } from '../../shared/ipc'
 import type { OverlayStatsMsg } from '../../shared/petProtocol'
@@ -26,6 +27,8 @@ export interface DevPanelOptions {
   apply(set: DevPanelSet): void
   /** A validated debug:panel-action from the panel (go somewhere, stop). */
   action(action: DevPanelAction): void
+  /** A validated debug:panel-inject from the panel (§14.1 injected activity). */
+  inject(i: DevInject): void
   /** The overlay's counters (BitbotApp.requestOverlayStats); null if they don't come within timeoutMs. */
   requestOverlayStats(timeoutMs: number): Promise<OverlayStatsMsg | null>
   log(line: string): void
@@ -179,6 +182,22 @@ export class DevPanel {
         this.opts.apply(payload)
       } catch (err) {
         this.opts.warn(`${IPC.debugPanelSet} handler`, `[bitbot] ERROR handling ${IPC.debugPanelSet}: ${errorText(err)}`)
+      }
+      this.push(false)
+    })
+    ipcMain.on(IPC.debugPanelInject, (event: IpcMainEvent, payload: unknown) => {
+      if (!this.fromPanel(event)) {
+        this.opts.warn(`${IPC.debugPanelInject} sender`, `[bitbot] dev panel: ignored ${IPC.debugPanelInject} from another page`)
+        return
+      }
+      if (!isDevInject(payload)) {
+        this.opts.warn(`malformed ${IPC.debugPanelInject}`, `[bitbot] dev panel: ignored a malformed ${IPC.debugPanelInject}`)
+        return
+      }
+      try {
+        this.opts.inject(payload)
+      } catch (err) {
+        this.opts.warn(`${IPC.debugPanelInject} handler`, `[bitbot] ERROR handling ${IPC.debugPanelInject}: ${errorText(err)}`)
       }
       this.push(false)
     })

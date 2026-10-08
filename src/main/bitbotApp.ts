@@ -18,8 +18,9 @@
 // windows are only ever shown with showInactive(), and app.show() is never called (see showPet()).
 
 import { existsSync } from 'node:fs'
-import { app, globalShortcut, Menu, powerMonitor, screen, type BrowserWindow } from 'electron'
+import { app, globalShortcut, Menu, powerMonitor, screen, shell, type BrowserWindow } from 'electron'
 import type { DevPanelSet } from '../shared/devPanel'
+import type { DevInject, EconomySnapshot } from '../shared/economy'
 import type { Box, PetArea, Point } from '../shared/geometry'
 import { DEFAULT_HOTKEYS } from '../shared/hotkeys'
 import { IPC } from '../shared/ipc'
@@ -45,6 +46,9 @@ import { Locomotion } from './sim/locomotion/locomotion'
 import { lookDirection } from './sim/look'
 import { defaultSimTiming, globalScheduler, SimLoop } from './sim/loop'
 import { petAreaFor, type DisplayGeometry } from './sim/world/screenArea'
+import { ActivityIngest } from './activityIngest'
+import { Economy } from './economy/economy'
+import { InputTap } from './inputTap'
 import { WorldDriver } from './sim/worldDriver'
 import { worldParamsFor } from './sim/world/worldModel'
 import { ThrottledLog } from './throttledLog'
@@ -63,6 +67,12 @@ import { PetWindow } from './windows/petWindow'
 
 /** M1 draws the base form at the default size and palette (§6.1, §6.2); settings (M8) make both choosable. */
 const PET: { size: PetSize; paletteId: PaletteId } = { size: 'M', paletteId: DEFAULT_PALETTE_ID }
+
+/** Bitbot's bundle ID (electron-builder.yml appId; decided 2026-10-08): its own app events are not activity. */
+const BUNDLE_ID = 'com.bitbot.desktop'
+
+/** System Settings → Privacy & Security → Input Monitoring (§15.1). */
+const INPUT_MONITORING_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent'
 
 /** The simulation's clock: pet:state's t and sentAt, PetInteraction and the activation monitor all use it. */
 const clock = systemClock
@@ -147,6 +157,10 @@ export interface BitbotInspection {
   snapshotHz: number | null
   /** The newest reaction pet:state carries (petted, dizzy). */
   reaction: PetReaction | null
+  /** The economy now (§7). */
+  economy: EconomySnapshot
+  /** Injects activity as the developer panel would. */
+  inject(i: DevInject): void
   /**
    * Resolves with the pet:ready of the current page load once it came (at once if it already has), from a load
    * numbered minLoad or later (default 1; pass `loads + 1` to wait for the next one); rejects after timeoutMs.
@@ -189,6 +203,13 @@ export class BitbotApp {
   private readonly overrides = new DevOverrideState()
   /** The world from bitbot-helper's snapshots, the snapshot rate, wandering, the debug view (sim/worldDriver.ts). */
   private readonly worldDriver: WorldDriver
+  /** The economy (§7): every currency, anti-gaming, daily curves, the ledger (src/main/economy/). In memory until M8 saves it. */
+  private readonly economy: Economy
+  /** Every activity source, fed to the economy (activityIngest.ts). */
+  private readonly ingest: ActivityIngest
+  /** The helper's input tap, kept in step with the Input Monitoring grant (inputTap.ts). */
+  private readonly inputTap: InputTap
+  private trayTimer: ReturnType<typeof setInterval> | null = null
   /** Dev builds only. */
   private readonly devPanel: DevPanel | null
 
@@ -240,6 +261,32 @@ export class BitbotApp {
     this.hitWindow = new ElectronHitWindow<BrowserWindow>({
       forwardMouseMoves: tuning.hitArea.forwardMouseMoves,
       log: (line) => this.log(`[bitbot] ${line}`),
+    })
+    this.economy = new Economy({ clock: { now: () => Date.now() } })
+    this.ingest = new ActivityIngest({
+      sink: this.economy,
+      scheduler: globalScheduler,
+      cursor: options.cursor ?? (() => screen.getCursorScreenPoint()),
+      systemIdleS: () => powerMonitor.getSystemIdleTime(),
+      cursorPollHz: tuning.economy.cursorPollHz,
+      idlePollS: tuning.economy.activity.idlePollS,
+      ownBundleId: BUNDLE_ID,
+      ownPid: process.pid,
+      onError: (err, where) => this.throttled.log(`activity ${where}`, `[bitbot] activity (${where}) failed: ${errorText(err)}`),
+    })
+    this.inputTap = new InputTap({
+      granted: async () => (await this.requireHelper().inputAccess()).listen,
+      startTap: async () => {
+        const tap = await this.requireHelper().startInputTap({ keys: true, mouse: true })
+        return { active: tap.active, reason: tap.reason ?? tap.error }
+      },
+      scheduler: globalScheduler,
+      pollS: tuning.app.inputAccessPollS,
+      onChange: (counting) => {
+        this.ingest.setInputCounting(counting)
+        this.tray.refresh()
+      },
+      log: (line) => this.log(line),
     })
     this.worldDriver = new WorldDriver({
       params: worldParamsFor(tuning.render.bodyHeightPt[PET.size], process.pid),
@@ -380,6 +427,7 @@ export class BitbotApp {
           status: () => this.devPanelStatus(),
           apply: (set) => this.applyDevPanelSet(set),
           action: (action) => this.worldDriver.action(action, this.loco),
+          inject: (i) => this.ingest.inject(i),
           requestOverlayStats: (timeoutMs) => this.requestOverlayStats(timeoutMs),
           log: (line) => this.log(line),
           warn: (key, line) => this.throttled.log(key, line),
@@ -391,11 +439,17 @@ export class BitbotApp {
         toggleVisible: () => this.toggleVisible('tray menu'),
         comeHere: () => this.comeHere('tray menu'),
         goHome: () => this.goHome('tray menu'),
+        turnOnInputMonitoring: () => void this.turnOnInputMonitoring(),
         // Dev builds only: the menu has no "Developer…" without it.
         ...(devPanel ? { developer: () => this.guarded('dev panel', () => devPanel.open()) } : {}),
         quit: () => void this.quit('tray menu'),
       },
       accelerator: (action) => this.hotkeys.accelerator(action),
+      today: () => {
+        const c = this.economy.snapshot().currencies
+        return { crumbs: c.crumbs.earned, pellets: c.pellets.earned, treats: c.treats.earned, mileage: c.mileage.earned, sparks: c.sparks.earned }
+      },
+      inputMonitoringOff: () => this.helper !== null && !this.inputTap.isCounting,
     })
     this.relayout = new Debouncer(tuning.overlay.displayChangeDebounceMs, () => this.guarded('display re-layout', () => this.layOut()))
   }
@@ -425,6 +479,10 @@ export class BitbotApp {
     this.presented.restart(clock.now(), { x: b.x + b.width / 2, y: display.workArea.y + display.workArea.height })
     this.activation.start()
     this.startHelper()
+    this.ingest.start()
+    // The tray's "Today:" line follows the economy (rebuilt only when a whole number changes).
+    this.trayTimer = setInterval(() => this.guarded('tray refresh', () => this.tray.refresh()), tuning.app.trayRefreshMs)
+    this.trayTimer.unref()
     this.registerHotkeys()
     this.tray.create(this.isPetVisible())
     this.log('[bitbot] tray icon created')
@@ -512,6 +570,12 @@ export class BitbotApp {
     this.guarded('quit: hotkeys', () => this.hotkeys.unregisterAll())
     this.guarded('quit: tray', () => this.tray.destroy())
     this.guarded('quit: activation monitor', () => this.activation.stop())
+    this.guarded('quit: activity', () => {
+      this.ingest.stop()
+      this.inputTap.stop()
+      if (this.trayTimer !== null) clearInterval(this.trayTimer)
+      this.trayTimer = null
+    })
     await this.stopHelper()
     this.guarded('quit: dev panel', () => this.devPanel?.destroy())
     this.guarded('quit: windows', () => this.petWindow.destroy())
@@ -550,6 +614,8 @@ export class BitbotApp {
       refreshWorld: () => this.refreshWorld(),
       snapshotHz: this.worldDriver.snapshotHz,
       reaction: this.reaction ? { ...this.reaction } : null,
+      economy: this.economy.snapshot(),
+      inject: (i) => this.ingest.inject(i),
       waitForReady: (timeoutMs, minLoad = 1) => this.waitForReady(timeoutMs, minLoad),
       requestOverlayStats: (timeoutMs) => this.requestOverlayStats(timeoutMs),
     }
@@ -608,6 +674,26 @@ export class BitbotApp {
     if (line === this.lastMovementLine) return
     this.lastMovementLine = line
     this.log(`[bitbot] pet: ${line} at ${s.x.toFixed(0)},${s.y.toFixed(0)}`)
+  }
+
+  /** The running helper; throws without one (InputTap catches it as "not granted"). */
+  private requireHelper(): HelperClient {
+    const helper = this.helper
+    if (!helper) throw new Error('bitbot-helper is not running')
+    return helper
+  }
+
+  /**
+   * The tray's "Input Monitoring is off — Turn on…" (§7.1, §15.1): asks for it (macOS shows its prompt once, the first
+   * time), then opens its pane in System Settings. InputTap notices the grant by itself and starts counting.
+   */
+  private async turnOnInputMonitoring(): Promise<void> {
+    try {
+      await this.helper?.requestInputAccess()
+    } catch (err) {
+      this.throttled.log('request input access', `[bitbot] asking for Input Monitoring failed: ${errorText(err)}`)
+    }
+    await shell.openExternal(INPUT_MONITORING_PANE).catch((err: unknown) => this.log(`[bitbot] could not open System Settings: ${errorText(err)}`))
   }
 
   /** A reaction the overlay plays once (petting: §10.4; boredom −30 comes with the needs model, M6). */
@@ -851,14 +937,16 @@ export class BitbotApp {
     })
     helper.on('hello', (m) => {
       this.log(`[bitbot] helper hello: pid ${m.pid}, protocol ${m.version}`)
-      void this.startClickSend(helper)
+      this.inputTap.helperReady()
     })
-    // §10.4 Send to cursor: only ⌥⌘-clicks carry a location (the helper sends none for any other click).
+    // Keys, clicks and scrolls (§7.1, counted; never logged), and §10.4 Send to cursor: only ⌥⌘-clicks carry a location.
     helper.on('input', (m) => {
-      if (m.kind === 'mouseDown' && m.button === 0 && m.alt && m.cmd && m.x !== null && m.y !== null) {
+      this.ingest.input(m)
+      if (tuning.app.altCmdClickSend && m.kind === 'mouseDown' && m.button === 0 && m.alt && m.cmd && m.x !== null && m.y !== null) {
         this.guarded('⌥⌘-click', () => this.sendTo({ x: m.x as number, y: m.y as number }, '⌥⌘-click'))
       }
     })
+    helper.on('appLaunched', (m) => this.ingest.appLaunched(m.bundleId, m.pid))
     helper.on('protocolError', (e) => {
       if (e.reason === 'versionMismatch') {
         this.log(`[bitbot] bitbot-helper speaks protocol ${e.actual}, Bitbot expects ${e.expected}: run npm run build:helper`)
@@ -884,9 +972,10 @@ export class BitbotApp {
       this.interaction.invalidateOnScreen(tuning.hitArea.spaceSettleMs)
       this.observe()
     })
-    helper.on('appActivated', () => {
+    helper.on('appActivated', (m) => {
       this.interaction.invalidateOnScreen()
       this.observe()
+      this.ingest.appActivated(m.bundleId, m.pid)
     })
     // The world (§8): pushed at the rate WorldDriver sets (none until the pet exists, none while hidden).
     helper.on('snapshot', (m) => this.guarded('window snapshot', () => this.worldDriver.onSnapshot(this.worldWindows(m.windows), clock.now(), this.loco)))
@@ -894,28 +983,10 @@ export class BitbotApp {
     helper.start()
   }
 
-  /**
-   * ⌥⌘-click send (§10.4): the helper's listen-only tap for mouse presses, only with Input Monitoring granted (checked
-   * without prompting; onboarding asks, M8). Without it the feature is off and the Come here hotkey still works.
-   */
-  private async startClickSend(helper: HelperClient): Promise<void> {
-    if (!tuning.app.altCmdClickSend || this.quitting) return
-    try {
-      const access = await helper.inputAccess()
-      if (!access.listen) {
-        this.log('[bitbot] ⌥⌘-click send is off: Input Monitoring is not granted (Come here, ⌥⌘C, still works)')
-        return
-      }
-      const tap = await helper.startInputTap({ keys: false, mouse: true })
-      this.log(tap.active ? '[bitbot] ⌥⌘-click send is on' : `[bitbot] ⌥⌘-click send is off: ${tap.reason ?? tap.error ?? 'the tap did not start'}`)
-    } catch (err) {
-      this.throttled.log('click send', `[bitbot] ⌥⌘-click send could not start: ${errorText(err)}`)
-    }
-  }
-
   private onHelperExit(info: HelperExitInfo): void {
     const why = info.error ?? (info.signal !== null ? `signal ${info.signal}` : `exit code ${info.code ?? 'unknown'}`)
     this.log(`[bitbot] helper exited (${why})${info.willRestart ? `; restarting in ${info.restartInMs ?? '?'} ms` : ''}`)
+    this.inputTap.helperGone()
     // Unknown until the restarted helper reports again; the on-screen check says null (fail closed) meanwhile.
     this.fullscreenMsg = null
     this.applyFullscreen()
@@ -976,8 +1047,12 @@ export class BitbotApp {
       // Timers and the overlay's renderer both paused during the sleep: the pings missed meanwhile don't count.
       this.petWindow.resetWatchdog()
       this.redraw('woke from sleep')
+      this.ingest.wake()
     })
-    powerMonitor.on('unlock-screen', () => this.redraw('the screen unlocked'))
+    powerMonitor.on('unlock-screen', () => {
+      this.redraw('the screen unlocked')
+      this.ingest.wake()
+    })
     powerMonitor.on('user-did-become-active', () => this.redraw('the user session became active'))
     app.on('child-process-gone', (_event, details) => {
       if (details.type !== 'GPU') return
@@ -1094,7 +1169,7 @@ export class BitbotApp {
       look: this.look,
       visible: this.isPetVisible(),
       world: this.worldDriver.status(this.loco),
-      economy: null,
+      economy: this.economy.snapshot(),
     }
   }
 

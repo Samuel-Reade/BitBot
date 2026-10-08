@@ -372,6 +372,7 @@ class OverlayCheck {
     await this.interactionChecks(home)
     await this.directingChecks(home)
     await this.worldChecks(home)
+    this.economyChecks()
     if (this.opts.measure) await this.measurements(home)
     await this.reloadCheck()
     await this.finalChecks()
@@ -461,6 +462,24 @@ class OverlayCheck {
       `${this.describeZ(gone.z)}; gone from the list ${gone.ms.toFixed(0)} ms after it was hidden`,
     )
     this.check('…and click-through', !this.ix().mouseEnabled)
+  }
+
+  /**
+   * M5 economy (§7): the check's synthetic cursor has travelled (mileage counts, permission-free); keys, clicks and
+   * scrolls are counted only while the helper's tap runs (Input Monitoring); injected keys earn crumbs.
+   */
+  private economyChecks(): void {
+    const before = this.i().economy
+    this.check('economy: mouse travel counts (mileage, no permission needed)', before.currencies.mileage.raw > 0, `${before.currencies.mileage.raw.toFixed(0)} pt`)
+    this.check(
+      'economy: keys, clicks and scrolls only with Input Monitoring',
+      before.inputCounting || (before.currencies.crumbs.raw === 0 && before.currencies.pellets.raw === 0),
+      before.inputCounting ? 'counting (granted)' : 'not granted: nothing counted from them',
+    )
+    this.i().inject({ kind: 'keys' })
+    const after = this.i().economy
+    const crumbs = after.currencies.crumbs.earned - before.currencies.crumbs.earned
+    this.check('economy: injected keys earn crumbs (100 × 0.02 at the start of the day’s curve)', crumbs > 1.5 && crumbs <= 2.0001, `+${crumbs.toFixed(3)} crumbs`)
   }
 
   /**

@@ -223,6 +223,8 @@ export const tuning = {
      * on in System Settings starts counting by itself. Lower = counting starts sooner after the grant, more checks.
      */
     inputAccessPollS: 5,
+    /** The tray's "Today:" line is checked this often (the menu is rebuilt only when a whole number changed), ms. */
+    trayRefreshMs: 2000,
     /**
      * Quitting waits at most this long for bitbot-helper to exit, ms. Its own stop escalates quit → SIGTERM → SIGKILL,
      * tuning.helper.stopGraceMs apart, so this covers that with a little to spare. Lower = a faster quit that may leave

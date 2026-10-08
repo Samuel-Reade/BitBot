@@ -6,7 +6,8 @@
 import { Menu, nativeImage, Tray, type NativeImage } from 'electron'
 import { alphaToBgra, TRAY_ICON_PT, trayIconAlpha } from './trayIcon'
 import type { HotkeyAction } from '../../shared/hotkeys'
-import { trayMenuTemplate, type TrayMenuActions } from './trayMenu'
+import type { Currency } from '../../shared/types'
+import { formatToday, trayMenuTemplate, type TrayMenuActions } from './trayMenu'
 
 /** The template image at 1× and 2× (macOS tints a template for the menu bar's appearance; only its alpha counts). */
 export function trayImage(): NativeImage {
@@ -23,10 +24,17 @@ export interface BitbotTrayOptions {
   actions: TrayMenuActions
   /** A global shortcut when it registered (Hotkeys.accelerator), shown next to its item; null: none. */
   accelerator(action: HotkeyAction): string | null
+  /** Today's earned totals for the "Today:" line (§15.2); null: none yet. */
+  today(): Record<Currency, number> | null
+  /** Input Monitoring is not granted: the gentle reminder line (§7.1). */
+  inputMonitoringOff(): boolean
 }
 
 export class BitbotTray {
   private tray: Tray | null = null
+  private visible = true
+  /** What the menu shows besides `visible` (whole numbers): rebuilt only when it changes. */
+  private shownKey = ''
 
   constructor(private readonly opts: BitbotTrayOptions) {}
 
@@ -45,11 +53,33 @@ export class BitbotTray {
 
   /** Rebuilds the menu for the pet shown (`visible`) or hidden. */
   update(visible: boolean): void {
+    this.visible = visible
+    this.rebuild(true)
+  }
+
+  /** Rebuilds the menu only if what it shows changed (today's whole numbers, the reminder): call it as often as you like. */
+  refresh(): void {
+    this.rebuild(false)
+  }
+
+  private rebuild(force: boolean): void {
     const tray = this.tray
     if (!tray || tray.isDestroyed()) return
+    const today = this.opts.today()
+    const inputMonitoringOff = this.opts.inputMonitoringOff()
+    const key = `${this.visible}|${inputMonitoringOff}|${today ? formatToday(today) : ''}`
+    if (!force && key === this.shownKey) return
+    this.shownKey = key
     const a = (action: HotkeyAction): string | null => this.opts.accelerator(action)
     const template = trayMenuTemplate(
-      { visible, toggleAccelerator: a('toggleVisible'), comeHereAccelerator: a('comeHere'), goHomeAccelerator: a('goHome') },
+      {
+        visible: this.visible,
+        toggleAccelerator: a('toggleVisible'),
+        comeHereAccelerator: a('comeHere'),
+        goHomeAccelerator: a('goHome'),
+        today,
+        inputMonitoringOff,
+      },
       this.opts.actions,
     )
     tray.setContextMenu(Menu.buildFromTemplate(template))
