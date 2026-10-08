@@ -22,9 +22,9 @@ import type { BrainActivity, GoalKind } from '../../../shared/life'
 import type { BehaviorState } from '../../../shared/types'
 import type { LocomotionBehavior } from '../locomotion/locomotion'
 
-/** §10.3 modes. */
-export const PET_MODES = ['roam', 'stay', 'hangout'] as const
-export type PetMode = (typeof PET_MODES)[number]
+/** §10.3 modes (src/shared/modes.ts). */
+export { PET_MODES, type PetMode } from '../../../shared/modes'
+import type { PetMode } from '../../../shared/modes'
 
 /** Goals that move the pet somewhere for their own sake (eat and nap also move, but have an in-place form). */
 export const MOVEMENT_GOALS: readonly GoalKind[] = ['explore', 'climb', 'peek', 'approachCursor']
