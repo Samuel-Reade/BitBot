@@ -58,6 +58,8 @@ export interface PetInteractionTuning extends HitAreaTuning {
   onScreenRecheckMs: number
   /** An on-screen question unanswered this long is abandoned (counts as unknown), ms. */
   onScreenAnswerTimeoutMs: number
+  /** An on-screen answer older than this (since it was asked) counts as unknown, ms. */
+  onScreenMaxAgeMs: number
   /** The cursor is re-sent to the overlay when it or the drawn pet moved more than this, pt. */
   cursorStreamMinMovePt: number
   /** A press that moved less than this is a click (the pet stays exactly where it was), pt. */
@@ -142,7 +144,7 @@ export class PetInteraction {
   /** The open context menu (identity only); null when none is open. */
   private menu: object | null = null
 
-  // On-screen cache (design 3.2). The answer is kept with the time its question was asked.
+  // On-screen cache (onScreen.ts). The answer is kept with the time its question was asked.
   private onScreenAnswer: { value: boolean | null; askedAt: number } | null = null
   /** Bumped by every discard. */
   private onScreenGeneration = 0
@@ -313,8 +315,13 @@ export class PetInteraction {
 
     // 1. Is the overlay on screen?
     const near = petBox !== null && cursorNearPet(cursor, displayed, petBox, this.placed.shown ? T.farMarginPt : T.nearMarginPt)
-    this.updateOnScreen(now, near)
-    const onScreen = frame.fullscreen ? false : (this.onScreenAnswer?.value ?? null)
+    // Nothing to ask while the grab area must stay hidden anyway; coming back counts as coming near (a fresh question).
+    const usable = !frame.fullscreen && frame.overlayShown && frame.petDrawn
+    this.updateOnScreen(now, near && usable)
+    const answer = this.onScreenAnswer
+    // No answer, or only a stale one (a slow or stuck helper), means unknown: hidden unless engaged (hitArea.ts).
+    const fresh = answer !== null && now - answer.askedAt <= T.onScreenMaxAgeMs
+    const onScreen = frame.fullscreen ? false : fresh ? answer.value : null
     this.onScreenEffective = onScreen
 
     // 2 + 3. Where the grab area goes; an interaction that can't keep it is cancelled first.

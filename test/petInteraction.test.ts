@@ -21,6 +21,7 @@ const T: PetInteractionTuning = {
   safetyMarginPt: 8,
   onScreenRecheckMs: 500,
   onScreenAnswerTimeoutMs: 3000,
+  onScreenMaxAgeMs: 800,
   cursorStreamMinMovePt: 0.5,
   clickMaxMovePt: 4,
 }
@@ -869,6 +870,59 @@ describe('PetInteraction: on-screen check', () => {
     expect(h.pi.placement.shown).toBe(true)
   })
 
+  it('stops trusting an answer after onScreenMaxAgeMs while the next one is slow (fail closed)', async () => {
+    const h = new Harness()
+    await h.showOnPet() // #1 asked at 1033, answered true
+    h.tick(500) // asks #2, still pending
+    expect(h.rec.questions).toHaveLength(2)
+    const asked1 = 1033
+    h.tick(asked1 + T.onScreenMaxAgeMs - h.world.now) // #1 is exactly onScreenMaxAgeMs old: still trusted
+    expect(h.pi.placement.shown).toBe(true)
+    h.tick(1)
+    expect(h.pi.placement.shown).toBe(false)
+    expect(h.pi.overlayOnScreen).toBeNull()
+    expect(h.pi.mouseEnabled).toBe(false)
+    await h.answer(true, 1) // #2 arrives late but within onScreenAnswerTimeoutMs, and is itself still fresh
+    h.tick()
+    expect(h.pi.placement.shown).toBe(true)
+  })
+
+  it('a stale answer does not end a drag in progress', async () => {
+    const h = new Harness()
+    await h.showOnPet()
+    h.hover(true)
+    h.down(ON_PET)
+    expect(h.pi.held).toBe(true)
+    h.tick(500) // asks again; no answer comes
+    h.tick(400) // the last answer is now stale
+    expect(h.pi.overlayOnScreen).toBeNull()
+    expect(h.pi.held).toBe(true)
+    expect(h.pi.placement.shown).toBe(true)
+  })
+
+  it('does not ask the helper while the grab area must stay hidden anyway (fullscreen, overlay hidden, pet not drawn)', async () => {
+    for (const bad of ['fullscreen', 'overlayHidden', 'notDrawn'] as const) {
+      const h = new Harness()
+      h.world.cursor = { ...ON_PET }
+      if (bad === 'fullscreen') h.world.fullscreen = true
+      if (bad === 'overlayHidden') h.world.overlayShown = false
+      if (bad === 'notDrawn') h.world.petDrawn = false
+      for (let i = 0; i < 10; i++) h.tick(500)
+      expect(h.rec.questions, bad).toHaveLength(0)
+      expect(h.pi.placement.shown, bad).toBe(false)
+      // Back to normal: a fresh question, and shown only after its answer.
+      h.world.fullscreen = false
+      h.world.overlayShown = true
+      h.world.petDrawn = true
+      h.tick()
+      expect(h.rec.questions, bad).toHaveLength(1)
+      expect(h.pi.placement.shown, bad).toBe(false)
+      await h.answer(true)
+      h.tick()
+      expect(h.pi.placement.shown, bad).toBe(true)
+    }
+  })
+
   it('a null answer (helper down, unknown window) keeps the grab area hidden', async () => {
     const h = new Harness()
     h.world.cursor = { ...ON_PET }
@@ -884,7 +938,7 @@ describe('PetInteraction: on-screen check', () => {
     h.tick(500) // 1566: asks #2, which never gets an answer
     expect(h.rec.questions).toHaveLength(2)
     h.tick(2900)
-    expect(h.pi.placement.shown).toBe(true) // the cached answer, while #2 may still come
+    expect(h.pi.placement.shown).toBe(false) // #1's answer is too old to trust (onScreenMaxAgeMs)
     expect(h.rec.questions).toHaveLength(2)
     h.tick(100) // 3000 ms after #2
     expect(h.pi.placement.shown).toBe(false)
@@ -1299,126 +1353,137 @@ function mulberry32(seed: number): () => number {
 }
 
 describe('PetInteraction: invariants under random event sequences', () => {
-  /** Rare paths, counted over all seeds (the tests in a file run in order). */
-  const rare = { menuCancels: 0, heldCancels: 0, seeds: 0 }
+  const SEEDS = [1, 2, 3, 0xb17b07]
 
-  for (const seed of [1, 2, 3, 0xb17b07]) {
+  /** Plays 3000 random steps from `seed`, asserting the invariants after each; returns how often the rare paths ran. */
+  async function runSeed(seed: number): Promise<{ menuCancels: number; heldCancels: number }> {
+    const rand = mulberry32(seed)
+    const pick = <V>(items: readonly V[]): V => items[Math.floor(rand() * items.length)] as V
+    const h = new Harness()
+    const spots = [ON_PET, NEAR, EDGE, BETWEEN, FAR, { x: 445, y: 675 }, { x: 1400, y: 100 }]
+    const settled = new Set<Deferred<boolean | null>>()
+    const pending = (): Deferred<boolean | null>[] => h.rec.questions.filter((q) => !settled.has(q))
+    const settle = async (q: Deferred<boolean | null>, how: 'true' | 'false' | 'null' | 'reject'): Promise<void> => {
+      settled.add(q)
+      if (how === 'reject') q.reject(new Error('gone'))
+      else q.resolve(how === 'true' ? true : how === 'false' ? false : null)
+      await flush()
+    }
+
+    // Cumulative action weights (%), biased toward a user playing with the pet on a healthy system.
+    const weights = { tick: 25, cursor: 37, drawn: 41, hover: 53, down: 62, up: 69, menu: 72, native: 78, close: 81, cancel: 82.5, invalidate: 85, answer: 97 }
+    for (let step = 0; step < 3000; step++) {
+      const epochBefore = h.pi.epoch
+      const resetsBefore = h.rec.resets.length
+      const placeBefore = h.rec.placements.length
+      let ticked = false
+      const r = rand() * 100
+      const epochFor = (): number => (rand() < 0.8 ? h.pi.epoch : h.pi.epoch - 1 - Math.floor(rand() * 3))
+      if (r < weights.tick) {
+        h.tick(rand() < 0.05 ? 1000 + Math.floor(rand() * 3000) : 1 + Math.floor(rand() * 120))
+        ticked = true
+      } else if (r < weights.cursor) {
+        const spot = rand() < 0.4 ? ON_PET : pick(spots)
+        h.world.cursor = { x: spot.x + (rand() - 0.5) * 6, y: spot.y + (rand() - 0.5) * 6 }
+        if (h.pi.held) h.world.drawn = h.pi.sampleHeld(h.world.now) ?? h.world.drawn
+      } else if (r < weights.drawn) {
+        h.world.drawn = rand() < 0.5 ? { ...GROUND } : { x: GROUND.x + (rand() - 0.5) * 80, y: GROUND.y - rand() * 60 }
+      } else if (r < weights.hover) {
+        h.hover(rand() < 0.7, epochFor())
+      } else if (r < weights.down) {
+        h.down(h.world.cursor, epochFor(), rand() < 0.9 ? 0 : 2)
+      } else if (r < weights.up) {
+        h.up(h.world.cursor, epochFor(), rand() < 0.9 ? 0 : 2)
+      } else if (r < weights.menu) {
+        h.contextMenu(h.world.cursor, epochFor())
+      } else if (r < weights.native) {
+        h.native({
+          type: pick(['mouseDown', 'mouseUp', 'mouseMove', 'mouseLeave', 'contextMenu'] as const),
+          button: pick(['left', 'right', null] as const),
+          leftButtonDown: rand() < 0.5,
+          screen: rand() < 0.7 ? { ...h.world.cursor } : null,
+        })
+      } else if (r < weights.close) {
+        if (h.rec.menus.length > 0) h.closeMenu(rand() < 0.7 ? h.rec.menus.length - 1 : Math.floor(rand() * h.rec.menus.length))
+      } else if (r < weights.cancel) {
+        h.pi.cancel('random')
+      } else if (r < weights.invalidate) {
+        h.pi.invalidateOnScreen(rand() < 0.5 ? 0 : 700)
+        ticked = true
+      } else if (r < weights.answer) {
+        const open = pending()
+        if (open.length > 0) await settle(pick(open), pick(['true', 'true', 'true', 'false', 'null', 'reject'] as const))
+      } else {
+        // Mostly healthy: each condition goes bad only now and then.
+        h.world.overlayShown = rand() < 0.9
+        h.world.petDrawn = rand() < 0.9
+        h.world.fullscreen = rand() < 0.08
+        h.world.petBox = rand() < 0.92 ? BOX : null
+      }
+
+      const pi = h.pi
+      const where = `seed ${seed}, step ${step}`
+      // Hidden means click-through, always; and the port agrees with what PetInteraction believes.
+      if (!pi.placement.shown) expect(pi.mouseEnabled, where).toBe(false)
+      expect(h.portMouse, where).toBe(pi.mouseEnabled)
+      // An interaction never outlives its grab area.
+      if (pi.engaged) expect(pi.placement.shown, where).toBe(true)
+      // Every grab is released exactly once.
+      expect(h.rec.grabs - h.rec.releases.length, where).toBe(pi.held ? 1 : 0)
+      for (const at of h.rec.releases) expect(Number.isFinite(at.x) && Number.isFinite(at.y), where).toBe(true)
+      // Epochs only grow, every bump is announced, and the mouse is off after a bump.
+      expect(pi.epoch, where).toBeGreaterThanOrEqual(epochBefore)
+      expect(h.rec.resets.slice(resetsBefore), where).toEqual(
+        Array.from({ length: pi.epoch - epochBefore }, (_, i) => epochBefore + i + 1),
+      )
+      if (pi.epoch > epochBefore) expect(pi.mouseEnabled, where).toBe(false)
+      if (ticked) {
+        // One placement per wake, and it is what PetInteraction reports.
+        expect(h.rec.placements.length, where).toBe(placeBefore + 1)
+        expect(h.rec.placements.at(-1), where).toEqual(pi.placement)
+        const w = h.world
+        if (pi.placement.shown) {
+          expect(w.overlayShown && w.petDrawn && w.petBox !== null, where).toBe(true)
+          if (pi.engaged) expect(pi.overlayOnScreen, where).not.toBe(false)
+          else expect(pi.overlayOnScreen, where).toBe(true)
+          if (!pi.engaged && w.petBox) expect(cursorNearPet(w.cursor, w.drawn, w.petBox, T.farMarginPt), where).toBe(true)
+          if (w.petBox) {
+            const covered = inflateRect(boxAt(w.drawn, w.petBox), T.innerMarginPt)
+            expect(rectContainsRect(pi.placement.bounds, covered), where).toBe(true)
+          }
+        }
+        // The safety net holds after every wake.
+        if (pi.mouseEnabled && !pi.engaged && w.petBox) {
+          expect(cursorNearPet(w.cursor, w.drawn, w.petBox, T.safetyMarginPt), where).toBe(true)
+        }
+      }
+    }
+    // The sequence exercised the interesting states: hover, presses, drags, the menu.
+    expect(h.rec.mouse).toContain(true)
+    expect(h.rec.grabs).toBeGreaterThan(3)
+    expect(h.rec.releases.some((at) => at.x !== GROUND.x || at.y !== GROUND.y)).toBe(true)
+    expect(h.rec.menus.length).toBeGreaterThan(1)
+    expect(h.pi.epoch).toBeGreaterThan(20)
+    return {
+      menuCancels: h.rec.closeMenus,
+      heldCancels: h.rec.logs.filter((line) => line.includes('let the pet go where it is drawn')).length,
+    }
+  }
+
+  for (const seed of SEEDS) {
     it(`holds the safety invariants (seed ${seed})`, async () => {
-      const rand = mulberry32(seed)
-      const pick = <V>(items: readonly V[]): V => items[Math.floor(rand() * items.length)] as V
-      const h = new Harness()
-      const spots = [ON_PET, NEAR, EDGE, BETWEEN, FAR, { x: 445, y: 675 }, { x: 1400, y: 100 }]
-      const settled = new Set<Deferred<boolean | null>>()
-      const pending = (): Deferred<boolean | null>[] => h.rec.questions.filter((q) => !settled.has(q))
-      const settle = async (q: Deferred<boolean | null>, how: 'true' | 'false' | 'null' | 'reject'): Promise<void> => {
-        settled.add(q)
-        if (how === 'reject') q.reject(new Error('gone'))
-        else q.resolve(how === 'true' ? true : how === 'false' ? false : null)
-        await flush()
-      }
-
-      // Cumulative action weights (%), biased toward a user playing with the pet on a healthy system.
-      const weights = { tick: 25, cursor: 37, drawn: 41, hover: 53, down: 62, up: 69, menu: 72, native: 78, close: 81, cancel: 82.5, invalidate: 85, answer: 97 }
-      for (let step = 0; step < 3000; step++) {
-        const epochBefore = h.pi.epoch
-        const resetsBefore = h.rec.resets.length
-        const placeBefore = h.rec.placements.length
-        let ticked = false
-        const r = rand() * 100
-        const epochFor = (): number => (rand() < 0.8 ? h.pi.epoch : h.pi.epoch - 1 - Math.floor(rand() * 3))
-        if (r < weights.tick) {
-          h.tick(rand() < 0.05 ? 1000 + Math.floor(rand() * 3000) : 1 + Math.floor(rand() * 120))
-          ticked = true
-        } else if (r < weights.cursor) {
-          const spot = rand() < 0.4 ? ON_PET : pick(spots)
-          h.world.cursor = { x: spot.x + (rand() - 0.5) * 6, y: spot.y + (rand() - 0.5) * 6 }
-          if (h.pi.held) h.world.drawn = h.pi.sampleHeld(h.world.now) ?? h.world.drawn
-        } else if (r < weights.drawn) {
-          h.world.drawn = rand() < 0.5 ? { ...GROUND } : { x: GROUND.x + (rand() - 0.5) * 80, y: GROUND.y - rand() * 60 }
-        } else if (r < weights.hover) {
-          h.hover(rand() < 0.7, epochFor())
-        } else if (r < weights.down) {
-          h.down(h.world.cursor, epochFor(), rand() < 0.9 ? 0 : 2)
-        } else if (r < weights.up) {
-          h.up(h.world.cursor, epochFor(), rand() < 0.9 ? 0 : 2)
-        } else if (r < weights.menu) {
-          h.contextMenu(h.world.cursor, epochFor())
-        } else if (r < weights.native) {
-          h.native({
-            type: pick(['mouseDown', 'mouseUp', 'mouseMove', 'mouseLeave', 'contextMenu'] as const),
-            button: pick(['left', 'right', null] as const),
-            leftButtonDown: rand() < 0.5,
-            screen: rand() < 0.7 ? { ...h.world.cursor } : null,
-          })
-        } else if (r < weights.close) {
-          if (h.rec.menus.length > 0) h.closeMenu(rand() < 0.7 ? h.rec.menus.length - 1 : Math.floor(rand() * h.rec.menus.length))
-        } else if (r < weights.cancel) {
-          h.pi.cancel('random')
-        } else if (r < weights.invalidate) {
-          h.pi.invalidateOnScreen(rand() < 0.5 ? 0 : 700)
-          ticked = true
-        } else if (r < weights.answer) {
-          const open = pending()
-          if (open.length > 0) await settle(pick(open), pick(['true', 'true', 'true', 'false', 'null', 'reject'] as const))
-        } else {
-          // Mostly healthy: each condition goes bad only now and then.
-          h.world.overlayShown = rand() < 0.9
-          h.world.petDrawn = rand() < 0.9
-          h.world.fullscreen = rand() < 0.08
-          h.world.petBox = rand() < 0.92 ? BOX : null
-        }
-
-        const pi = h.pi
-        const where = `seed ${seed}, step ${step}`
-        // Hidden means click-through, always; and the port agrees with what PetInteraction believes.
-        if (!pi.placement.shown) expect(pi.mouseEnabled, where).toBe(false)
-        expect(h.portMouse, where).toBe(pi.mouseEnabled)
-        // An interaction never outlives its grab area.
-        if (pi.engaged) expect(pi.placement.shown, where).toBe(true)
-        // Every grab is released exactly once.
-        expect(h.rec.grabs - h.rec.releases.length, where).toBe(pi.held ? 1 : 0)
-        for (const at of h.rec.releases) expect(Number.isFinite(at.x) && Number.isFinite(at.y), where).toBe(true)
-        // Epochs only grow, every bump is announced, and the mouse is off after a bump.
-        expect(pi.epoch, where).toBeGreaterThanOrEqual(epochBefore)
-        expect(h.rec.resets.slice(resetsBefore), where).toEqual(
-          Array.from({ length: pi.epoch - epochBefore }, (_, i) => epochBefore + i + 1),
-        )
-        if (pi.epoch > epochBefore) expect(pi.mouseEnabled, where).toBe(false)
-        if (ticked) {
-          // One placement per wake, and it is what PetInteraction reports.
-          expect(h.rec.placements.length, where).toBe(placeBefore + 1)
-          expect(h.rec.placements.at(-1), where).toEqual(pi.placement)
-          const w = h.world
-          if (pi.placement.shown) {
-            expect(w.overlayShown && w.petDrawn && w.petBox !== null, where).toBe(true)
-            if (pi.engaged) expect(pi.overlayOnScreen, where).not.toBe(false)
-            else expect(pi.overlayOnScreen, where).toBe(true)
-            if (!pi.engaged && w.petBox) expect(cursorNearPet(w.cursor, w.drawn, w.petBox, T.farMarginPt), where).toBe(true)
-            if (w.petBox) {
-              const covered = inflateRect(boxAt(w.drawn, w.petBox), T.innerMarginPt)
-              expect(rectContainsRect(pi.placement.bounds, covered), where).toBe(true)
-            }
-          }
-          // The safety net holds after every wake.
-          if (pi.mouseEnabled && !pi.engaged && w.petBox) {
-            expect(cursorNearPet(w.cursor, w.drawn, w.petBox, T.safetyMarginPt), where).toBe(true)
-          }
-        }
-      }
-      // The sequence exercised the interesting states: hover, presses, drags, the menu.
-      expect(h.rec.mouse).toContain(true)
-      expect(h.rec.grabs).toBeGreaterThan(3)
-      expect(h.rec.releases.some((at) => at.x !== GROUND.x || at.y !== GROUND.y)).toBe(true)
-      expect(h.rec.menus.length).toBeGreaterThan(1)
-      expect(h.pi.epoch).toBeGreaterThan(20)
-      rare.menuCancels += h.rec.closeMenus
-      rare.heldCancels += h.rec.logs.filter((line) => line.includes('let the pet go where it is drawn')).length
-      rare.seeds++
+      await runSeed(seed)
     })
   }
 
-  it('reached a cancel of an open menu and of a held pet across the seeds', () => {
-    expect(rare.seeds).toBe(4)
+  // Runs the seeds itself, so it passes on its own too (vitest -t, .only, shuffled order).
+  it('reached a cancel of an open menu and of a held pet across the seeds', async () => {
+    const rare = { menuCancels: 0, heldCancels: 0 }
+    for (const seed of SEEDS) {
+      const counts = await runSeed(seed)
+      rare.menuCancels += counts.menuCancels
+      rare.heldCancels += counts.heldCancels
+    }
     expect(rare.menuCancels).toBeGreaterThan(0)
     expect(rare.heldCancels).toBeGreaterThan(0)
   })

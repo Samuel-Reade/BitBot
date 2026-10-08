@@ -133,8 +133,16 @@ export const tuning = {
     logMessageBudget: 50,
     /** Display changes arrive in bursts; the overlay is re-laid out this long after the last one, ms. */
     displayChangeDebounceMs: 100,
-    /** A crashed overlay renderer is recreated after this long, ms. */
+    /**
+     * A lost overlay (crashed, closed, never ready) is recreated after this long, ms; each further loss before a
+     * pet:ready doubles the wait, up to recreateMaxDelayMs. Lower = the pet comes back sooner after a one-off crash.
+     */
     recreateDelayMs: 1000,
+    /**
+     * The longest wait between recreations while the page keeps failing (e.g. WebGL unavailable), ms. Lower = recovers
+     * sooner once the cause goes away, but a page that can never load costs a new window and renderer more often.
+     */
+    recreateMaxDelayMs: 300_000,
     /** Main gives up waiting for the overlay's first frame after this long, ms (then recreates it). */
     readyTimeoutMs: 20_000,
   },
@@ -167,6 +175,13 @@ export const tuning = {
      * normally answers first. Lower = recovers sooner from a lost reply, but may give up on slow answers.
      */
     onScreenAnswerTimeoutMs: 3000,
+    /**
+     * An on-screen answer counts for this long after it was asked, ms; after that the grab area is hidden until a fresher
+     * one arrives (fail closed while the helper is slow), unless a drag or the menu is in progress. Above
+     * onScreenRecheckMs plus a normal reply (≈1 ms, p95 ≤ 8 ms). Lower = a stalled helper is distrusted sooner, but slow
+     * replies under load make the grab area blink off (and lose hover); higher = a stale "on screen" is trusted longer.
+     */
+    onScreenMaxAgeMs: 800,
     /** The cursor is re-sent to the overlay for a fresh hit test when it or the pet moved more than this, pt. */
     cursorStreamMinMovePt: 0.5,
     /** A press that moves less than this is a click, not a drag: the pet is put back where it was, pt (§10.4 petting is M4). */

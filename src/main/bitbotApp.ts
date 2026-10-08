@@ -1,5 +1,5 @@
-// Bitbot itself (BITBOT_SPEC.md §13 milestone 1 "Skeleton"; design §2–§3): the composition root that turns the tested
-// pieces into the running app.
+// Bitbot itself (BITBOT_SPEC.md §13 milestone 1 "Skeleton"; docs/decisions/overlay.md "Decision"): the composition root
+// that turns the tested pieces into the running app.
 // - The 30 Hz simulation in main (SimLoop + Locomotion), parked while the pet is hidden, and main's view of what the
 //   overlay draws (overlaySession.ts): pet:state only on change, never before the page's pet:ready.
 // - The overlay window and its page (PetWindow), the grab area (ElectronHitWindow), decided by PetInteraction (one
@@ -340,7 +340,7 @@ export class BitbotApp {
     this.started = true
     this.installErrorHandlers()
     this.installSignalHandlers()
-    // Agent app (§3, design §2): no application menu, so no key equivalents either.
+    // Agent app (§3): no application menu, so no key equivalents either.
     Menu.setApplicationMenu(null)
     const display = primaryDisplay()
     this.display = display

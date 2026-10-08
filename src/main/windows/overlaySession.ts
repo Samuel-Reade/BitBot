@@ -1,7 +1,9 @@
-// The overlay page's session as main sees it (design §3.3–3.4). Pure, so the rules are unit-tested
+// The overlay page's session as main sees it (messages in src/shared/petProtocol.ts). Pure, so the rules are unit-tested
 // (test/overlaySession.test.ts); the glue (bitbotApp.ts) feeds them.
 // - PetStateSender: pet:state goes out only when the pet's x, y, facing, state or supportY changed or a snap is
 //   pending, and never before the current page load's pet:ready (the first state after it is always a snap).
+//   SPEC-DEVIATION: §5.1 draws this link as "pose/state @ 30 Hz"; 30 Hz is the most it sends. A still pet sends nothing,
+//   so the overlay can stop drawing (§11 render on demand, decided (c) in docs/decisions/overlay.md).
 // - PresentedPoint: where the overlay draws the pet's ground-contact point, as main estimates it. The overlay renders
 //   one simulation step behind main's clock and interpolates (src/shared/interpolation.ts), so main does the same with
 //   its two newest steps. PetInteraction places the grab area and runs the safety net with it (drawnPoint: a held pet
@@ -10,6 +12,7 @@
 //   counts as drawn for its configSeq (the overlay sends no pet:drawn for the configuration it started with),
 //   pet:drawn reports every change after it (context lost / restored, a new configuration applied, a failed render),
 //   and a new page load forgets everything until its own pet:ready.
+// - recreateDelayMs: how long PetWindow waits before recreating a lost overlay, backing off while it keeps failing.
 
 import { isPoint, type PetArea, type Point } from '../../shared/geometry'
 import { interpolate, type TimedPoint } from '../../shared/interpolation'
@@ -197,6 +200,16 @@ export class DrawnGate {
     this.drawnSeq = configSeq
     this.ok = true
   }
+}
+
+/**
+ * The wait before recreating the overlay after `failures` losses in a row with no pet:ready in between (1 = the first):
+ * baseMs, doubling each time, capped at maxMs. A page that can never load (no WebGL) then costs a window and a renderer
+ * every few minutes, not every ~20 s for the rest of the day.
+ */
+export function recreateDelayMs(failures: number, baseMs: number, maxMs: number): number {
+  const doublings = Number.isFinite(failures) ? Math.min(Math.max(Math.floor(failures) - 1, 0), 30) : 0
+  return Math.min(baseMs * 2 ** doublings, maxMs)
 }
 
 /**

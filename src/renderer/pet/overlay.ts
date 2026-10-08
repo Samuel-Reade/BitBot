@@ -1,4 +1,4 @@
-// The production pet page: the overlay renderer of approach B, hardened (docs/decisions/overlay.md; design §3).
+// The production pet page: the overlay renderer of approach B, hardened (docs/decisions/overlay.md "Decision").
 // Main owns the simulation and says where the pet is (pet:state); this page draws it on a small canvas that it moves
 // with a compositor transform, renders WebGL only when something visible changed (§11 render on demand), and takes
 // the pet's mouse input through the grab area it opens (hitWindow.ts). The decisions are OverlayModel's

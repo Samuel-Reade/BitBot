@@ -1,4 +1,4 @@
-// The overlay window (design §3.1; docs/decisions/overlay.md "approach B, hardened"): one transparent window over the
+// The overlay window (docs/decisions/overlay.md "Decision": approach B, hardened): one transparent window over the
 // primary display's full bounds where the overlay page draws the pet on a small canvas it moves itself. It never takes
 // mouse input; the grab area (hitWindow.ts) does. This is the ONE factory for every (re)creation, so the settings and
 // their order can't drift. Type-only Electron imports: the BrowserWindow constructor is passed in, so the options and
@@ -8,7 +8,7 @@
 // - type 'panel' creates an ElectronNSPanel whose setCollectionBehavior: override ORs in CanJoinAllSpaces |
 //   FullScreenAuxiliary on every call, so a panel can never be kept off fullscreen Spaces. The overlay is therefore
 //   NOT a panel (no `type`): as a normal window, setVisibleOnAllWorkspaces(true, {visibleOnFullScreen: false}) keeps it
-//   off fullscreen Spaces, which macOS should also apply to Split View (manual check 4, design §9).
+//   off fullscreen Spaces, which macOS should also apply to Split View (docs/decisions/overlay.md manual check 4).
 // - Without 'panel', fullscreenable: false makes the constructor ADD FullScreenAuxiliary (SetFullScreenable), and
 //   setVisibleOnAllWorkspaces(true, {visibleOnFullScreen: false}) removes it again. So that call comes after
 //   construction, and NOTHING may call setFullScreenable() or setResizable() on the overlay afterwards: both re-add

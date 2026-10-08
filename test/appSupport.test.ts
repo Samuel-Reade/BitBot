@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Debouncer } from '../src/main/debounce'
+import { profileDirName, type Mode } from '../src/main/profiles'
 import { SignalGate } from '../src/main/signals'
 import type { Scheduler } from '../src/main/sim/loop'
 import { ThrottledLog } from '../src/main/throttledLog'
@@ -177,5 +178,26 @@ describe('ThrottledLog', () => {
       },
     })
     expect(t.log('k', 'line')).toBe(true)
+  })
+})
+
+describe('profileDirName: which profile each run uses', () => {
+  const modes: Mode[] = ['pet', 'snapshot', 'check', 'spike']
+
+  it('no dev run uses the packaged Bitbot’s profile (the default, null)', () => {
+    for (const mode of modes) expect(profileDirName(mode, false), mode).not.toBeNull()
+  })
+
+  it('a dev pet, the dev tools and the dev check each have their own', () => {
+    const dirs = ['pet', 'snapshot', 'check'].map((mode) => profileDirName(mode as Mode, false))
+    expect(new Set(dirs).size).toBe(3)
+    expect(profileDirName('spike', false)).toBe(profileDirName('snapshot', false))
+    expect(profileDirName('pet', false)).toBe('Bitbot-dev')
+  })
+
+  it('the packaged app keeps its own profile, also for the spike runs its permission tests need; the check never does', () => {
+    expect(profileDirName('pet', true)).toBeNull()
+    expect(profileDirName('spike', true)).toBeNull()
+    expect(profileDirName('check', true)).toBe('Bitbot-check')
   })
 })

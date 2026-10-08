@@ -1,19 +1,19 @@
-// The grab area's window in main (design §3.1): the small panel the overlay page opens with window.open, which main
-// shows over the pet only while the cursor is near it and makes take the mouse only over the pet. ElectronHitWindow is
-// PetInteraction's HitWindowPort: it applies PetInteraction's placement and mouse decisions to the window, skips
-// native calls when nothing changed, keeps the window directly above the overlay, and counts what it did for the dev
-// check. Type-only Electron imports: the windows are handed in, so it is unit-tested with fakes
+// The grab area's window in main (docs/decisions/overlay.md "Decision"): the small panel the overlay page opens with
+// window.open, which main shows over the pet only while the cursor is near it and makes take the mouse only over the
+// pet. ElectronHitWindow is PetInteraction's HitWindowPort: it applies PetInteraction's placement and mouse decisions
+// to the window, skips native calls when nothing changed, keeps the window directly above the overlay, and counts what
+// it did for the dev check. Type-only Electron imports: the windows are handed in, so it is unit-tested with fakes
 // (test/hitWindow.test.ts). petWindow.ts allows the window.open and wires the window's events.
 //
 // Why a panel: a click on a normal window activates the app (§2 "never steal focus"); Electron's type 'panel' (a
 // non-activating NSPanel; AppKit logs "NSWindow does not support nonactivating panel styleMask 0x80") is the only
-// non-native option. Whether its clicks truly never activate Bitbot is the manual focus gate (design §9 check 1),
-// which the activation monitor reports per interaction.
+// non-native option. Whether its clicks truly never activate Bitbot is the manual focus gate (docs/decisions/overlay.md
+// manual check 1), which the activation monitor reports per interaction.
 // SPEC-DEVIATION: §5.2 asks for setVisibleOnAllWorkspaces(true, {visibleOnFullScreen: false}). Electron's panel ORs
 // CanJoinAllSpaces | FullScreenAuxiliary into every setCollectionBehavior: call, so the panel joins fullscreen Spaces
 // whatever is passed (visibleOnFullScreen: true below says so). Hence the fail-closed on-screen check: main shows the
 // panel only while the helper confirms that the overlay, a normal window macOS keeps off fullscreen Spaces, is on
-// screen (design §3.2, PetInteraction).
+// screen (onScreen.ts, PetInteraction).
 
 import type { BrowserWindowConstructorOptions, HandlerDetails, MouseInputEvent } from 'electron'
 import { rectsEqual, type Rect } from '../../shared/geometry'
@@ -22,8 +22,8 @@ import { HIT_WINDOW_HIDDEN, type HitWindowPlacement, type HitWindowPort } from '
 import type { NativeMouseEvent } from './petInteraction'
 
 /**
- * overrideBrowserWindowOptions for the grab area's window.open (design §3.1). No preload: its document is an empty
- * about:blank page that the overlay page scripts directly (same origin, same renderer process).
+ * overrideBrowserWindowOptions for the grab area's window.open (docs/decisions/overlay.md "Decision"). No preload: its
+ * document is an empty about:blank page that the overlay page scripts directly (same origin, same renderer process).
  */
 export const HIT_WINDOW_OPTIONS: Readonly<BrowserWindowConstructorOptions> = Object.freeze({
   type: 'panel',

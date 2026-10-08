@@ -384,6 +384,9 @@ export class OverlayModel {
     }
     this.adoptEpoch(raw.epoch)
     this.hover = false
+    // Main's next cursor sample is the authority now: the grab area's older events must not make it ignored (main sends
+    // just one while the cursor and the pet stay still, so an ignored one would leave a dropped pet unclickable).
+    this.lastGrabEventAt = null
     if (this.press) {
       this.press = null
       this.pendingInputAt = null
@@ -515,8 +518,10 @@ export class OverlayModel {
   }
 
   onGrabUp(e: GrabMouseEvent, now: number): void {
+    // Only an up that ends a press is newer news than main's samples; a stray one (after a hover-reset) is not.
+    if (!this.press) return
     this.lastGrabEventAt = now
-    if (e.button === 0 && this.press) this.release({ x: e.screenX, y: e.screenY }, now)
+    if (e.button === 0) this.release({ x: e.screenX, y: e.screenY }, now)
   }
 
   onGrabContextMenu(e: GrabMouseEvent, now: number): void {

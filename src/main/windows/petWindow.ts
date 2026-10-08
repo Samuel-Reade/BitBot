@@ -1,13 +1,18 @@
-// The overlay window, its page and its IPC (design §3.1, §3.4). PetWindow owns the overlay BrowserWindow (made by the
-// overlayWindow.ts factory, for the first window and every recreation), loads the pet page with its size and palette,
-// answers each page load's pet:config with a new configuration (configSeq, a fresh grab-area name, the epoch, debug),
-// allows exactly that grab area's window.open (replacing security.ts's deny-all for the overlay only), hands the grab
-// area's window to ElectronHitWindow, tracks whether the pet is drawn for the current configSeq (DrawnGate), relays the
-// overlay's messages (validated, and only from the current overlay) and reports the page's lifecycle to the app:
+// The overlay window, its page and its IPC (docs/decisions/overlay.md "Decision"; messages in src/shared/petProtocol.ts).
+// PetWindow owns the overlay BrowserWindow (made by the overlayWindow.ts factory, for the first window and every
+// recreation), loads the pet page with its size and palette, answers each page load's pet:config with a new
+// configuration (configSeq, a fresh grab-area name, the epoch, debug), allows exactly that grab area's window.open
+// (replacing security.ts's deny-all for the overlay only), hands the grab area's window to ElectronHitWindow, tracks
+// whether the pet is drawn for the current configSeq (DrawnGate), relays the overlay's messages (validated, and only
+// from the current overlay) and reports the page's lifecycle to the app:
 // - a cross-document main-frame navigation after the first load (a reload), a renderer crash, a hang, the window
 //   closing, or no pet:ready within tuning.overlay.readyTimeoutMs: the page is gone (pageLost) until its next
 //   pet:ready, and its grab area is destroyed (after a crash it is crashed but not destroyed);
-// - a crash, a hang, a closed window or a missing ready also recreates the window after tuning.overlay.recreateDelayMs.
+// - a crash, a reported hang, a closed window or a missing ready also recreates the window after
+//   tuning.overlay.recreateDelayMs, backing off up to recreateMaxDelayMs while it keeps failing (recreateDelayMs()).
+//   A hang is only caught if Chromium reports it ('unresponsive'), and Chromium's hang monitor runs on input acks: the
+//   overlay never takes input, so after its first pet:ready a silent hang is not detected (docs/decisions/overlay.md
+//   "M1 code review").
 //
 // IPC is registered once for the app's lifetime: ipcMain.handle('pet:config') must exist before the page loads.
 
@@ -39,7 +44,7 @@ import { tuning } from '../../shared/tuning'
 import type { PaletteId, PetSize } from '../../shared/types'
 import { loadPage, preloadPath } from '../pages'
 import { grabAreaOpenAllowed, HIT_WINDOW_OPTIONS, toNativeMouseEvent, type ElectronHitWindow } from './hitWindow'
-import { DrawnGate } from './overlaySession'
+import { DrawnGate, recreateDelayMs } from './overlaySession'
 import { createOverlayWindow } from './overlayWindow'
 import type { NativeMouseEvent } from './petInteraction'
 
@@ -101,6 +106,8 @@ export class PetWindow {
   private navigations = 0
   private readyTimer: ReturnType<typeof setTimeout> | null = null
   private recreateTimer: ReturnType<typeof setTimeout> | null = null
+  /** Losses in a row without a pet:ready in between (backs off the recreation). */
+  private failures = 0
   private closed = false
   /** The newest configuration sent (pet:config reply or pet:config-changed). */
   private config: PetConfig | null = null
@@ -322,7 +329,8 @@ export class PetWindow {
     }
     if (this.closed) return
     this.clearRecreateTimer()
-    const delayMs = tuning.overlay.recreateDelayMs
+    this.failures++
+    const delayMs = recreateDelayMs(this.failures, tuning.overlay.recreateDelayMs, tuning.overlay.recreateMaxDelayMs)
     this.opts.log(`[bitbot] overlay: ${reason}; making a new window in ${delayMs} ms`)
     this.recreateTimer = setTimeout(() => {
       this.recreateTimer = null
@@ -366,6 +374,7 @@ export class PetWindow {
     })
     this.listen(IPC.petReady, isPetReadyMsg, (msg) => {
       this.clearReadyTimer()
+      this.failures = 0
       // There is no pet:drawn for the configuration a page starts with: its ready says it is drawn.
       this.drawnGate.ready(msg.configSeq)
       this.opts.events.ready(msg)

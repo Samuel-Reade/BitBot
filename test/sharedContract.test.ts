@@ -246,6 +246,12 @@ describe('pet overlay protocol', () => {
     for (const channel of Object.values(IPC)) expect(isAllowedChannel(channel), channel).toBe(true)
   })
 
+  it('the preload allowlist rejects everything without a listed prefix', () => {
+    for (const channel of ['', 'pet', 'PET:ready', ' pet:ready', 'xpet:ready', 'ELECTRON_BROWSER_REQUIRE', 'ELECTRON_BROWSER_WINDOW_ALERT']) {
+      expect(isAllowedChannel(channel), JSON.stringify(channel)).toBe(false)
+    }
+  })
+
   it('names one grab-area window per page load', () => {
     expect(HIT_WINDOW_URL).toBe('about:blank')
     expect(hitWindowName(1)).toBe(`${HIT_WINDOW_NAME_PREFIX}-1`)

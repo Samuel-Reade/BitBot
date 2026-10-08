@@ -608,6 +608,37 @@ describe('OverlayModel: press, drag and release', () => {
     expect(d.frame(Driver.at(m + STEP / 2)).transform).toBe(transformAt({ x: 905, y: 777.5 }))
   })
 
+  // Main sends one cursor sample on its next wake (≤ one step) after the reset, and none while cursor and pet stay still.
+  for (const order of ['up first', 'reset first'] as const) {
+    for (const after of [5, 20, STEP]) {
+      it(`after a drop, main's first cursor sample (+${after.toFixed(0)} ms, ${order}) makes the still pet clickable again`, () => {
+        const d = placed()
+        d.down(ON_PET, T)
+        d.move({ x: 900, y: 700 }, T + 5, 1)
+        d.frame(T + 6)
+        const tUp = T + 10
+        if (order === 'up first') {
+          d.up({ x: 900, y: 700 }, tUp)
+          d.model.onHoverReset({ epoch: 4 })
+        } else {
+          d.model.onHoverReset({ epoch: 4 })
+          d.up({ x: 900, y: 700 }, tUp)
+        }
+        d.take(IPC.petHover)
+        d.cursor({ x: 900, y: 700 }, tUp + after)
+        expect(d.take(IPC.petHover)).toEqual([{ over: true, epoch: 4 }])
+      })
+    }
+  }
+
+  it('the grab area’s own events still win over an older main sample while no reset came', () => {
+    const d = placed()
+    d.move(ON_PET, T)
+    expect(d.take(IPC.petHover)).toEqual([{ over: true, epoch: 3 }])
+    d.cursor(OFF_CANVAS, T + O.cursorQuietMs - 1) // main's sample is older news than the grab area's move
+    expect(d.take(IPC.petHover)).toEqual([])
+  })
+
   it('main’s pet:hover-reset after a drag release (its epoch bump) does not end the drop hold', () => {
     const d = placed()
     d.down(ON_PET, T)

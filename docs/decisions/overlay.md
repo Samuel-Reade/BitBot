@@ -111,6 +111,27 @@ Synthetic events reach the page whatever `setIgnoreMouseEvents` says. So the che
 
 These are the manual checks below.
 
+## M1 code review (2026-10-08)
+
+Six reviewers with different focuses, then skeptics who tried to disprove each finding. Fixed, each with a test:
+
+- **A dropped pet under a still cursor stayed click-through.** Main's one cursor sample after a drop fell inside the renderer's 70 ms quiet window and was ignored; nothing re-sent it. A hover-reset now makes main's next sample count.
+- **A stale "overlay on screen" answer was trusted for up to ~2.5 s while the helper was slow.** An answer now counts for `tuning.hitArea.onScreenMaxAgeMs` (800 ms); after that the grab area is hidden until a fresh one, except during a drag or the menu.
+- **The helper was asked twice a second while a fullscreen app hid the pet** (or the pet wasn't drawn). It isn't asked then any more.
+- **A page that could never load (e.g. no WebGL) was recreated every ~21 s all day.** Recreation now backs off, doubling up to `tuning.overlay.recreateMaxDelayMs` (5 min), and resets on `pet:ready`.
+- **Dev `--snapshot` and `--spike` runs used the packaged app's profile.** They now use `Bitbot-dev-tools`.
+- Tests: the no-network scan catches more ways to reach the network; `npm test` type-checks and fails on a stale helper build; two order- or timing-dependent tests fixed; negative IPC allowlist checks.
+
+Real but not fixed (unconfirmed trigger, or later work):
+
+- **A silent renderer hang after `pet:ready` is not detected.** Chromium's `unresponsive` comes from input acks, and the overlay takes no input. The pet would freeze until restart. Needs a cheap main→page ping; candidate for M2.
+- **App switches re-check at once,** while a Space animation may still be running. Waiting `spaceSettleMs` would delay grabbing after every app switch, so it waits for manual check 4 (does `spaceChanged` arrive on device?).
+- **A display rearrangement** can show the grab area for ≤100 ms at the old spot before the re-layout.
+- **A dev helper built before protocol 3** is used as current (no `spaceChanged`); the mismatch is logged. Packaged builds always rebuild it.
+- **`drawn: false` before `pet:ready`** is overridden by the ready. Clicks still fail closed.
+- **The 30 Hz loop runs while fullscreen or locked** (§11 "< 1% hidden"). Scheduled: event-driven idle (M2), fullscreen/lock hiding (M8).
+- **`--spike` and `--check` run in packaged builds.** Spike B's tests need that; strip the spike code before any real distribution (Phase 4).
+
 ## Manual checks (the real app)
 
 Start it with `npm run build:helper` (once), then `npm start`. The pet stands on the Dock at the bottom centre, and a small monitor icon appears in the menu bar.

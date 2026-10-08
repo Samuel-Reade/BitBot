@@ -2,7 +2,7 @@
 
 A macOS desktop pet that lives on your screen and is fed by how you use your computer. The spec is [`BITBOT_SPEC.md`](BITBOT_SPEC.md).
 
-**Status:** Milestone 1 (skeleton) is done.
+**Status:** Milestone 1 (skeleton) is built and reviewed. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
 - Bitbot runs as a menu-bar app with no Dock icon.
 - The static Mint pet stands on the Dock. You can drag it, and it drops back down.
 - The tray menu and ⌥⌘B hide and show it.
@@ -40,14 +40,16 @@ npm run dev      # the same with hot reload of the pet page
   - **Quit Bitbot** is in the menu-bar icon's menu; Ctrl+C in the terminal also quits.
 - **The helper is required for grabbing.** `bitbot-helper` tells Bitbot when its overlay is on screen, so the pet can only be grabbed while it runs. Without the built helper the pet shows but can't be grabbed, and the terminal says so.
 - **Focus check in the log.** After every click, drag or right-click, the terminal prints whether Bitbot took focus: `… -> Bitbot became the active app: NO (PASS)`.
-- **Profiles.** Dev runs use their own profile, `~/Library/Application Support/Bitbot-dev`, and their own single-instance lock, so a dev run and a packaged Bitbot don't block each other.
+- **Profiles.** Dev runs use their own profile, `~/Library/Application Support/Bitbot-dev`, and their own single-instance lock, so a dev run and a packaged Bitbot don't block each other. The dev tools (`--snapshot`, `--spike`) use `Bitbot-dev-tools`.
 
 ## Tests
 
 ```sh
-npm test            # Vitest (all pure logic) + the Swift helper checks
+npm test            # type check, Vitest (all pure logic) and the Swift helper checks
 npm run typecheck   # both tsconfigs (main/preload/shared/tests and renderer)
 ```
+
+On macOS, `npm test` fails if `build/helper/bitbot-helper` is missing or older than `helper/Sources`; run `npm run build:helper` first.
 
 ## Dev tools
 
@@ -58,6 +60,7 @@ npm run typecheck   # both tsconfigs (main/preload/shared/tests and renderer)
   ```
 
   - It prints PASS/FAIL for each functional check, then the measurement phases (CPU per process, latencies, frames), and exits 0 only if everything passes.
+  - Leave the mouse alone while it runs. If the real cursor rests where the pet patrols, macOS sends the grab area buttonless mouse moves, which end the check's synthetic drags (a drag phase then reads "not measured").
   - `--no-measure` skips the measurements. The other options are in the header of [`src/main/dev/overlayCheck.ts`](src/main/dev/overlayCheck.ts).
   - Results go to `spike-results/` (gitignored).
 - **Render the pet to a PNG** (no permissions needed):
@@ -108,6 +111,6 @@ It never stores or logs keys, characters, window titles, URLs or screenshots.
 
 Files written outside the repo:
 
-- **`~/Library/Application Support/Bitbot`** (packaged app) **and `Bitbot-dev`** (dev runs): Electron's profile; no personal data.
+- **`~/Library/Application Support/Bitbot`** (packaged app), **`Bitbot-dev`** (dev runs) **and `Bitbot-dev-tools`** (dev snapshot and spike runs): Electron's profile; no personal data.
 - **`~/Library/Application Support/Bitbot-check`:** the dev check's profile; no personal data, safe to delete.
 - **`~/Library/Logs/Bitbot`:** written by packaged spike runs. Those logs list bundle IDs and window positions of open apps, so delete them after testing.

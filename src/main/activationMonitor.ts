@@ -1,6 +1,7 @@
-// The self-reporting focus check (BITBOT_SPEC.md §2 "it must never steal focus"; design §2 and §9 check 1). Every app
-// activation and window focus change is logged with the interaction in progress (PetInteraction.label), and after
-// every press and every menu one verdict line says whether Bitbot became the active app:
+// The self-reporting focus check (BITBOT_SPEC.md §2 "it must never steal focus"; docs/decisions/overlay.md "Focus, the
+// gate" and manual check 1). Every app activation and window focus change is logged with the interaction in progress
+// (PetInteraction.label), and after every press and every menu one verdict line says whether Bitbot became the active
+// app:
 //   [bitbot] drag -> Bitbot became the active app: NO (PASS)
 //   [bitbot] right-click menu (chose Hide) -> Bitbot became the active app: YES (FAIL: did-become-active)
 // so the manual focus check reports itself. Logged in dev and packaged builds alike: it is one line per interaction.

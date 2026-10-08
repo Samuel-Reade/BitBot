@@ -1,6 +1,7 @@
-// The grab area (hit window, design §3.1): the small invisible panel main shows over the pet while the cursor is near
-// it. The overlay page opens it with window.open, so it lives in this renderer process, its document is an empty
-// about:blank page in this page's origin, and this page handles its mouse events directly (OverlayModel decides).
+// The grab area (hit window; docs/decisions/overlay.md "Decision"): the small invisible panel main shows over the pet
+// while the cursor is near it. The overlay page opens it with window.open, so it lives in this renderer process, its
+// document is an empty about:blank page in this page's origin, and this page handles its mouse events directly
+// (OverlayModel decides).
 //
 // Its document paints nothing (transparent, no content), selects and drags nothing and shows no menu of its own: it
 // only reports mouse events, in global pt (screenX/screenY), with times converted to this page's performance.now()

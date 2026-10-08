@@ -1,4 +1,4 @@
-// The M1 dev check (design §2, §8; docs/decisions/overlay.md "Follow-ups for M1"):
+// The M1 dev check (docs/decisions/overlay.md "Dev check" and "What the check can't see"):
 //   electron . --check=overlay [--results=DIR] [--label=TEXT] [--no-measure] [--phases=a,b] [--a2-walk=FILE]
 //                              [--a2-synthetic=FILE]          (npm run build first; see OVERLAY_CHECK_USAGE)
 // Runs the real Bitbot (BitbotApp, its own profile; index.ts) with a synthetic cursor and synthetic mouse events sent

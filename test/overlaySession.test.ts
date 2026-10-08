@@ -5,10 +5,12 @@ import {
   fullscreenOnDisplay,
   PetStateSender,
   PresentedPoint,
+  recreateDelayMs,
   sameArea,
   sameSimState,
   type PetSimState,
 } from '../src/main/windows/overlaySession'
+import { tuning } from '../src/shared/tuning'
 import { isPetStateMsg, type PetStateMsg } from '../src/shared/petProtocol'
 
 // The overlay session rules in main (src/main/windows/overlaySession.ts): when pet:state goes out, main's estimate of
@@ -227,5 +229,23 @@ describe('drawnPoint', () => {
     expect(drawnPoint(p, 2 * STEP, { x: 140, y: 460 })).toEqual({ x: 140, y: 460 })
     // A held point that is not a finite point falls back to the estimate.
     expect(drawnPoint(p, 2 * STEP, { x: Number.NaN, y: 0 })).toEqual({ x: 120, y: 480 })
+  })
+})
+
+describe('recreateDelayMs: backing off a failing overlay', () => {
+  it('doubles from the base for each loss in a row, up to the cap', () => {
+    const delays = [1, 2, 3, 4, 5, 9, 10].map((n) => recreateDelayMs(n, 1000, 300_000))
+    expect(delays).toEqual([1000, 2000, 4000, 8000, 16_000, 256_000, 300_000])
+    expect(recreateDelayMs(10_000, 1000, 300_000)).toBe(300_000)
+  })
+
+  it('never waits less than the base (a first loss, or a bad count)', () => {
+    for (const n of [1, 0, -3, Number.NaN]) expect(recreateDelayMs(n, 1000, 300_000), String(n)).toBe(1000)
+  })
+
+  it('the production settings back off to minutes, not the ~21 s of a fixed delay plus the ready timeout', () => {
+    const { recreateDelayMs: base, recreateMaxDelayMs: max } = tuning.overlay
+    expect(max).toBeGreaterThanOrEqual(60_000)
+    expect(recreateDelayMs(20, base, max)).toBe(max)
   })
 })

@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { createOverlayWindow, overlayWindowOptions, type OverlayWindowSetup } from '../src/main/windows/overlayWindow'
 
 // The overlay window factory (src/main/windows/overlayWindow.ts): its options and the order of the calls after
-// construction (design §3.1). Regressions here would put the pet on fullscreen Spaces, give Bitbot a Dock icon or let
-// the display-sized window take clicks.
+// construction (docs/decisions/overlay.md "Decision"). Regressions here would put the pet on fullscreen Spaces, give
+// Bitbot a Dock icon or let the display-sized window take clicks.
 
 class FakeOverlay implements OverlayWindowSetup {
   readonly calls: string[] = []

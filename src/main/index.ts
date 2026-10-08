@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import { BitbotApp } from './bitbotApp'
 import { parseCliArgs } from './cli'
+import { profileDirName, type Mode } from './profiles'
 import { installSecurity } from './security'
 
 // Entry point. With no mode flag it runs Bitbot: the pet, its tray icon and its hotkey (src/main/bitbotApp.ts).
@@ -13,7 +14,6 @@ import { installSecurity } from './security'
 //   --spike=windows                  Spike B: helper window snapshots, coordinates, debug rectangles
 const args = parseCliArgs(process.argv)
 
-type Mode = 'pet' | 'snapshot' | 'check' | 'spike'
 function modeOf(a: typeof args): Mode {
   if (a['snapshot']) return 'snapshot'
   if (a['check'] !== undefined) return 'check'
@@ -22,14 +22,17 @@ function modeOf(a: typeof args): Mode {
 }
 const mode = modeOf(args)
 
+// Every dev run, and the dev check, gets a profile of its own (profiles.ts), so none shares state with a packaged
+// Bitbot. Must be set before the app is ready (and before the single-instance lock, which lives in the profile).
+const profileDir = profileDirName(mode, app.isPackaged)
+if (profileDir !== null) app.setPath('userData', join(app.getPath('appData'), profileDir))
+
 // Snapshot PNGs are compared against palette hex values; capturePage would otherwise return the
 // display's color space (Display P3 on this Mac). Must be set before the app is ready.
 if (mode === 'snapshot') app.commandLine.appendSwitch('force-color-profile', 'srgb')
 
-/** Pet mode, before app ready: its own profile in dev, one instance only, and the error handlers in place. */
+/** Pet mode, before app ready: one instance per profile (a dev run never blocks a packaged Bitbot) and the error handlers. */
 function preparePet(): BitbotApp | null {
-  // A dev run keeps its own profile and single-instance lock, so it never blocks (or shares state with) a packaged Bitbot.
-  if (!app.isPackaged) app.setPath('userData', join(app.getPath('appData'), 'Bitbot-dev'))
   if (!app.requestSingleInstanceLock()) {
     // The running Bitbot got 'second-instance' and shows its pet.
     console.log('[bitbot] Bitbot is already running (it shows its pet now); this launch quits')
@@ -48,8 +51,7 @@ function preparePet(): BitbotApp | null {
 const bitbot = mode === 'pet' ? preparePet() : null
 
 // The dev check runs its own Bitbot in its own profile and never takes the pet's single-instance lock, so it runs beside
-// a dev or packaged Bitbot without touching either's state. Must be set before the app is ready.
-if (mode === 'check') app.setPath('userData', join(app.getPath('appData'), 'Bitbot-check'))
+// a dev or packaged Bitbot without touching either's state.
 
 app.whenReady().then(async () => {
   try {

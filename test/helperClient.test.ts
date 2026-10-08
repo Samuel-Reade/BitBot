@@ -746,7 +746,10 @@ describe('HelperClient watchdog', () => {
 const REPO = join(__dirname, '..')
 const BINARY = resolveHelperPath({ isPackaged: false, appPath: REPO, resourcesPath: '' })
 
-/** Why the real-binary tests cannot run here, or null. A binary older than its sources is skipped, not failed. */
+/**
+ * Why the real-binary tests cannot run here, or null. Off macOS they are skipped; on macOS a missing or stale binary
+ * fails the test below, so editing helper/Sources without rebuilding can't silently drop the contract tests.
+ */
 function binarySkipReason(): string | null {
   if (process.platform !== 'darwin') return 'macOS only'
   if (!existsSync(BINARY)) return 'build/helper/bitbot-helper is not built (bash helper/build-helper.sh)'
@@ -761,6 +764,10 @@ function binarySkipReason(): string | null {
 }
 
 const SKIP_REAL = binarySkipReason()
+
+it.runIf(process.platform === 'darwin')('the built bitbot-helper is current (npm run build:helper)', () => {
+  expect(SKIP_REAL).toBeNull()
+})
 
 describe.skipIf(SKIP_REAL !== null)(`HelperClient with the real bitbot-helper${SKIP_REAL ? ` (skipped: ${SKIP_REAL})` : ''}`, () => {
   // Nothing here creates an input tap or can show a permission prompt: inputAccess is preflight
@@ -879,7 +886,8 @@ describe.skipIf(SKIP_REAL !== null)(`HelperClient with the real bitbot-helper${S
       await sleep(600)
       expect(pushes.length).toBeGreaterThanOrEqual(4)
       client.setPollRate(0)
-      await sleep(150)
+      // The helper runs commands in order on its main queue, so the pong proves the poll timer is cancelled.
+      await client.ping()
       const afterStop = pushes.length
       await sleep(300)
       expect(pushes.length).toBe(afterStop)
