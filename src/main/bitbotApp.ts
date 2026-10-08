@@ -26,10 +26,9 @@ import type { DevInject, EconomySnapshot } from '../shared/economy'
 import type { Box, PetArea, Point } from '../shared/geometry'
 import { DEFAULT_HOTKEYS } from '../shared/hotkeys'
 import { IPC } from '../shared/ipc'
-import { DEFAULT_PALETTE_ID } from '../shared/palettes'
 import type { OverlayStatsMsg, PetCursorMsg, PetHoverResetMsg, PetReadyMsg, PetVisibleMsg } from '../shared/petProtocol'
 import { tuning } from '../shared/tuning'
-import type { BehaviorState, LookDirection, Mood, PaletteId, PetReaction, PetReactionKind, PetSize } from '../shared/types'
+import type { BehaviorState, LookDirection, Mood, PetReaction, PetReactionKind } from '../shared/types'
 import { boxFor } from '../shared/world'
 import { ActivationMonitor, type ActivationCounters, type FocusEventSource } from './activationMonitor'
 import { Debouncer } from './debounce'
@@ -43,7 +42,12 @@ import { Hotkeys } from './hotkeys'
 import { petContextMenuTemplate } from './menus/petContextMenu'
 import { ModeState, type SpotLookup } from './sim/modes'
 import { PetVisibility, type VisibilityChange } from './visibility'
-import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings'
+import type { AppSettings, PetIdentity } from '../shared/settings'
+import { Autosaver } from './persistence/autosave'
+import { nodeSaveFs } from './persistence/nodeFs'
+import { freshSave, type SaveFile } from './persistence/saveFile'
+import { SaveStore } from './persistence/saveStore'
+import { assembleSave, behaviorOf, economyStateOf, identityOf, needsStateOf, settingsOf } from './persistence/snapshot'
 import { BitbotTray } from './menus/tray'
 import { SignalGate } from './signals'
 import { systemClock } from './sim/clock'
@@ -74,8 +78,6 @@ import {
 import { PetInteraction, type NativeMouseEvent } from './windows/petInteraction'
 import { PetWindow } from './windows/petWindow'
 
-/** M1 draws the base form at the default size and palette (§6.1, §6.2); settings (M8) make both choosable. */
-const PET: { size: PetSize; paletteId: PaletteId } = { size: 'M', paletteId: DEFAULT_PALETTE_ID }
 
 /** Bitbot's bundle ID (electron-builder.yml appId; decided 2026-10-08): its own app events are not activity. */
 const BUNDLE_ID = 'com.bitbot.desktop'
@@ -112,6 +114,11 @@ export interface BitbotAppOptions {
   debug?: boolean
   /** Where the app's log lines go. Default: console.log. */
   log?: (line: string) => void
+  /**
+   * Load and write the save file (§16) in the profile's folder. Default true. The dev check passes false: a fresh,
+   * already onboarded pet every run, and nothing written.
+   */
+  persist?: boolean
 }
 
 /**
@@ -236,10 +243,17 @@ export class BitbotApp {
   /** The newest pet:ready (its petBox outlives the page that sent it). */
   private ready: PetReadyMsg | null = null
   private readyLoad = 0
-  /** The user's settings (§15.4; M8 loads and saves them). */
-  private settings: AppSettings = structuredClone(DEFAULT_SETTINGS)
+  /** The save file (§16); null when not persisting (the dev check). */
+  private readonly store: SaveStore | null
+  /** The newest save, loaded or written (assembleSave keeps its unknown and later-phase fields). */
+  private save: SaveFile
+  private readonly autosaver: Autosaver | null
+  /** The pet's name, palette and size (§15.1, §15.4). */
+  private identity: PetIdentity
+  /** The user's settings (§15.4). */
+  private settings: AppSettings
   /** Why the pet is not shown (the user, macOS, a fullscreen app, the lock screen; §8.6). */
-  private readonly visibility = new PetVisibility({ hideInFullscreen: DEFAULT_SETTINGS.hideInFullscreen })
+  private readonly visibility: PetVisibility
   /** app.isHidden() as last seen on a simulation wake. */
   private appHidden = false
   private fullscreenMsg: FrontmostFullscreenMsg | null = null
@@ -255,8 +269,8 @@ export class BitbotApp {
   private reaction: PetReaction | null = null
   /** Where the pet was sent while it couldn't go (in the air, held): it goes when it stands again. */
   private pendingSend: Point | null = null
-  /** §10.3 the mode and the hangout spots (M8 saves `modes.settings`). */
-  private readonly modes = new ModeState()
+  /** §10.3 the mode and the hangout spots (saved as SaveFile.behavior). */
+  private readonly modes: ModeState
   /** App names by bundle ID, from the helper's app events and appInfo (§10.3 "Hang out on <App>"; never window titles). */
   private readonly appNames = new Map<string, string>()
   private readonly appNamesAsked = new Set<string>()
@@ -287,12 +301,37 @@ export class BitbotApp {
       forwardMouseMoves: tuning.hitArea.forwardMouseMoves,
       log: (line) => this.log(`[bitbot] ${line}`),
     })
-    this.needs = new Needs(tuning.needs, tuning.economy.activity.activeIdleS, undefined, this.lifeClock.now())
+    // §16: everything that lasts comes from the save (or a fresh one), before the modules are made from it.
+    if (options.persist === false) {
+      this.store = null
+      this.save = freshSave(Date.now())
+      this.save.meta.onboardingComplete = true
+    } else {
+      this.store = new SaveStore({ fs: nodeSaveFs, dir: app.getPath('userData'), clock: { now: () => Date.now() }, log: (l) => this.log(`[bitbot] save: ${l}`) })
+      const loaded = this.store.load()
+      this.save = loaded.save
+      this.log(`[bitbot] save: loaded from ${loaded.source}${loaded.problems.length > 0 ? ` (${loaded.problems.length} problem(s): ${loaded.problems.join('; ')})` : ''}`)
+    }
+    this.autosaver = this.store
+      ? new Autosaver({
+          everyMs: tuning.persistence.autosaveEveryMs,
+          debounceMs: tuning.persistence.changeDebounceMs,
+          write: () => this.saveNow(),
+          scheduler: globalScheduler,
+          onError: (err) => this.throttled.log('autosave', `[bitbot] autosave failed: ${errorText(err)}`),
+        })
+      : null
+    this.identity = identityOf(this.save)
+    this.settings = settingsOf(this.save)
+    this.modes = new ModeState(behaviorOf(this.save))
+    this.visibility = new PetVisibility({ hideInFullscreen: this.settings.hideInFullscreen })
+    this.needs = new Needs(tuning.needs, tuning.economy.activity.activeIdleS, needsStateOf(this.save), this.lifeClock.now())
     this.brain = new Brain(tuning.brain, tuning.needs, Math.random)
     // §9.3 stuffed halves every payout.
     this.economy = new Economy({
       clock: { now: () => Date.now() },
       stuffedFactor: () => (this.needs.stuffed ? tuning.needs.stuffed.payoutFactor : 1),
+      state: economyStateOf(this.save),
     })
     this.life = new PetLife({
       clock: this.lifeClock,
@@ -330,7 +369,7 @@ export class BitbotApp {
       log: (line) => this.log(line),
     })
     this.worldDriver = new WorldDriver({
-      params: worldParamsFor(tuning.render.bodyHeightPt[PET.size], process.pid),
+      params: worldParamsFor(tuning.render.bodyHeightPt[this.identity.size], process.pid),
       setPollRate: (hz) => this.helper?.setPollRate(hz),
       sendDebug: this.dev ? (msg) => void this.petWindow.send(IPC.debugWorld, msg) : null,
       random: Math.random,
@@ -415,8 +454,8 @@ export class BitbotApp {
     this.petWindow = new PetWindow({
       hitWindow: this.hitWindow,
       bounds: () => (this.display ?? primaryDisplay()).bounds,
-      size: PET.size,
-      paletteId: PET.paletteId,
+      size: this.identity.size,
+      paletteId: this.identity.paletteId,
       stepMs: this.stepMs,
       debug: options.debug === true,
       configFields: () => ({ area: this.petArea(), epoch: this.interaction.epoch }),
@@ -539,6 +578,10 @@ export class BitbotApp {
     this.trayTimer.unref()
     this.lifeTimer = setInterval(() => this.guarded('life tick', () => this.tickLife()), 1000 / tuning.needs.hiddenTickHz)
     this.lifeTimer.unref()
+    // The time Bitbot was quit counts like a sleep (the pet wakes with a stretch).
+    const savedAt = this.save.meta.savedAt
+    if (savedAt !== null) this.life.restoredAfter(Date.parse(savedAt))
+    this.autosaver?.start()
     this.registerHotkeys()
     this.tray.create(this.isPetVisible())
     this.log('[bitbot] tray icon created')
@@ -642,6 +685,10 @@ export class BitbotApp {
     fallback.unref()
     this.guarded('quit: loop', () => this.loop.stop())
     this.guarded('quit: cancel', () => this.cancel('quitting'))
+    this.guarded('quit: save', () => {
+      this.autosaver?.stop()
+      this.saveNow()
+    })
     this.guarded('quit: displays', () => this.relayout.cancel())
     this.guarded('quit: hotkeys', () => this.hotkeys.unregisterAll())
     this.guarded('quit: tray', () => this.tray.destroy())
@@ -846,8 +893,31 @@ export class BitbotApp {
 
   private modeChanged(why: string): void {
     this.life.modeChanged()
+    this.autosaver?.changed()
     this.tray.refresh()
     if (this.dev) this.log(`[bitbot] mode: ${why}`)
+  }
+
+  /**
+   * Writes the save now (§16: the autosave, a suspend, quitting): everything that lasts, from the live modules. The
+   * pet's place only while it stands (held or in the air, the last standing place is kept).
+   */
+  private saveNow(): void {
+    const store = this.store
+    if (!store) return
+    const s = this.loco?.state
+    const standing = s && s.surface !== null && s.behavior !== 'held'
+    this.save = assembleSave(this.save, {
+      identity: this.identity,
+      ...(standing ? { position: { displayId: (this.display ?? primaryDisplay()).id, x: s.x, y: s.y, facing: s.facing } } : {}),
+      needs: this.needs.state,
+      economy: this.economy.state,
+      behavior: this.modes.settings,
+      settings: this.settings,
+      meta: { savedAt: new Date().toISOString() },
+    })
+    const result = store.write(this.save)
+    if (!result.ok) this.throttled.log('save write', `[bitbot] save: could not write (${result.problem})`)
   }
 
   /** The default home (§10.4): the middle of the Dock unless settings choose a spot (M8). */
@@ -943,7 +1013,15 @@ export class BitbotApp {
     this.worldDriver.pageReady()
     if (!this.loco) {
       const x = this.opts.spawnX
-      this.loco = new Locomotion(world, tuning.move, x !== undefined && Number.isFinite(x) ? { x, y: area.groundY } : undefined)
+      const saved = this.save.pet.position
+      // Where it stood when Bitbot last saved (on the same display; it falls if that place is gone), else the default.
+      const start =
+        x !== undefined && Number.isFinite(x)
+          ? { x, y: area.groundY }
+          : saved && saved.displayId === display.id
+            ? { x: saved.x, y: saved.y }
+            : undefined
+      this.loco = new Locomotion(world, tuning.move, start)
     } else {
       this.loco.setWorld(world, clock.now())
     }
@@ -1127,7 +1205,7 @@ export class BitbotApp {
     // Keys, clicks and scrolls (§7.1, counted; never logged), and §10.4 Send to cursor: only ⌥⌘-clicks carry a location.
     helper.on('input', (m) => {
       this.ingest.input(m)
-      if (tuning.app.altCmdClickSend && m.kind === 'mouseDown' && m.button === 0 && m.alt && m.cmd && m.x !== null && m.y !== null) {
+      if (this.settings.altCmdClickSend && m.kind === 'mouseDown' && m.button === 0 && m.alt && m.cmd && m.x !== null && m.y !== null) {
         this.guarded('⌥⌘-click', () => this.sendTo({ x: m.x as number, y: m.y as number }, '⌥⌘-click'))
       }
     })
@@ -1240,6 +1318,7 @@ export class BitbotApp {
     powerMonitor.on('suspend', () => {
       this.cancel('the Mac is going to sleep')
       this.life.suspend()
+      this.autosaver?.flush()
     })
     powerMonitor.on('user-did-resign-active', () => this.cancel('the user session became inactive'))
     powerMonitor.on('resume', () => {

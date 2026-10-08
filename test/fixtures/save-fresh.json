@@ -244,6 +244,7 @@
   },
   "meta": {
     "lastSummaryShownDay": null,
-    "onboardingComplete": false
+    "onboardingComplete": false,
+    "savedAt": null
   }
 }

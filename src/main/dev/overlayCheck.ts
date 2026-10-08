@@ -331,6 +331,7 @@ class OverlayCheck {
     }
 
     const bitbot = new BitbotApp({
+      persist: false, // a fresh, onboarded pet every run; nothing written
       cursor: () => this.cursorNow(),
       popupMenu: (onClose) => {
         this.popupCalls++

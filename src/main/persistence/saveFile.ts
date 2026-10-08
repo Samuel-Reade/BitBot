@@ -61,6 +61,11 @@ export interface SaveMeta {
   lastSummaryShownDay: string | null
   /** False until onboarding (§15.1) finishes: a save without it starts onboarding again. */
   onboardingComplete: boolean
+  /**
+   * When this save was written, ISO; null in a save never written. Addition to §16: on launch the time since counts
+   * like the Mac sleeping (the needs rest and get hungrier), as a wake does (PetLife.resume).
+   */
+  savedAt: string | null
 }
 
 export interface SaveFile {
@@ -101,6 +106,6 @@ export function freshSave(nowMs: number, timeZone: string = systemTimeZone()): S
     economy: freshLedger(localDay(nowMs, timeZone, tuning.economy.dayRolloverHour)),
     behavior: structuredClone(DEFAULT_MODE_SETTINGS),
     settings: structuredClone(DEFAULT_SETTINGS),
-    meta: { lastSummaryShownDay: null, onboardingComplete: false },
+    meta: { lastSummaryShownDay: null, onboardingComplete: false, savedAt: null },
   }
 }

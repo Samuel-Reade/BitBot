@@ -3,6 +3,7 @@
 
 import { DEFAULT_HOTKEYS, type HotkeyAction } from './hotkeys'
 import { DEFAULT_PALETTE_ID, isPaletteId } from './palettes'
+import { tuning } from './tuning'
 import type { PaletteId, PetSize } from './types'
 
 /** §16 SaveFile.settings. */
@@ -21,7 +22,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   hotkeys: { ...DEFAULT_HOTKEYS },
-  altCmdClickSend: true,
+  altCmdClickSend: tuning.app.altCmdClickSend,
   hideInFullscreen: true,
   restlessness: 0.5,
   launchAtLogin: false,

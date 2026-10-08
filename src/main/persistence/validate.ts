@@ -424,6 +424,7 @@ function parseMeta(v: unknown, notes: Notes): SaveMeta {
     ...keep(r),
     lastSummaryShownDay: notes.lenient(r, 'lastSummaryShownDay', 'meta.lastSummaryShownDay', dayOrNull, null),
     onboardingComplete: bool(r['onboardingComplete'], 'meta.onboardingComplete'),
+    savedAt: notes.lenient(r, 'savedAt', 'meta.savedAt', isoOrNull, null),
   }
 }
 

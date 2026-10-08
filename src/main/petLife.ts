@@ -100,6 +100,16 @@ export class PetLife {
     if (this.sleptAtMs === null) this.sleptAtMs = this.deps.wallNowMs()
   }
 
+  /**
+   * Launched again after Bitbot last saved at `savedAtMs` (wall ms): the time it was quit counts like the Mac sleeping
+   * (in one step, capped by the needs), then the pet wakes with a stretch and greets.
+   */
+  restoredAfter(savedAtMs: number): void {
+    if (!Number.isFinite(savedAtMs) || savedAtMs >= this.deps.wallNowMs()) return
+    this.sleptAtMs = savedAtMs
+    this.resume()
+  }
+
   /** The Mac woke: the time it slept counts in one step (the needs cap it), then the pet wakes up and greets. */
   resume(): void {
     const sleptAt = this.sleptAtMs

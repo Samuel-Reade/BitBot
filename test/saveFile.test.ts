@@ -36,7 +36,7 @@ describe('freshSave', () => {
   it('is a new pet before onboarding: defaults everywhere, base stage and form, not placed', () => {
     const s = freshSave(Date.parse('2026-10-05T16:00:00.000Z'), 'UTC')
     expect(s.schemaVersion).toBe(CURRENT_SCHEMA_VERSION)
-    expect(s.meta).toEqual({ lastSummaryShownDay: null, onboardingComplete: false })
+    expect(s.meta).toEqual({ lastSummaryShownDay: null, onboardingComplete: false, savedAt: null })
     expect(s.pet).toMatchObject({ name: 'Nibs', paletteId: 'mint', size: 'M', stage: 'base', formId: 'base', position: null })
     expect(s.pet.cosmetics).toEqual({ equipped: {}, owned: [] })
     expect(s.needs).toEqual(tuning.needs.initial)
@@ -317,7 +317,7 @@ describe('the save holds counts and choices only (§2)', () => {
     ...['id', 'name', 'kind', 'displayId', 'x', 'y', 'bundleId', 'appName', 'relativeX', 'fallbackId'].map((k) => `behavior.hangouts[].${k}`),
     'settings', 'settings.hotkeys', ...Object.keys(DEFAULT_HOTKEYS).map((k) => `settings.hotkeys.${k}`),
     'settings.altCmdClickSend', 'settings.hideInFullscreen', 'settings.restlessness', 'settings.launchAtLogin', 'settings.sound',
-    'meta', 'meta.lastSummaryShownDay', 'meta.onboardingComplete',
+    'meta', 'meta.lastSummaryShownDay', 'meta.onboardingComplete', 'meta.savedAt',
   ])
 
   it('the day-3 fixture has exactly the expected keys (no key codes, titles or click positions)', () => {
@@ -381,7 +381,7 @@ describe('snapshot: live modules ↔ save', () => {
     expect(next.pet).toMatchObject({ name: 'Bolt', paletteId: 'peach', size: 'L', stage: 'base', cosmetics: { owned: ['cap'] } })
     expect(next.pet.position).toEqual(prev.pet.position)
     expect(next.needs.hunger).toBe(90)
-    expect(next.meta).toEqual({ lastSummaryShownDay: '2026-10-09', onboardingComplete: true })
+    expect(next.meta).toEqual({ lastSummaryShownDay: '2026-10-09', onboardingComplete: true, savedAt: prev.meta.savedAt })
     expect(next.createdAt).toBe(prev.createdAt)
     expect((next as unknown as Record<string, unknown>)['extra']).toBe(1)
     expect((next.life as unknown as Record<string, unknown>)['extraLife']).toBe(2)

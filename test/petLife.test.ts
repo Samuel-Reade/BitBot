@@ -99,6 +99,19 @@ describe('PetLife', () => {
     expect(t.reactions).toEqual(['wakeUp'])
   })
 
+  it('a relaunch counts the time Bitbot was quit like a sleep, and the pet wakes up', () => {
+    const t = setup()
+    const energy = t.needs.levels.energy
+    const savedAt = 1_000_000_000
+    t.pass(6 * 3_600_000)
+    t.life.restoredAfter(savedAt)
+    expect(t.needs.levels.energy).toBeGreaterThan(energy)
+    expect(t.reactions).toEqual(['wakeUp'])
+    // A save from the future (a clock change) counts nothing.
+    t.life.restoredAfter(Number.MAX_SAFE_INTEGER)
+    expect(t.reactions).toEqual(['wakeUp'])
+  })
+
   it('an interaction lowers boredom; the first after a dusty return shakes the dust off', () => {
     const t = setup()
     t.pass(3 * 3_600_000)
