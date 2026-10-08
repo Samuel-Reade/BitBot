@@ -12,6 +12,7 @@ import {
   spanCrossings,
   walkAt,
   type Walk,
+  patrolCentreX,
 } from '../src/main/dev/checkPaths'
 import {
   countDrawnPixels,
@@ -373,5 +374,19 @@ describe('tuning.dev.overlayCheck', () => {
     expect(T.chase.peakSpeed).toBeGreaterThan(T.chase.speed)
     // Drag moves land at every phase of a 60 Hz frame.
     expect((1000 / 60) % T.dragPatrol.eventIntervalMs).not.toBe(0)
+  })
+})
+
+describe('patrolCentreX: a drag patrol clear of the resting mouse', () => {
+  it('home when the mouse is clear of the sweep', () => {
+    expect(patrolCentreX(855, 1600, 50, 1660, 434, 20)).toBe(855)
+  })
+  it('the nearest centre at least reach + margin from the mouse, inside the area', () => {
+    // The mouse at 1198 (inside the sweep of 855 ± 434): the left option 744 fits, the right (1652) doesn't.
+    expect(patrolCentreX(855, 1198, 50, 1660, 434, 20)).toBe(744)
+    expect(patrolCentreX(855, 600, 50, 1660, 434, 20)).toBe(1054)
+  })
+  it('home when no centre fits (a narrow display)', () => {
+    expect(patrolCentreX(500, 500, 0, 1000, 434, 20)).toBe(500)
   })
 })

@@ -175,6 +175,15 @@ Also found while measuring: an animated outline moves under a still cursor, so a
 - **Not yet:** petting's "boredom −30" waits for the needs model (M6); "in Stay mode the drop location becomes the stay location" waits for modes (M7); Go home goes to the middle of the Dock until hangout spots exist (M7); the teleport sparkle for a drop on another display stays a SPEC-DEVIATION (the drag is kept on the primary display).
 - **Dev check:** petting, a toss (lands ≥ 150 pt away, dizzy), Come here and Go home added; 67/67 functional, and the drag phases pass with the mouse left alone.
 
+## M6: needs and brain (2026-10-08)
+
+- **Built:** the needs model (src/main/sim/needs/: hunger, energy, fullness, boredom, dust on the life clock; stuffed, breaks, neglect; mood by the most pressing need), the brain (src/main/sim/brain/brain.ts: §10.2 utility AI with softmax, run-to-eat on app launch, nap, sleep when the computer is idle) and the state machine (§10.1 priorities), coordinated by src/main/petLife.ts. The M3 wanderer is retired. The developer panel shows the needs and the goal scores and has the time scale (life clock only; the economy's days stay on real time).
+- **Wake-up and dust:** the overlay plays a stretch and a yawn when the pet wakes, then it greets once; the first interaction after a dusty return shakes the dust off.
+- **Tuning chosen:** `brain.calmScale` 0.15 (stuffed or sleepy pets pick movement goals clearly less often; 0.35 barely changed it).
+- **Cost:** idle in the event style now runs about 7.5% in the dev check (6.1% in M2): a happy pet (petted during the check) hops and wiggles now and then. The asleep rate is 1 Hz snapshots.
+- **Dev check:** the drag patrols move sideways to keep clear of the user's resting mouse; the footprint limit is now §11's budget (290 MB for Electron, room for the helper) instead of M1's 210 MB guard.
+- **Not seen on the real desktop yet** by the builder (the user's Bitbot was running); restart Bitbot to see the brain.
+
 ## Manual checks (the real app)
 
 Start it with `npm run build:helper` (once), then `npm start`. The pet stands on the Dock at the bottom centre, and a small monitor icon appears in the menu bar.

@@ -46,6 +46,7 @@ import {
   Chase,
   dragLiftMs,
   dragPatrolAt,
+  patrolCentreX,
   fallTimeMs,
   makeLissajousPath,
   spanCrossings,
@@ -771,8 +772,13 @@ class OverlayCheck {
     this.cursorPoint = this.farPoint()
     await this.goTo(home)
 
-    if (want('drag120')) await this.dragPatrol('drag120', T.dragPatrol.speeds.slow, T.phaseS.drag120, home)
-    if (want('drag600')) await this.dragPatrol('drag600', T.dragPatrol.speeds.fast, T.phaseS.drag600, home)
+    // The drag patrols keep their sweep clear of the user's resting mouse (patrolCentreX).
+    const patrolHome = this.patrolHome(home)
+    if (patrolHome.x !== home.x) this.log(`[check] the drag patrols run around x ${patrolHome.x.toFixed(0)}, clear of your mouse`)
+    if (want('drag120') || want('drag600')) await this.goTo(patrolHome)
+    if (want('drag120')) await this.dragPatrol('drag120', T.dragPatrol.speeds.slow, T.phaseS.drag120, patrolHome)
+    if (want('drag600')) await this.dragPatrol('drag600', T.dragPatrol.speeds.fast, T.phaseS.drag600, patrolHome)
+    if (patrolHome.x !== home.x) await this.goTo(home)
     this.cursorPoint = this.farPoint()
     await this.goTo(home)
     await this.measureFootprint()
@@ -849,6 +855,16 @@ class OverlayCheck {
   }
 
   /** A drag patrol phase: press at home, lift, patrol at speedPtS with synthetic moves; measure; let go; land. */
+  /** Where the drag patrols centre: home, or moved so their sweep stays clear of the user's resting mouse. */
+  private patrolHome(home: Point): Point {
+    const area = this.loco?.area
+    const box = this.ready?.petBox
+    if (!area || !box) return home
+    const reach = T.dragPatrol.spanPt + (box.right - box.left) / 2 + tuning.hitArea.slackPt
+    const x = patrolCentreX(home.x, screen.getCursorScreenPoint().x, area.minX, area.maxX, reach, T.dragPatrol.mouseMarginPt)
+    return { x, y: home.y }
+  }
+
   private async dragPatrol(name: PhaseName, speedPtS: number, seconds: number, home: Point): Promise<void> {
     const ix = this.ix()
     const press = this.pressPoint(home)

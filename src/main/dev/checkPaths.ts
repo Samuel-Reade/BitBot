@@ -129,6 +129,24 @@ export interface DragPatrol {
   speedPtS: number
 }
 
+/**
+ * Where to centre a drag patrol so its sweep (±reachPt around the centre: the span, half the pet's box and the grab
+ * area's slack) stays clear of the user's resting mouse (whose real moves would end the check's synthetic drags): home
+ * if it already is, else the nearest centre within [minX + reachPt, maxX − reachPt] at least reachPt + marginPt from
+ * the mouse; home when none fits.
+ */
+export function patrolCentreX(homeX: number, mouseX: number, minX: number, maxX: number, reachPt: number, marginPt: number): number {
+  const clear = reachPt + marginPt
+  if (Math.abs(mouseX - homeX) >= clear) return homeX
+  const lo = minX + reachPt
+  const hi = maxX - reachPt
+  const left = mouseX - clear
+  const right = mouseX + clear
+  const options = [left, right].filter((x) => x >= lo && x <= hi)
+  if (options.length === 0) return homeX
+  return options.reduce((a, b) => (Math.abs(b - homeX) < Math.abs(a - homeX) ? b : a))
+}
+
 /** How long the lift takes, ms. */
 export function dragLiftMs(d: DragPatrol): number {
   return d.speedPtS > 0 ? (Math.max(0, d.liftPt) / d.speedPtS) * 1000 : 0

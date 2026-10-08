@@ -876,9 +876,10 @@ export const tuning = {
       /**
        * The drag patrol: pressed at home, lifted liftPt at the patrol's speed, then back and forth ±spanPt around home;
        * synthetic moves every eventIntervalMs (≈67 Hz, like a trackpad, and not a divisor of the 60 Hz frame period,
-       * so events land at every phase of a frame). One phase per speed, pt/s.
+       * so events land at every phase of a frame). One phase per speed, pt/s. The sweep keeps mouseMarginPt clear of the
+       * user's resting mouse (the patrol moves sideways if needed: its real moves would end the synthetic drags).
        */
-      dragPatrol: { liftPt: 220, spanPt: 300, eventIntervalMs: 15, speeds: { slow: 120, fast: 600 } },
+      dragPatrol: { liftPt: 220, spanPt: 300, eventIntervalMs: 15, speeds: { slow: 120, fast: 600 }, mouseMarginPt: 30 },
       /** A2 spike results count as the same session's when they started at most this long before the check, min. */
       a2MaxAgeMin: 30,
       /** The verdict's thresholds. CPU vs A2 is report-only (it depends on the machine); the others gate the exit code. */
@@ -893,8 +894,11 @@ export const tuning = {
         enterP95Ms: 150,
         /** The silhouette left the still cursor → click-through again: p95, ms. */
         leaveP95Ms: 100,
-        /** phys_footprint summed over the Electron processes (not the helper), MB. */
-        footprintMB: 210,
+        /**
+         * phys_footprint summed over the Electron processes, MB: §11's "< 300 MB total" less room for the helper (~5 MB).
+         * (M1's 210 was a regression guard set from its 185 MB; the GPU process alone swings 40–105 MB between runs.)
+         */
+        footprintMB: 290,
       },
     },
   },

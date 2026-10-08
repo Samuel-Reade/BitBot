@@ -2,10 +2,11 @@
 
 A macOS desktop pet that lives on your screen and is fed by how you use your computer. The spec is [`BITBOT_SPEC.md`](BITBOT_SPEC.md).
 
-**Status:** Milestone 5 (activity & economy) is built. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
+**Status:** Milestone 6 (needs & brain) is built. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
 - Bitbot runs as a menu-bar app with no Dock icon.
 - The Mint pet is alive: it blinks, looks at the cursor, stirs now and then, swings when you drag it, and squashes when it lands.
-- It wanders by itself (M3's stand-in for the M6 brain): it walks along the Dock, climbs the screen's edges and your windows' sides, jumps and drops between window tops, rides a window you move, and falls when you close or fling it.
+- It lives on your screen: it walks along the Dock, climbs the screen's edges and your windows' sides, jumps and drops between window tops, rides a window you move, and falls when you close or fling it.
+- It has needs (§9: hunger, energy, fullness, boredom, dust) and moods, and a brain (§10.2) that picks what to do from them: go eat on the front window, nap, explore, climb, sit, peek, come look at your cursor. Open an app and it runs over to eat. Leave the computer idle for 10 minutes and it goes home to sleep; come back and it stretches, yawns and greets you. Long sessions without a break make it stuffed (slower, earns half).
 - You can direct it: throw it, pet it, call it with Come here (⌥⌘C), send it home (⌥⌘H), or ⌥⌘-click anywhere to send it there (needs Input Monitoring).
 - It is fed by how you use your Mac (§7): crumbs from keys, pellets from clicks and scrolls, treats from opening apps, mileage from moving the mouse, sparks from breaks and healthy habits. Only counts are kept, in memory until saving arrives (M8); never what you type or click. The menu-bar menu shows today's totals.
 - Every §6.4 state and mood and every §6.3 face can be shown from the developer panel (dev builds), which also draws the world it sees.
