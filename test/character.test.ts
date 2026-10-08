@@ -104,6 +104,11 @@ function specPosition(object: THREE.Object3D): THREE.Vector3 {
   return object.getWorldPosition(new THREE.Vector3()).sub(new THREE.Vector3(0, SPEC_ORIGIN_HEIGHT, 0))
 }
 
+/** Spec-space position of a point given in `object`'s local frame (rig at rest, no yaw). */
+function specPoint(object: THREE.Object3D, local: readonly [number, number, number]): THREE.Vector3 {
+  return object.localToWorld(new THREE.Vector3(...local)).sub(new THREE.Vector3(0, SPEC_ORIGIN_HEIGHT, 0))
+}
+
 /** World bounds of a mesh moved into spec space (rig at rest, no yaw). */
 function specBox(object: THREE.Object3D): THREE.Box3 {
   return new THREE.Box3().setFromObject(object, true).translate(new THREE.Vector3(0, -SPEC_ORIGIN_HEIGHT, 0))
@@ -301,7 +306,7 @@ describe('buildBitbot: §6.1 construction', () => {
     rig.dispose()
   })
 
-  it('arms: capsules r 0.11 h 0.3 centered at (±1.0, −0.1, 0.15) with base rotation z ∓0.5', () => {
+  it('arms: capsules r 0.11 h 0.3 centered at (±1.0, −0.1, 0.15), hanging down with base rotation z ±0.5 (§6.1: ∓0.5)', () => {
     const rig = build()
     for (const side of [1, -1] as const) {
       const arm = mesh(rig, side === 1 ? 'armL' : 'armR')
@@ -309,10 +314,18 @@ describe('buildBitbot: §6.1 construction', () => {
       expect(capsule.parameters.radius).toBe(0.11)
       expect(capsule.parameters.height).toBe(0.3)
       expectVec(specPosition(arm), [side * 1.0, -0.1, 0.15])
-      // The capsule is symmetric end for end, so compare its axis direction up to sign.
+      // The capsule is symmetric end for end, so compare its axis direction up to sign. The sign is
+      // §6.1's flipped (SPEC-DEVIATION in construction.ts): x = +1 → +0.5 about z.
       const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(arm.getWorldQuaternion(new THREE.Quaternion()))
-      const spec = new THREE.Vector3(0, 1, 0).applyAxisAngle(new THREE.Vector3(0, 0, 1), -side * 0.5)
-      close(Math.abs(axis.dot(spec)), 1, 9)
+      const hanging = new THREE.Vector3(0, 1, 0).applyAxisAngle(new THREE.Vector3(0, 0, 1), side * 0.5)
+      close(Math.abs(axis.dot(hanging)), 1, 9)
+      // The free end (the cap farther from the body) is below the shoulder (the body-side cap).
+      const capA = specPoint(arm, [0, 0.15, 0])
+      const capB = specPoint(arm, [0, -0.15, 0])
+      const free = Math.abs(capA.x) > Math.abs(capB.x) ? capA : capB
+      const shoulder = free === capA ? capB : capA
+      close(free.y - shoulder.y, -0.3 * Math.cos(0.5), 9)
+      close(Math.abs(free.x) - Math.abs(shoulder.x), 0.3 * Math.sin(0.5), 9)
     }
     rig.dispose()
   })
@@ -482,14 +495,14 @@ describe('arm shoulder pivots', () => {
       new THREE.Vector2(-Math.sin(pivot.rotationZ), Math.cos(pivot.rotationZ)).multiplyScalar(offset),
     )
 
-  it('pivot at the body-side cap, hand at the free cap, for either sign of the §6.1 tilt', () => {
+  it('pivot at the body-side cap, hand at the free cap, for either sign of the tilt', () => {
     const wall = BODY_OUTER.w / 2 // 0.94
     for (const rotZ of [0.5, -0.5, 0.25, -0.25]) {
       for (const side of [1, -1] as const satisfies readonly Side[]) {
         const pivot = armShoulder(side, rotZ)
         const center = alongArm(pivot, ARM_CENTER_OFFSET)
         const hand = alongArm(pivot, ARM_HAND_OFFSET)
-        // The arm itself does not move: same center and same (unsigned) axis as the spec tilt.
+        // The arm itself does not move: same center and same (unsigned) axis as the requested tilt.
         close(center.x, side * 1.0, 9)
         close(center.y, -0.1, 9)
         const axis = new THREE.Vector2(-Math.sin(pivot.rotationZ), Math.cos(pivot.rotationZ))
@@ -501,7 +514,8 @@ describe('arm shoulder pivots', () => {
           expect(Math.abs(pivot.position[0])).toBeLessThanOrEqual(wall)
           expect(Math.abs(hand.x)).toBeGreaterThan(wall)
         }
-        // §6.1's sign raises the outer ends (shoulder below the hand); the flipped sign hangs them.
+        // §6.1's sign (rotZ > 0) raises the outer ends (shoulder below the hand); the flipped sign,
+        // the default BASE_FORM.arms.rotZ, hangs them.
         if (rotZ > 0) expect(hand.y).toBeGreaterThan(pivot.position[1])
         else expect(hand.y).toBeLessThan(pivot.position[1])
       }
@@ -516,7 +530,7 @@ describe('arm shoulder pivots', () => {
     }
   })
 
-  it('the built rig uses those pivots: joints at the shoulder, hands at the far caps', () => {
+  it('the built rig uses those pivots: joints at the shoulder, hands at the far caps, below the shoulders', () => {
     const rig = build()
     for (const side of [1, -1] as const) {
       const joint = side === 1 ? rig.joints.armL : rig.joints.armR
@@ -526,6 +540,7 @@ describe('arm shoulder pivots', () => {
       close(joint.rotation.z, pivot.rotationZ, 12)
       const hand = specPosition(rig.attachPoints[side === 1 ? 'hand_L' : 'hand_R'])
       expect(Math.abs(hand.x)).toBeGreaterThan(Math.abs(specPosition(joint).x))
+      expect(hand.y).toBeLessThan(specPosition(joint).y)
     }
     rig.dispose()
   })
@@ -566,10 +581,11 @@ describe('§6.5 attach points', () => {
     expect(at('face_screen').z).toBeGreaterThan(0.69)
     expect(at('back_casing').z).toBeLessThan(-1.065)
     expect(at('antenna_tip').distanceTo(specPosition(mesh(rig, 'antennaTip')))).toBeLessThan(1e-9)
-    // Hands at the outer end-cap centers: arm center ± 0.15 along the tilted axis.
+    // Hands at the outer end-cap centers: arm center + 0.15 along the hanging axis, out and down.
     close(at('hand_L').x, 1.0 + 0.15 * Math.sin(0.5))
-    close(at('hand_L').y, -0.1 + 0.15 * Math.cos(0.5))
+    close(at('hand_L').y, -0.1 - 0.15 * Math.cos(0.5))
     close(at('hand_R').x, -(1.0 + 0.15 * Math.sin(0.5)))
+    close(at('hand_R').y, -0.1 - 0.15 * Math.cos(0.5))
     expectVec(at('foot_L'), [0.42, -0.84, 0.12], 4)
     expect(at('belly').y).toBeLessThan(-0.3)
     rig.dispose()

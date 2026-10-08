@@ -21,8 +21,7 @@
     "test:helper": "bash helper/test-helper.sh"
   },
   "dependencies": {
-    "three": "^0.186.1",
-    "uiohook-napi": "^1.5.5"
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@types/node": "^24.19.1",

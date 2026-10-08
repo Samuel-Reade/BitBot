@@ -16,9 +16,8 @@
 // only (never window titles, §2/§5.3).
 
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import { dirname, join, sep } from 'node:path'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import {
   app,
@@ -658,7 +657,6 @@ export class WindowsHarness {
   // ───────────────────────────── checks ─────────────────────────────
 
   private async runChecks(): Promise<void> {
-    this.checkUiohookPackaging()
     this.checkDisplays()
     await this.checkCoordinates()
     if (this.finishing) return
@@ -676,25 +674,6 @@ export class WindowsHarness {
     if (this.finishing) return
     if (this.options.autoAppTest) await this.runAppTest()
     else this.record('app launch/terminate events', 'SKIP', 'not requested (--auto-app-test); app events are still logged live')
-  }
-
-  /**
-   * Static half of "uiohook-napi works in a packaged app": the package resolves from the app root and its
-   * native prebuild sits outside the archive (asarUnpack). Resolve only: the module is never loaded here
-   * (loading it opens an IOHIDSystem connection; start() can prompt). --spike=input loads and starts it.
-   */
-  private checkUiohookPackaging(): void {
-    const name = 'uiohook-napi packaging (resolved, not loaded)'
-    try {
-      const entry = createRequire(join(app.getAppPath(), 'package.json')).resolve('uiohook-napi')
-      const packageDir = dirname(dirname(entry))
-      const prebuild = join(packageDir, 'prebuilds', `darwin-${process.arch}`, 'uiohook-napi.node')
-      const native = app.isPackaged ? prebuild.replace(`${sep}app.asar${sep}`, `${sep}app.asar.unpacked${sep}`) : prebuild
-      const present = existsSync(native)
-      this.record(name, present ? 'PASS' : 'FAIL', `resolves to ${entry}; native prebuild ${present ? 'present' : 'MISSING'} at ${native}`)
-    } catch (err) {
-      this.record(name, 'FAIL', `cannot resolve uiohook-napi from ${app.getAppPath()}: ${errorText(err)}`)
-    }
   }
 
   private checkDisplays(): void {

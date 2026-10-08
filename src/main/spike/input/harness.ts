@@ -1,19 +1,18 @@
 // Spike B input harness (BITBOT_SPEC.md §12 Spike B, §7.1, §15.1 step 3): can global input be counted
-// in a packaged app, and which permission does each approach need?
+// in a packaged app, and which app does macOS attribute the permission to?
 //   --source=helper   bitbot-helper's listen-only CGEventTap (needs Input Monitoring; never prompts unless
-//                     --request asks for the system prompt via CGRequestListenEventAccess).
-//   --source=uiohook  uiohook-napi (the §3 default). Its start() can show the Accessibility prompt.
+//                     --request asks for the system prompt via CGRequestListenEventAccess). It replaced
+//                     uiohook-napi, the §3 choice: see docs/decisions/input-and-helper.md §1.
 //
 // THIS HARNESS CAN SHOW macOS PERMISSION PROMPTS. It is for the user's manual permission tests only
 // (spikes/README-input-helper.md); automated agents never run it.
 //
-// Privacy (§2, §7.3): counts only. Key codes reach this process (helper `input` messages, uiohook
-// events) and are used transiently for a held-key set; they are never printed, logged or written. No
-// characters, no titles, no URLs. The log goes to app.getPath('logs')/spike-input.log because a
-// packaged app started with `open` has no visible stdout.
+// Privacy (§2, §7.3): counts only. Key codes reach this process (helper `input` messages) and are used
+// transiently for a held-key set; they are never printed, logged or written. No characters, no titles,
+// no URLs. The log goes to app.getPath('logs')/spike-input.log because a packaged app started with
+// `open` has no visible stdout.
 
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { app, systemPreferences } from 'electron'
 import { tuning } from '../../../shared/tuning'
@@ -34,17 +33,14 @@ import {
 } from '../windows/common'
 import { errorText, localStamp } from '../windows/format'
 import { formatSummary, round, roundSummary, summarize } from '../windows/measure'
-import { formatCounts, HelperInputCounter, totalEvents, UiohookInputCounter, type InputCounts } from './counters'
+import { formatCounts, HelperInputCounter, totalEvents, type InputCounts } from './counters'
 import type { InputSpikeOptions } from './options'
 import { followUpAfterRetry, RestartAfterGrantProbe } from './restartAfterGrant'
 
 const T = tuning.spikeInput
 const TAG = '[spike:input]'
-const RESULTS_SCHEMA = 'bitbot-spike-input/2'
+const RESULTS_SCHEMA = 'bitbot-spike-input/3'
 const now = (): number => performance.now()
-
-type UiohookModule = typeof import('uiohook-napi')
-type UiohookHook = UiohookModule['uIOhook']
 
 interface TapAttempt {
   tRunS: number
@@ -100,19 +96,10 @@ export class InputHarness {
   )
 
   private readonly helperCounter = new HelperInputCounter(T.maxPlausibleAgeS, T.ageSampleCap)
-  private readonly uiohookCounter = new UiohookInputCounter()
-  private hook: UiohookHook | null = null
-  private hookImportedVia: 'import()' | 'require' | null = null
-  private hookRunning = false
-  private hookStartError: { code: string | null; message: string } | null = null
-  private axTrusted: { atStart: boolean | null; afterStart: boolean | null } = { atStart: null, afterStart: null }
+  private axTrusted: { atStart: boolean | null } = { atStart: null }
   private readonly reports: IntervalReport[] = []
 
   constructor(private readonly options: InputSpikeOptions) {}
-
-  private get counter(): HelperInputCounter | UiohookInputCounter {
-    return this.options.source === 'helper' ? this.helperCounter : this.uiohookCounter
-  }
 
   async run(): Promise<void> {
     const o = this.options
@@ -147,8 +134,7 @@ export class InputHarness {
       if (this.finishing) return
       if (o.durationS > 0) this.durationTimer = setTimeout(() => void this.finish('duration'), o.durationS * 1000)
       this.every(() => this.report(), T.reportIntervalS * 1000)
-      if (o.source === 'helper') await this.runHelperSource()
-      else await this.runUiohookSource()
+      await this.runHelperSource()
       this.log.line(`counting${o.durationS > 0 ? ` for ${o.durationS} s` : ' until Ctrl+C / SIGTERM / quit'}; counts every ${T.reportIntervalS} s`)
     } catch (err) {
       if (this.finishing) return
@@ -186,9 +172,7 @@ export class InputHarness {
         this.restartProbe.onReapplied(message)
       }),
       // Counts only: the message (with its key code) goes nowhere else.
-      helper.on('input', (message) => {
-        if (this.options.source === 'helper') this.helperCounter.record(message, Date.now() / 1000)
-      }),
+      helper.on('input', (message) => this.helperCounter.record(message, Date.now() / 1000)),
     )
     const hello = waitForHello(helper, T.helloTimeoutMs)
     helper.start()
@@ -292,82 +276,12 @@ export class InputHarness {
     }
   }
 
-  // ───────────────────────────── uiohook ─────────────────────────────
-
-  /**
-   * uiohook-napi 1.5.5 bundles libuiohook. On macOS its start():
-   *  - calls AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: true}): shows the Accessibility
-   *    prompt when undecided, and fails with UIOHOOK_ERROR_AXAPI_DISABLED while not trusted;
-   *  - then creates an ACTIVE event tap (CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
-   *    kCGEventTapOptionDefault, …)) that also receives every mouse move and translates each key press
-   *    to text with UCKeyTranslate via dispatch_sync on the main queue (uiohook-napi drops the text).
-   * So it needs Accessibility rather than Input Monitoring. Even loading the module opens an IOHIDSystem
-   * connection (its library constructor, built with USE_IOKIT). Imported only here, never at startup.
-   */
-  private async runUiohookSource(): Promise<void> {
-    const name = 'uiohook'
-    this.log.line('uiohook: importing uiohook-napi')
-    type Loaded = Partial<UiohookModule> & { default?: Partial<UiohookModule> }
-    let hook: UiohookHook | undefined
-    try {
-      const mod = (await import('uiohook-napi')) as Loaded
-      hook = mod.uIOhook ?? mod.default?.uIOhook
-      this.hookImportedVia = 'import()'
-    } catch (importErr) {
-      // Fallback for the ESM loader not reading app.asar: the package is CommonJS, so require it from the
-      // app root (Electron's CommonJS loader reads asar archives and app.asar.unpacked natives).
-      this.log.line(`uiohook: import() failed (${errorText(importErr)}); trying require from the app root`)
-      try {
-        const mod = createRequire(join(app.getAppPath(), 'package.json'))('uiohook-napi') as Loaded
-        hook = mod.uIOhook
-        this.hookImportedVia = 'require'
-      } catch (err) {
-        this.record(`${name} import`, 'FAIL', `import(): ${errorText(importErr)}; require: ${errorText(err)}`)
-        return
-      }
-    }
-    if (!hook) {
-      this.record(`${name} import`, 'FAIL', 'uiohook-napi has no uIOhook export')
-      return
-    }
-    this.hook = hook
-    this.record(`${name} import`, 'PASS', `native module loaded via ${this.hookImportedVia}`)
-    const counter = this.uiohookCounter
-    // Listeners only count; the event objects (key codes, positions) go nowhere else.
-    if (this.options.keys) {
-      hook.on('keydown', (event) => counter.keydown(event.keycode))
-      hook.on('keyup', (event) => counter.keyup(event.keycode))
-    }
-    if (this.options.mouse) {
-      hook.on('mousedown', (event) => counter.mousedown(event.button))
-      // Counted only: libuiohook's wheel events are whole-line ones and carry no comparable breakdown.
-      hook.on('wheel', () => counter.wheel())
-    }
-    this.log.line('uiohook: calling uIOhook.start() (libuiohook asks AXIsProcessTrustedWithOptions with prompt: true first)')
-    const start = now()
-    try {
-      hook.start()
-      this.hookRunning = true
-      this.record(`${name} start()`, 'PASS', `hook running (${Math.round(now() - start)} ms)`)
-    } catch (err) {
-      const rawCode: unknown = typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined
-      const code = typeof rawCode === 'string' ? rawCode : null
-      this.hookStartError = { code, message: errorText(err) }
-      this.record(`${name} start()`, 'FAIL', `threw ${code ?? '(no code)'}: ${errorText(err)} (${Math.round(now() - start)} ms)`)
-    }
-    this.axTrusted.afterStart = systemPreferences.isTrustedAccessibilityClient(false)
-    this.log.line(`Electron process Accessibility trusted after start() (no prompt): ${this.axTrusted.afterStart}`)
-  }
-
   // ───────────────────────────── reporting ─────────────────────────────
 
   private report(): void {
-    const counts = this.counter.takeInterval()
+    const counts = this.helperCounter.takeInterval()
     this.reports.push({ tRunS: round(this.runSeconds(), 3), counts })
-    const tap =
-      this.options.source === 'helper'
-        ? ` · tap ${this.tapActive ? 'active' : 'inactive'} · listen=${this.accessLatest?.listen ?? '-'}`
-        : ` · hook ${this.hookRunning ? 'running' : 'not running'}`
+    const tap = ` · tap ${this.tapActive ? 'active' : 'inactive'} · listen=${this.accessLatest?.listen ?? '-'}`
     this.log.line(`+${T.reportIntervalS}s ${formatCounts(counts)}${tap}`)
   }
 
@@ -417,14 +331,6 @@ export class InputHarness {
     for (const interval of this.intervals.splice(0)) clearInterval(interval)
     this.report()
 
-    if (this.hook && this.hookRunning) {
-      try {
-        this.hook.stop()
-        this.hookRunning = false
-      } catch (err) {
-        this.error(`uIOhook.stop() threw: ${errorText(err)}`)
-      }
-    }
     const helper = this.helper
     const helperPid = helper?.pid ?? null
     if (helper) {
@@ -465,15 +371,13 @@ export class InputHarness {
       }
     }
 
-    const total = this.counter.total
+    const total = this.helperCounter.total
     this.log.line(`TOTAL ${formatCounts(total)} (${totalEvents(total)} events in ${this.runSeconds().toFixed(1)} s)`)
     const ages = summarize(this.helperCounter.ages.samplesMs)
-    if (this.options.source === 'helper') {
-      this.log.line(
-        `event age at receipt (helper ts → main): ${formatSummary(ages, ' ms')}; implausible ${this.helperCounter.ages.implausible} ` +
-          '(a wrong timestamp unit shows up as implausible or huge ages)',
-      )
-    }
+    this.log.line(
+      `event age at receipt (helper ts → main): ${formatSummary(ages, ' ms')}; implausible ${this.helperCounter.ages.implausible} ` +
+        '(a wrong timestamp unit shows up as implausible or huge ages)',
+    )
     let code = 0
     try {
       const resultsDir = this.options.resultsDir ?? defaultResultsDir()
@@ -520,20 +424,13 @@ export class InputHarness {
         exits: this.helperExits,
         stderr: this.helperStderr,
       },
-      uiohook:
-        this.options.source === 'uiohook'
-          ? { importedVia: this.hookImportedVia, startError: this.hookStartError, started: this.hook !== null && this.hookStartError === null }
-          : null,
       checks: this.checks,
       reportIntervalS: T.reportIntervalS,
-      countsNote:
-        'null = this source cannot observe it (not 0). uiohook only dispatches scrolls with a whole-line delta, labels ' +
-        'diagonal scrolls vertical and has no continuous/momentum flag: compare keys, clicks and notched-wheel scrolls only.',
       reports: this.reports,
       total,
       totalEvents: totalEvents(total),
-      eventAgeMs: this.options.source === 'helper' ? roundSummary(ages) : null,
-      implausibleEventAges: this.options.source === 'helper' ? this.helperCounter.ages.implausible : null,
+      eventAgeMs: roundSummary(ages),
+      implausibleEventAges: this.helperCounter.ages.implausible,
       errors: this.errors,
     }
   }
