@@ -116,6 +116,33 @@ export class WorldDriver {
     this.sendDebug(loco)
   }
 
+  /**
+   * Where "go eat" goes (§10.2): the middle of the visible top of the frontmost eligible window (the helper lists
+   * windows front to back, so this is the frontmost app's); null: no window top to stand on.
+   */
+  foodSpot(): Point | null {
+    return this.topOf((w) => this.current?.windows.has(w.wid) === true)
+  }
+
+  /** The top of `bundleId`'s frontmost window (§10.2 run to the launched app's window); null: none (yet). */
+  windowTopFor(bundleId: string): Point | null {
+    return this.topOf((w) => w.bundleId === bundleId && this.current?.windows.has(w.wid) === true)
+  }
+
+  private topOf(match: (w: HelperWindow) => boolean): Point | null {
+    const world = this.current
+    if (!world) return null
+    for (const w of this.windows) {
+      if (!match(w)) continue
+      const tops = world.segments.filter((s) => s.windowId === w.wid)
+      if (tops.length === 0) continue
+      // The widest visible piece of its top.
+      const top = tops.reduce((a, b) => (b.x1 - b.x0 > a.x1 - a.x0 ? b : a))
+      return { x: (top.x0 + top.x1) / 2, y: top.y }
+    }
+    return null
+  }
+
   /** The dev panel's one-off actions. */
   action(action: DevPanelAction, loco: Locomotion | null): void {
     const world = this.current

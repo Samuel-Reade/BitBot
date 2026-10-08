@@ -162,3 +162,21 @@ describe('WorldDriver', () => {
     expect(debugMsgs).toEqual([])
   })
 })
+
+describe('WorldDriver food spots', () => {
+  it('the frontmost eligible window’s top, and a given app’s window top', () => {
+    const { driver, loco } = setup()
+    expect(driver.foodSpot()).toBeNull()
+    const front = win(7, 1000, 600, 300, 200, { bundleId: 'com.apple.Safari' })
+    driver.onSnapshot([front, W1, W3], 0, loco)
+    const spot = driver.foodSpot()
+    expect(spot?.y).toBe(600)
+    expect(spot?.x).toBeCloseTo(1150, 0)
+    expect(driver.windowTopFor('com.example.app')?.y).toBe(W1.y) // W1 is the first com.example.app window
+    expect(driver.windowTopFor('com.nope')).toBeNull()
+    // A window too small to be a surface is skipped.
+    driver.onSnapshot([win(8, 100, 100, 50, 50, { bundleId: 'com.tiny' }), W1], 10, loco)
+    expect(driver.windowTopFor('com.tiny')).toBeNull()
+    expect(driver.foodSpot()?.y).toBe(W1.y)
+  })
+})
