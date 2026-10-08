@@ -119,6 +119,18 @@ export const tuning = {
     debugSampleCap: 20_000,
     /** Contact shadow (§6.1 "fades with height"): full strength on the ground, gone at this height, pt. Higher = it lingers as the pet lifts off. */
     shadowFadePt: 24,
+    /**
+     * A WebGL render may start this many ms before 1000 / render.fps.moving has passed since the previous one.
+     * Animation-frame timestamps sit on the display's vsync, and a "60 Hz" display refreshes slightly faster than
+     * 60 Hz (16.666 ms), so a strict cap would skip every other frame there. Higher = closer to the display's own
+     * rate on 75–100 Hz displays (more renders while the shadow changes); lower = a stricter cap.
+     */
+    renderIntervalSlackMs: 2,
+    /**
+     * pet:log reports per overlay page load (each distinct message is sent once). Higher = more diagnostics from a
+     * faulty page, more log noise.
+     */
+    logMessageBudget: 50,
     /** Display changes arrive in bursts; the overlay is re-laid out this long after the last one, ms. */
     displayChangeDebounceMs: 100,
     /** A crashed overlay renderer is recreated after this long, ms. */

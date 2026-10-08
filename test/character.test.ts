@@ -22,7 +22,9 @@ import {
   framePetCamera,
   framingReference,
   measureViewportExtents,
+  projectedBoundingBox,
   projectToViewport,
+  supportLineShadow,
   type PetFraming,
 } from '../src/renderer/pet/character/framing'
 import { createHitTester } from '../src/renderer/pet/character/hitTest'
@@ -738,6 +740,125 @@ describe('framing', () => {
       }
       expect(below).toBeGreaterThan(0)
     }
+    rig.dispose()
+  })
+
+  it('linePlaneAt(anchor.y) is the ground-line plane, and the plane of any row cuts the image exactly along it', () => {
+    const { rig, camera, framing, edge } = framed('M', DEFAULT_YAW)
+    // World points around the pet, all in front of the camera.
+    const points: THREE.Vector3[] = []
+    for (let x = -1.5; x <= 1.5; x += 0.25) {
+      for (let y = -0.6; y <= 2.6; y += 0.2) for (const z of [-0.8, 0, 0.8]) points.push(new THREE.Vector3(x, y, z))
+    }
+    const ground = new THREE.Plane()
+    const line = new THREE.Plane()
+    for (const yaw of yaws) {
+      framing.placeForYaw(yaw)
+      framing.groundLinePlane(ground)
+      framing.linePlaneAt(framing.anchor.y, line)
+      expect(line.normal.distanceTo(ground.normal), `yaw ${yaw}`).toBeLessThan(1e-12)
+      expect(Math.abs(line.constant - ground.constant), `yaw ${yaw}`).toBeLessThan(1e-12)
+      for (const row of [framing.anchor.y, framing.anchor.y + 12, framing.anchor.y - 50, 5, edge - 5]) {
+        framing.linePlaneAt(row, line)
+        let wrongSide = 0
+        let checked = 0
+        for (const p of points) {
+          const offset = projectToViewport(p, camera, edge, edge).y - row
+          if (Math.abs(offset) < 1e-6) continue
+          checked++
+          // Drawn above the row (smaller y) ⇔ on the positive side.
+          if (Math.sign(line.distanceToPoint(p)) !== -Math.sign(offset)) wrongSide++
+        }
+        expect(wrongSide, `yaw ${yaw} row ${row}`).toBe(0)
+        expect(checked).toBeGreaterThan(points.length / 2)
+      }
+    }
+    rig.dispose()
+  })
+
+  it('puts the contact shadow of a lifted pet on the support line: about e pt lower, clipped at anchor.y + e', () => {
+    for (const yaw of [DEFAULT_YAW, -DEFAULT_YAW]) {
+      const { rig, camera, framing, edge } = framed('M', yaw)
+      const shadow = mesh(rig, 'part:contactShadow')
+      const restY = shadow.position.y
+      const position = shadow.geometry.getAttribute('position')
+      const v = new THREE.Vector3()
+      const vertexRows = (): number[] => {
+        rig.root.updateMatrixWorld(true)
+        const rows: number[] = []
+        for (let i = 0; i < position.count; i++) {
+          v.fromBufferAttribute(position, i).applyMatrix4(shadow.matrixWorld)
+          rows.push(projectToViewport(v, camera, edge, edge).y)
+        }
+        return rows
+      }
+      const centerRow = (): number => {
+        rig.root.updateMatrixWorld(true)
+        return projectToViewport(shadow.getWorldPosition(new THREE.Vector3()), camera, edge, edge).y
+      }
+      const restRows = vertexRows()
+      const restCenter = centerRow()
+      const plane = new THREE.Plane()
+      for (const e of [3, 12, tuning.overlay.shadowFadePt]) {
+        const placement = supportLineShadow(framing, e)
+        expect(placement.clipRow).toBe(framing.anchor.y + e)
+        shadow.position.y = restY - placement.drop
+        // Its center (under the root origin, at the root's depth) lands e pt lower…
+        const moved = centerRow() - restCenter
+        expect(Math.abs(moved - e) / e, `yaw ${yaw} e ${e}: center moved ${moved}`).toBeLessThan(0.03)
+        // …and every point about e lower (perspective: the near edge a little more, the far edge a little less).
+        const rows = vertexRows()
+        const ratios = rows.map((row, i) => (row - (restRows[i] ?? Number.NaN)) / e)
+        expect(Math.min(...ratios), `yaw ${yaw} e ${e}`).toBeGreaterThan(0.85)
+        expect(Math.max(...ratios), `yaw ${yaw} e ${e}`).toBeLessThan(1.15)
+        // The clip plane cuts it exactly at the support line: what is drawn below that row is clipped away.
+        framing.linePlaneAt(placement.clipRow, plane)
+        rig.root.updateMatrixWorld(true)
+        let below = 0
+        rows.forEach((row, i) => {
+          const offset = row - placement.clipRow
+          if (offset > 1e-6) below++
+          if (Math.abs(offset) > 1e-6) {
+            v.fromBufferAttribute(position, i).applyMatrix4(shadow.matrixWorld)
+            expect(Math.sign(plane.distanceToPoint(v))).toBe(-Math.sign(offset))
+          }
+        })
+        expect(below, `yaw ${yaw} e ${e}`).toBeGreaterThan(0)
+      }
+      // Standing (or a nonsense elevation): the rest placement, clipped at the ground line.
+      for (const e of [0, -4, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(supportLineShadow(framing, e), `e ${e}`).toEqual({ drop: 0, clipRow: framing.anchor.y })
+      }
+      rig.dispose()
+    }
+  })
+
+  it('projectedBoundingBox covers everything drawn and every hit proxy, at either facing', () => {
+    const { rig, camera, framing, edge } = framed('M', DEFAULT_YAW)
+    const hitCamera = new THREE.PerspectiveCamera()
+    for (const yaw of [DEFAULT_YAW, -DEFAULT_YAW, 0]) {
+      rig.root.rotation.y = yaw
+      rig.root.updateMatrixWorld(true)
+      framing.placeForYaw(yaw)
+      hitCamera.copy(camera)
+      hitCamera.layers.set(HIT_LAYER)
+      const box = projectedBoundingBox(rig.root, camera, edge, edge)
+      if (!box) throw new Error('no box')
+      const drawn = measureViewportExtents(rig.root, camera, edge, edge)
+      const proxies = measureViewportExtents(rig.root, hitCamera, edge, edge)
+      for (const inner of [drawn, proxies]) {
+        expect(box.left, `yaw ${yaw}`).toBeLessThanOrEqual(inner.left + 1e-9)
+        expect(box.top, `yaw ${yaw}`).toBeLessThanOrEqual(inner.top + 1e-9)
+        expect(box.right, `yaw ${yaw}`).toBeGreaterThanOrEqual(inner.right - 1e-9)
+        expect(box.bottom, `yaw ${yaw}`).toBeGreaterThanOrEqual(inner.bottom - 1e-9)
+      }
+      // The antenna-tip proxy reaches beyond the drawn pet, so the box must too.
+      expect(proxies.top).toBeLessThan(drawn.top)
+      // Conservative, not absurd: within the viewport.
+      expect(box.left).toBeGreaterThan(0)
+      expect(box.right).toBeLessThan(edge)
+    }
+    expect(projectedBoundingBox(new THREE.Group(), camera, edge, edge)).toBeNull()
     rig.dispose()
   })
 
