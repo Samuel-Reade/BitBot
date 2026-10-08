@@ -51,7 +51,10 @@ export interface AnimInput {
   /** The dev panel's forced face fields. */
   faceOverride: FaceOverride | null
   idleMode: IdleMode
-  /** The newest reaction (pet:state); each seq plays once (§10.4 petting, dizzy after a hard toss). Optional: none. */
+  /**
+   * The newest reaction (pet:state); each seq plays once (§10.4 petting, dizzy after a hard toss, §9.3 waking up, §9.1
+   * shaking off the dust). Optional: none.
+   */
   reaction?: PetReaction | null
 }
 
@@ -214,6 +217,10 @@ export class Animator {
   /** The reaction playing: its kind and time span; and the newest seq seen (null: none yet, so a page's first state replays nothing). */
   private playing: { kind: PetReactionKind; start: number; end: number } | null = null
   private reactionSeq: number | null = null
+  /** The dust (0..1) the pet had when the playing shake-off started: its specks stay on until they fall away. */
+  private shakeDust = 0
+  /** The previous update's dust (main may clear it in the same pet:state that starts the shake-off). */
+  private lastDust = 0
 
   private signature: number[] = []
   private faceKey = ''
@@ -283,8 +290,9 @@ export class Animator {
     else if (dt > 0) this.yaw = lerp(this.yaw, yawTarget, 1 - Math.exp(-T.yawEaseRate * dt))
     if (Math.abs(yawTarget - this.yaw) < 1e-4) this.yaw = yawTarget
 
-    const face = this.faceFor(input, tau, t, style)
-    const dustCount = input.dust >= T.dust.visibleFrom ? Math.round(Math.min(1, input.dust) * T.dust.maxSpecks) : 0
+    const dustCount = this.dustCountFor(input, t)
+    this.lastDust = input.dust
+    const face = this.faceFor(input, tau, t, style, dustCount)
 
     const changed = this.apply(pose, face, dustCount, input)
     const wakeAt = this.wakeAt(nowMs, t, input, style, face)
@@ -521,27 +529,71 @@ export class Animator {
     return p
   }
 
-  /** A reaction (§10.4): a happy wiggle when petted, a wobble when dizzy; standing poses only (not climbing or in the air). */
+  /**
+   * A reaction: a happy wiggle when petted, a wobble when dizzy (§10.4), a stretch on waking up (§9.3), a shake when
+   * shaking off the dust (§9.1); standing poses only (not climbing, in the air or held).
+   */
   private reactionLayer(pose: Pose, input: AnimInput, t: number): Pose {
     const r = input.reaction ?? null
+    const R = this.T.react
     // The first update only notes the newest seq (0: none yet), so a page's first state replays nothing.
     if (this.reactionSeq === null) this.reactionSeq = r?.seq ?? 0
     else if (r && r.seq !== this.reactionSeq) {
-      const length = r.kind === 'petted' ? this.T.react.pettedS : this.T.react.dizzyS
+      const length = r.kind === 'petted' ? R.pettedS : r.kind === 'dizzy' ? R.dizzyS : r.kind === 'wakeUp' ? R.wakeUpS : R.shakeOffS
       this.playing = { kind: r.kind, start: t, end: t + length }
       this.reactionSeq = r.seq
+      if (r.kind === 'shakeOff') this.shakeDust = Math.max(input.dust, this.lastDust)
     }
     const p = this.playing
     if (!p || t >= p.end) {
       this.playing = null
       return pose
     }
-    if (input.attach !== 'floor' || ['held', 'fall', 'jump', 'climb'].includes(input.state)) return pose
-    const u = (t - p.start) / (p.end - p.start)
-    const R = this.T.react
-    if (p.kind === 'petted') pose.roll += Math.sin(TAU * R.wiggleHz * (t - p.start)) * R.wiggle * (1 - u)
-    else pose.roll += Math.sin(TAU * R.wobbleHz * (t - p.start)) * R.wobble * (1 - u)
+    if (!standing(input)) return pose
+    const tau = t - p.start
+    const u = tau / (p.end - p.start)
+    switch (p.kind) {
+      case 'petted':
+        pose.roll += Math.sin(TAU * R.wiggleHz * tau) * R.wiggle * (1 - u)
+        break
+      case 'dizzy':
+        pose.roll += Math.sin(TAU * R.wobbleHz * tau) * R.wobble * (1 - u)
+        break
+      case 'wakeUp': {
+        // Up into the stretch, hold it, settle back.
+        const s = smoothstep(u / R.wakeRise) * (1 - smoothstep((u - R.wakeSettle) / (1 - R.wakeSettle)))
+        pose.squash *= lerp(1, R.wakeStretch, s)
+        pose.armLRaise += R.wakeArmsUp * s
+        pose.armRRaise += R.wakeArmsUp * s
+        pose.lean += R.wakeLean * s
+        break
+      }
+      case 'shakeOff': {
+        const b = bump(u)
+        pose.roll += Math.sin(TAU * R.shakeHz * tau) * R.shakeRoll * (1 - u)
+        pose.squash *= 1 - R.shakeSquash * b
+        pose.armLRaise += R.shakeArms * b
+        pose.armRRaise += R.shakeArms * b
+        break
+      }
+    }
     return pose
+  }
+
+  /**
+   * Dust specks shown (§6.4): from the dust level; while a shake-off plays (standing), the specks the pet had stay on
+   * until tuning.anim.react.shakeShedFrom, then fall away by its end, whatever pet:state's dust says meanwhile.
+   */
+  private dustCountFor(input: AnimInput, t: number): number {
+    const D = this.T.dust
+    const count = (dust: number): number => (dust >= D.visibleFrom ? Math.round(Math.min(1, dust) * D.maxSpecks) : 0)
+    const own = count(input.dust)
+    const p = this.playing
+    if (!p || p.kind !== 'shakeOff' || t >= p.end || !standing(input)) return own
+    const R = this.T.react
+    const u = (t - p.start) / (p.end - p.start)
+    const left = 1 - smoothstep((u - R.shakeShedFrom) / (1 - R.shakeShedFrom))
+    return Math.max(own, Math.round(count(this.shakeDust) * left))
   }
 
   private moodLayers(pose: Pose, input: AnimInput, t: number, style: IdleMode): Pose {
@@ -568,7 +620,7 @@ export class Animator {
 
   // ───────────────────────────── face ─────────────────────────────
 
-  private faceFor(input: AnimInput, tau: number, t: number, style: IdleMode): FaceState {
+  private faceFor(input: AnimInput, tau: number, t: number, style: IdleMode, dustCount: number): FaceState {
     const T = this.T
     let eyes: EyesState = 'open'
     let mouth: MouthState = 'smile'
@@ -655,7 +707,7 @@ export class Animator {
     }
     if (input.mood === 'happy') overlays.add('blush')
     if (input.mood === 'stuffed' && input.state !== 'sleep' && this.cueOn(style, t)) overlays.add('loading')
-    if (input.dust >= T.dust.visibleFrom) overlays.add('dust')
+    if (dustCount > 0) overlays.add('dust')
 
     // Eyes follow the cursor (§6.3) or glance aside (event idle, bored).
     if (looks && eyes === 'open') {
@@ -682,17 +734,25 @@ export class Animator {
       }
     }
 
-    // A reaction (§10.4): petted → happy and blushing; dizzy after a hard toss → dizzy eyes, a wavy mouth.
+    // A reaction: petted → happy and blushing; dizzy after a hard toss → dizzy eyes, a wavy mouth (§10.4); waking up →
+    // eyes closed and a yawn, then open (§9.3); shaking off the dust → happy (§9.1). The last two only standing, like
+    // their pose.
     const r = this.playing
     if (r && t < r.end) {
       if (r.kind === 'petted') {
         eyes = 'happy'
         overlays.add('blush')
-      } else {
+        blinks = false
+      } else if (r.kind === 'dizzy') {
         eyes = 'dizzy'
         mouth = 'wavy'
+        blinks = false
+      } else if (standing(input)) {
+        const yawning = r.kind === 'wakeUp' && (t - r.start) / (r.end - r.start) < T.react.wakeYawnUntil
+        eyes = yawning ? 'closed' : r.kind === 'wakeUp' ? 'open' : 'happy'
+        mouth = yawning ? 'yawn' : 'smile'
+        blinks = false
       }
-      blinks = false
     }
 
     this.blinking = blinks
@@ -934,6 +994,11 @@ function mix(a: Pose, b: Pose, u: number): Pose {
 // blend from the fall pose swallowed the landing squash (measured: 0.99 of full height instead of 0.75).
 function blendFor(state: BehaviorState, T: AnimTuning): number {
   return state === 'land' ? T.land.blendS : T.blendS
+}
+
+/** Standing on a surface: not climbing, in the air or held (the reactions' poses play only then). */
+function standing(input: AnimInput): boolean {
+  return input.attach === 'floor' && input.state !== 'held' && input.state !== 'fall' && input.state !== 'jump' && input.state !== 'climb'
 }
 
 /** +1 on a wall on the pet's right, −1 on its left, 0 standing (Pose.wall). */
