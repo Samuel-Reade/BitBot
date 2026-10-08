@@ -290,6 +290,8 @@ export const tuning = {
      * there are. Higher = a longer page.
      */
     knownAppsShown: 200,
+    /** Bitbot's hotkeys pause while a hotkey is recorded; they come back on their own after this long at most, ms. */
+    recordingPauseMaxMs: 30_000,
   },
   move: {
     /** pt/s. Higher walk speed reads as busier/more anxious. */

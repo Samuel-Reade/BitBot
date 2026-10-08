@@ -218,6 +218,8 @@ export class BitbotApp {
   private readonly hotkeys: Hotkeys
   /** §15.4 the settings window (opened from the tray or the pet's menu). */
   private readonly settingsWindow: SettingsWindow
+  /** When Bitbot's hotkeys were paused for the settings page's recorder (wall ms); null: not paused. */
+  private hotkeysPausedAt: number | null = null
   /** §9.4 the daily summary bubble (made after the economy; PetInteraction asks it through `this.summary?`). */
   private summary: SummaryBubble | null = null
   private readonly tray: BitbotTray
@@ -1011,6 +1013,9 @@ export class BitbotApp {
         notice = this.rebindHotkey(change.action, accelerator)
         break
       }
+      case 'recordingHotkey':
+        this.pauseHotkeys(change.on)
+        return null
       case 'requestInputAccess':
         void this.turnOnInputMonitoring()
         break
@@ -1030,6 +1035,22 @@ export class BitbotApp {
     this.autosaver?.changed()
     this.settingsWindow.refresh()
     return notice
+  }
+
+  /**
+   * While the settings page records a hotkey, Bitbot's own are unregistered so their keys reach the recorder; they come
+   * back when it stops, when the window closes, or after tuning.settingsWindow.recordingPauseMaxMs (tickLife).
+   */
+  private pauseHotkeys(on: boolean): void {
+    if (on === (this.hotkeysPausedAt !== null)) return
+    if (on) {
+      this.hotkeys.unregisterAll()
+      this.hotkeysPausedAt = Date.now()
+    } else {
+      this.hotkeysPausedAt = null
+      this.registerHotkeys()
+    }
+    this.tray.refresh()
   }
 
   private rebindHotkey(action: HotkeyAction, accelerator: string): SettingsNotice | null {
@@ -1679,6 +1700,10 @@ export class BitbotApp {
   private tickLife(): void {
     this.watchAppHidden() // the loop parks while hidden: notice macOS showing Bitbot again here
     this.settingsWindow.refresh() // e.g. Input Monitoring granted meanwhile (no-op while closed or unchanged)
+    const paused = this.hotkeysPausedAt
+    if (paused !== null && (!this.settingsWindow.isOpen || Date.now() - paused > tuning.settingsWindow.recordingPauseMaxMs)) {
+      this.pauseHotkeys(false)
+    }
     this.life.advance()
     for (const e of this.economy.drainEvents()) this.life.economyEvent(e)
     this.worldDriver.setAsleep(this.life.asleep, clock.now(), this.loco)

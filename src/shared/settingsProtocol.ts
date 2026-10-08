@@ -161,6 +161,11 @@ export type SettingsChange =
   /** A canonical accelerator (normalizeAccelerator). */
   | { kind: 'hotkey'; action: HotkeyAction; accelerator: string }
   | { kind: 'resetHotkey'; action: HotkeyAction }
+  /**
+   * The page records a hotkey (on) or stopped (off): main pauses Bitbot's own hotkeys meanwhile, so pressing one of
+   * them (or the combination being replaced) reaches the recorder instead of running the action.
+   */
+  | { kind: 'recordingHotkey'; on: boolean }
   | { kind: 'altCmdClickSend'; on: boolean }
   // Privacy
   /** "Turn on…": the system prompt and/or System Settings' Input Monitoring pane. */
@@ -233,6 +238,7 @@ export function isSettingsChange(value: unknown): value is SettingsChange {
     case 'hideInFullscreen':
     case 'altCmdClickSend':
     case 'launchAtLogin':
+    case 'recordingHotkey':
       return hasFields(v, ['on']) && isBool(v['on'])
     case 'hotkey':
       return hasFields(v, ['action', 'accelerator']) && isHotkeyAction(v['action']) && normalizeAccelerator(v['accelerator']) === v['accelerator']

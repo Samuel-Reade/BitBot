@@ -411,6 +411,7 @@ function renderBehavior(v: SettingsView): void {
 
 const hotkeysBox = element('hotkeys', HTMLDivElement)
 function startRecording(action: HotkeyAction): void {
+  if (recording === null) send({ kind: 'recordingHotkey', on: true }) // main pauses Bitbot's hotkeys meanwhile
   recording = action
   recordMessage = null
   rerenderHotkeys()
@@ -420,6 +421,7 @@ function cancelRecording(): void {
   if (recording === null) return
   recording = null
   recordMessage = null
+  send({ kind: 'recordingHotkey', on: false })
   rerenderHotkeys()
 }
 
@@ -445,6 +447,7 @@ window.addEventListener(
       const action = recording
       recording = null
       recordMessage = null
+      send({ kind: 'recordingHotkey', on: false }) // hotkeys back first, so the rebind replaces a registered one
       send({ kind: 'hotkey', action, accelerator: step.accelerator })
       rerenderHotkeys()
     }

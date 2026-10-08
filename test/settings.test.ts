@@ -125,6 +125,8 @@ describe('isSettingsChange', () => {
     { kind: 'hotkey', action: 'goHome', accelerator: 'Control+Alt+H' },
     { kind: 'resetHotkey', action: 'toggleStay' },
     { kind: 'altCmdClickSend', on: true },
+    { kind: 'recordingHotkey', on: true },
+    { kind: 'recordingHotkey', on: false },
     { kind: 'launchAtLogin', on: true },
     { kind: 'requestInputAccess' },
     { kind: 'eraseAllData', confirmed: true },
@@ -133,7 +135,7 @@ describe('isSettingsChange', () => {
   it('accepts every kind of change', () => {
     for (const change of valid) expect(isSettingsChange(change), JSON.stringify(change)).toBe(true)
     const kinds = new Set(valid.map((c) => c.kind))
-    expect(kinds.size).toBe(16)
+    expect(kinds.size).toBe(17)
   })
 
   it('rejects malformed changes', () => {
@@ -172,6 +174,8 @@ describe('isSettingsChange', () => {
       { kind: 'hotkey', action: 'dance', accelerator: 'Control+Alt+H' },
       { kind: 'resetHotkey', action: 'dance' },
       { kind: 'altCmdClickSend', on: 1 },
+      { kind: 'recordingHotkey', on: 'yes' },
+      { kind: 'recordingHotkey' },
       { kind: 'launchAtLogin' },
       { kind: 'eraseAllData' },
       { kind: 'eraseAllData', confirmed: 'true' },
