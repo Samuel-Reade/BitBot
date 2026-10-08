@@ -450,8 +450,10 @@ export const tuning = {
     /**
      * M3's stand-in for Roam: after arriving it pauses pauseS (random in the range), then goes somewhere reachable:
      * a window top with probability windowBias (else anywhere), up a wall or window side for fun with climbChance.
+     * A place on the segment it stands on is at least minDistancePt away (pt). Shorter pauses / smaller distance = a
+     * busier, more fidgety pet.
      */
-    wander: { pauseS: [2, 6] as readonly [number, number], windowBias: 0.6, climbChance: 0.15 },
+    wander: { pauseS: [2, 6] as readonly [number, number], windowBias: 0.6, climbChance: 0.15, minDistancePt: 150 },
   },
 
   /** bitbot-helper process management (§5.3). */
