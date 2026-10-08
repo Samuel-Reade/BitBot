@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { InputMsg } from '../src/main/helper/protocol'
-import {
-  emptyCounts,
-  formatCounts,
-  HelperInputCounter,
-  totalEvents,
-  UiohookInputCounter,
-} from '../src/main/spike/input/counters'
+import { emptyCounts, formatCounts, HelperInputCounter, totalEvents } from '../src/main/spike/input/counters'
 import { parseInputOptions } from '../src/main/spike/input/options'
 import {
   RESTART_AFTER_GRANT,
@@ -107,6 +101,17 @@ describe('HelperInputCounter', () => {
     expect(c.total).toMatchObject({ keyDown: 1, keyUp: 1, mouseDown: { left: 1 } })
   })
 
+  it('sums the scroll breakdown and the repeat-flag disagreements across intervals', () => {
+    const c = counter()
+    c.record(scroll({ continuous: true }), NOW)
+    c.record(key(true, true, 1), NOW) // flagged repeat, but key 1 was never down
+    c.takeInterval()
+    c.record(scroll({ continuous: true, momentum: true }), NOW)
+    c.record(key(true, true, 2), NOW)
+    expect(c.total.scroll).toEqual({ events: 2, continuous: 2, momentum: 1, zeroDelta: 0, horizontal: 0 })
+    expect(c.total.repeatDisagreements).toEqual({ flaggedNotHeld: 2, heldNotFlagged: 0 })
+  })
+
   it('keeps event ages in ms and counts implausible ones (wrong timestamp unit)', () => {
     const c = new HelperInputCounter(10, 2)
     c.record(key(true, false, 1, NOW - 0.004), NOW)
@@ -133,54 +138,9 @@ describe('HelperInputCounter', () => {
   })
 })
 
-describe('UiohookInputCounter', () => {
-  it('derives repeats from the held-key set (libuiohook repeats are plain keydowns)', () => {
-    const c = new UiohookInputCounter()
-    c.keydown(SECRET_CODE)
-    c.keydown(SECRET_CODE)
-    c.keydown(SECRET_CODE)
-    c.keyup(SECRET_CODE)
-    c.keydown(SECRET_CODE)
-    expect(c.total).toMatchObject({ keyDown: 4, keyUp: 1, keyRepeat: 2 })
-    expect(JSON.stringify(c.total)).not.toContain(String(SECRET_CODE))
-  })
-
-  it('maps 1-based uiohook buttons and counts wheel events without a breakdown it cannot observe', () => {
-    const c = new UiohookInputCounter()
-    for (const button of [1, 1, 2, 3, undefined]) c.mousedown(button)
-    c.wheel()
-    c.wheel()
-    c.wheel()
-    expect(c.total.mouseDown).toEqual({ left: 2, right: 1, other: 2 })
-    // libuiohook never delivers zero-delta or sub-line scrolls, labels diagonal ones vertical and has no
-    // continuous/momentum flag: those counts are null (unobservable), never a 0 that reads as data.
-    expect(c.total.scroll).toEqual({ events: 3, continuous: null, momentum: null, zeroDelta: null, horizontal: null })
-    expect(c.total.repeatDisagreements).toBeNull()
-  })
-
-  it('keeps unobservable counts null across intervals and totals', () => {
-    const c = new UiohookInputCounter()
-    c.wheel()
-    expect(c.takeInterval().scroll.zeroDelta).toBeNull()
-    c.keydown(SECRET_CODE)
-    expect(c.total.scroll).toEqual({ events: 1, continuous: null, momentum: null, zeroDelta: null, horizontal: null })
-    expect(c.total.repeatDisagreements).toBeNull()
-  })
-})
-
 describe('formatCounts', () => {
-  it('leaves out what uiohook cannot observe instead of printing 0', () => {
-    const counts = emptyCounts('uiohook')
-    counts.keyDown = 5
-    counts.keyUp = 5
-    counts.scroll.events = 3
-    expect(formatCounts(counts)).toBe(
-      'keys down 5 (repeat 0) up 5 · clicks left 0 right 0 other 0 · scroll 3 (whole-line events only, no breakdown)',
-    )
-  })
-
   it('prints every helper count on one line', () => {
-    const counts = emptyCounts('helper')
+    const counts = emptyCounts()
     counts.keyDown = 12
     counts.keyRepeat = 3
     counts.keyUp = 11
@@ -195,9 +155,10 @@ describe('formatCounts', () => {
 })
 
 describe('input options', () => {
-  it('requires a source', () => {
+  it('requires --source=helper, the only source', () => {
     expect(() => parseInputOptions({}, '/')).toThrow(/--source/)
     expect(() => parseInputOptions({ source: 'iohook' }, '/')).toThrow(/--source/)
+    expect(() => parseInputOptions({ source: 'uiohook' }, '/')).toThrow(/--source must be helper \(got uiohook\)/)
   })
 
   it('defaults', () => {
@@ -229,12 +190,11 @@ describe('input options', () => {
       resultsDir: '/repo/r',
       label: 'a',
     })
-    expect(parseInputOptions({ source: 'uiohook', mouse: 'false' }, '/').mouse).toBe(false)
+    expect(parseInputOptions({ source: 'helper', mouse: 'false' }, '/').mouse).toBe(false)
   })
 
-  it('rejects nothing-to-count and --request with uiohook', () => {
+  it('rejects nothing-to-count', () => {
     expect(() => parseInputOptions({ source: 'helper', keys: 'false', mouse: 'false' }, '/')).toThrow(/nothing to count/)
-    expect(() => parseInputOptions({ source: 'uiohook', request: 'true' }, '/')).toThrow(/--request/)
   })
 })
 

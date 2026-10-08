@@ -45,7 +45,8 @@ const SHADOW_LIFT = 0.001
 export interface BitbotJoints {
   /**
    * Shoulder pivots at the body-side end cap of each arm; local +y runs shoulder → hand. Rest
-   * rotation.z comes from armShoulder() (§6.1's ∓0.5 tilt); swing by offsetting it.
+   * rotation.z comes from armShoulder() (arms hanging down: §6.1's 0.5 tilt with the sign flipped,
+   * see BASE_FORM.arms); swing by offsetting it.
    */
   readonly armL: THREE.Group | null
   readonly armR: THREE.Group | null

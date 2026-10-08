@@ -74,8 +74,12 @@ export const BASE_FORM = {
     x: 1.0,
     y: -0.1,
     z: 0.15,
-    /** Base rotation about z is −side · rotZ (x = +1 → −0.5): the outer ends tilt up and away from the body. */
-    rotZ: 0.5,
+    // SPEC-DEVIATION: §6.1 gives the arms a base rotation z of ∓0.5 for x = ±1, which tilts their
+    // outer ends up. The user chose arms hanging down at rest (2026-10-07; compare
+    // docs/images/bitbot-arms-down.png with bitbot-arms-raised.png), so the sign is flipped. Size,
+    // center and |tilt| are §6.1's.
+    /** Base rotation about z is −side · rotZ (x = +1 → +0.5): the arms hang down, each free end below and outside its shoulder. */
+    rotZ: -0.5,
   },
   feet: { radius: 0.22, scale: [1, 0.55, 1.3] as Vec3, x: 0.42, y: -0.84, z: 0.12 },
   contactShadow: { radius: 1.1, scaleZ: 0.6, y: -0.95 },
@@ -112,10 +116,10 @@ export type Side = 1 | -1
  *
  * The pivot's local +y always runs shoulder → hand, so the arm mesh sits at
  * (0, ARM_CENTER_OFFSET, 0) and the hand at (0, ARM_HAND_OFFSET, 0) whichever way the tilt points.
- * With the §6.1 sign (x = +1 → −0.5) the outer ends tilt up, the shoulder is the lower cap and
- * rotationZ is the tilt itself. With the opposite sign (arms hanging outward) the shoulder is the
- * upper cap and rotationZ = tilt + π; the capsule is symmetric, so it looks identical.
- * `rotZ` defaults to §6.1's 0.5 (exposed so both signs can be tested).
+ * With the default sign (rotZ −0.5: x = +1 → +0.5) the arms hang down, the shoulder is the upper
+ * cap and rotationZ = tilt + π; the capsule is symmetric, so it looks identical. With §6.1's sign
+ * (rotZ 0.5: x = +1 → −0.5) the outer ends tilt up, the shoulder is the lower cap and rotationZ is
+ * the tilt itself. `rotZ` defaults to BASE_FORM.arms.rotZ (exposed so both signs can be tested).
  */
 export function armShoulder(side: Side, rotZ: number = BASE_FORM.arms.rotZ): { position: Vec3; rotationZ: number } {
   const { x, y, z, length } = BASE_FORM.arms
