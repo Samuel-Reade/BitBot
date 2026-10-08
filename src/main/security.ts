@@ -3,6 +3,11 @@ import { devServerOrigins, isAllowedRequestUrl } from './requestPolicy'
 
 // Design principle #1: Bitbot makes zero network requests. Every request from every renderer is
 // cancelled unless requestPolicy allows it; pages also get no permissions, popups or navigation.
+//
+// Popups: every webContents starts with a deny-all window-open handler. Exactly one webContents gets another:
+// PetWindow (src/main/windows/petWindow.ts) replaces the overlay's handler with one that allows only its grab area
+// (about:blank under the name main issued for that page load); everything else stays denied, and the grab area's
+// own webContents keeps the deny-all.
 
 let blockedCount = 0
 

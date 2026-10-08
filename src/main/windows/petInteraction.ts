@@ -45,7 +45,7 @@ export interface LocomotionControl {
 export interface NativeMouseEvent {
   type: 'mouseDown' | 'mouseUp' | 'mouseMove' | 'mouseEnter' | 'mouseLeave' | 'contextMenu' | 'mouseWheel'
   button: 'left' | 'middle' | 'right' | null
-  /** Electron's modifiers include 'leftbuttondown'. */
+  /** The left button is held (hitWindow.ts toNativeMouseEvent: Electron 44 reports it in `button`, not in modifiers). */
   leftButtonDown: boolean
   /** Global pt, when known (globalX/globalY). */
   screen: Point | null

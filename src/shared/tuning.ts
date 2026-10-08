@@ -179,6 +179,48 @@ export const tuning = {
     forwardMouseMoves: false,
   },
 
+  /** The running app's glue (src/main/bitbotApp.ts): quitting, signals, error reports and the focus self-check. */
+  app: {
+    /**
+     * Quitting waits at most this long for bitbot-helper to exit, ms. Its own stop escalates quit → SIGTERM → SIGKILL,
+     * tuning.helper.stopGraceMs apart, so this covers that with a little to spare. Lower = a faster quit that may leave
+     * the helper to exit on its own (it also exits when Bitbot does).
+     */
+    helperStopTimeoutMs: 3500,
+    /** After the clean-up, app.quit() falls back to app.exit() if the app is still running this long later, ms. */
+    quitFallbackMs: 3000,
+    /**
+     * A repeat of the first SIGINT/SIGTERM within this many ms is the same Ctrl+C echoed by electron's cli.js (ignored);
+     * a later one exits at once.
+     */
+    signalRepeatGraceMs: 1000,
+    /**
+     * An error that keeps happening (an uncaught exception in a timer, a simulation step that throws on every wake) is
+     * logged once per this many ms per message, with a count of the repeats. Lower = noisier logs.
+     */
+    errorLogIntervalMs: 5000,
+    /** Distinct throttled messages remembered (the oldest is forgotten first). */
+    errorLogKeys: 100,
+    /**
+     * Focus self-check (activationMonitor.ts): a verdict line is printed this long after a press or a menu ends, ms.
+     * Menu item clicks and activations arrive a little after the interaction ends. Lower = sooner lines, more risk of
+     * missing a late activation.
+     */
+    activationVerdictDelayMs: 400,
+    /**
+     * …counting activations from this long before the interaction began, ms: AppKit would activate the app on the
+     * mouse-down itself, before the overlay's 'down' reaches main.
+     */
+    activationLookBackMs: 400,
+    /** Focus events kept for the verdicts (the oldest are dropped). */
+    activationEventCap: 200,
+    /**
+     * Dev builds log this many of the grab area's native mouse events per press (does Electron report 'leftbuttondown'
+     * during a real drag? Without it, every drag would end at its first move). 0 = off.
+     */
+    nativeMouseLogPerPress: 6,
+  },
+
   move: {
     /** pt/s. Higher walk speed reads as busier/more anxious. */
     walkSpeed: 120,
