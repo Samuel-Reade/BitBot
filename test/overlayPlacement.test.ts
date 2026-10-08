@@ -1320,3 +1320,107 @@ describe('OverlayModel: climbing a wall (attach)', () => {
     expect(d.model.attach).toBe('floor')
   })
 })
+
+describe('OverlayModel: the speech bubble (§9.4)', () => {
+  // The fake pet's box relative to its ground point (the silhouette above, measured as overlay.ts does).
+  const BOX = { left: PET.left - ANCHOR.x, top: PET.top - ANCHOR.y, right: PET.right - ANCHOR.x, bottom: PET.bottom - ANCHOR.y }
+  const B = tuning.ui.bubble
+  const SIZE = { width: 200, height: 50 }
+  // Pet at (800, GROUND): the bubble is centred at x 800, its bottom gap + tail above the box's top (GROUND − 120).
+  const RECT = { x: 700, y: GROUND - 120 - B.gapPt - B.tailPt - 50, width: 200, height: 50 }
+  /** On the bubble, on the pet's canvas but beside the pet's silhouette. */
+  const ON_BUBBLE = { x: 880, y: RECT.y + 20 }
+
+  function withBox(): Driver {
+    const d = placed()
+    d.model.setPetBox(BOX)
+    return d
+  }
+
+  it('lays the bubble out over the drawn pet and follows it', () => {
+    const d = withBox()
+    expect(d.model.bubbleLayout).toBeNull()
+    d.model.setBubble({ id: 4, ...SIZE })
+    expect(d.model.bubbleId).toBe(4)
+    expect(d.model.bubbleLayout).toEqual({ rect: RECT, below: false, tailX: 100 })
+    expect(d.frameRequests).toBeGreaterThan(0)
+    d.state(STEP, 900)
+    d.run(Driver.at(STEP))
+    expect(d.model.bubbleLayout?.rect.x).toBe(800)
+    d.model.setBubble(null)
+    expect(d.model.bubbleLayout).toBeNull()
+    expect(d.model.bubbleId).toBeNull()
+  })
+
+  it('hover counts over the bubble, only while it is shown', () => {
+    const d = withBox()
+    d.move(ON_BUBBLE, T)
+    expect(d.model.hovering).toBe(false)
+    d.model.setBubble({ id: 1, ...SIZE }) // appears under the still cursor: tested again at once
+    expect(d.take(IPC.petHover)).toEqual([{ over: true, epoch: 3 }])
+    d.move({ x: ON_BUBBLE.x + 30, y: ON_BUBBLE.y }, T + 1) // off its right edge, off the canvas
+    expect(d.take(IPC.petHover)).toEqual([{ over: false, epoch: 3 }])
+    d.cursor(ON_BUBBLE, T + 1 + O.cursorQuietMs) // main's sample counts too
+    expect(d.take(IPC.petHover)).toEqual([{ over: true, epoch: 3 }])
+    d.model.setBubble(null) // gone under the still cursor
+    expect(d.take(IPC.petHover)).toEqual([{ over: false, epoch: 3 }])
+  })
+
+  it('a click on the bubble is sent as the bubble’s, never a grab', () => {
+    const d = withBox()
+    d.model.setBubble({ id: 1, ...SIZE })
+    d.move(ON_BUBBLE, T)
+    d.take(IPC.petHover)
+    d.down(ON_BUBBLE, T + 1)
+    expect(d.model.pressed).toBe(false)
+    expect(d.take(IPC.petPointer)).toEqual([{ ...downMsg(ON_BUBBLE, { x: 800, y: GROUND }), target: 'bubble' }])
+    d.up(ON_BUBBLE, T + 2)
+    expect(d.take(IPC.petPointer)).toEqual([{ kind: 'up', button: 0, screenX: ON_BUBBLE.x, screenY: ON_BUBBLE.y, epoch: 3, target: 'bubble' }])
+    // Another up: no press, nothing.
+    d.up(ON_BUBBLE, T + 3)
+    expect(d.take(IPC.petPointer)).toEqual([])
+  })
+
+  it('released off the bubble, the up says so (no click)', () => {
+    const d = withBox()
+    d.model.setBubble({ id: 1, ...SIZE })
+    d.down(ON_BUBBLE, T)
+    d.take(IPC.petPointer)
+    d.up(ON_PET, T + 1)
+    expect(d.take(IPC.petPointer)).toEqual([{ kind: 'up', button: 0, screenX: ON_PET.x, screenY: ON_PET.y, epoch: 3, target: 'pet' }])
+  })
+
+  it('a right-click on the bubble opens no menu; a press on the pet is unchanged', () => {
+    const d = withBox()
+    d.model.setBubble({ id: 1, ...SIZE })
+    d.contextmenu(ON_BUBBLE, T)
+    expect(d.take(IPC.petPointer)).toEqual([])
+    expect(d.model.hovering).toBe(true)
+    d.down(ON_PET, T + 1)
+    expect(d.model.pressed).toBe(true)
+    expect(d.take(IPC.petPointer)).toEqual([downMsg(ON_PET, { x: 800, y: GROUND })])
+  })
+
+  it('a reset or hiding forgets a bubble press', () => {
+    const d = withBox()
+    d.model.setBubble({ id: 1, ...SIZE })
+    d.down(ON_BUBBLE, T)
+    d.model.onHoverReset({ epoch: 4 })
+    d.take(IPC.petPointer)
+    d.up(ON_BUBBLE, T + 1)
+    expect(d.take(IPC.petPointer)).toEqual([])
+    d.down(ON_BUBBLE, T + 2)
+    d.model.setBubble(null) // main took it down
+    d.take(IPC.petPointer)
+    d.up(ON_BUBBLE, T + 3)
+    expect(d.take(IPC.petPointer)).toEqual([])
+  })
+
+  it('without the pet measured or placed there is no bubble layout (nothing to hit)', () => {
+    const d = placed()
+    d.model.setBubble({ id: 1, ...SIZE })
+    expect(d.model.bubbleLayout).toBeNull()
+    d.move(ON_BUBBLE, T)
+    expect(d.model.hovering).toBe(false)
+  })
+})

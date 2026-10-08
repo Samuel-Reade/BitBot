@@ -19,6 +19,11 @@
 //   screen, a fullscreen app in front. The glue also cancels on Space changes, sleep, crashes and errors.
 // - Every dependency call is guarded: a throw is logged (once, until that call works again) and fails closed. No public
 //   method throws.
+// - The speech bubble (§9.4, M8): while main shows one, the pet's box is widened to hold the bubble's box too
+//   (bubbleBox, withBubbleBox), so the grab area, its near zone and the safety net cover it, and the overlay reports
+//   hover over its pixels like over the pet's. A press the overlay marks as on the bubble (target 'bubble') never
+//   grabs, pets or opens anything; released over the bubble it is a click (bubbleClicked: main dismisses it). A bubble
+//   press is not "engaged": the grab area may go away under it, which just drops the click.
 
 import { distance, isBox, isPoint, type Box, type Point } from '../../shared/geometry'
 import type { PetHoverMsg, PetPointerMsg } from '../../shared/petProtocol'
@@ -27,6 +32,7 @@ import {
   decideHitWindow,
   HIT_WINDOW_HIDDEN,
   shouldForceClickThrough,
+  withBubbleBox,
   type HitAreaInput,
   type HitAreaTuning,
   type HitWindowPlacement,
@@ -101,6 +107,14 @@ export interface PetInteractionDeps {
   /** pet:cursor */
   sendCursor(p: Point): void
   log(line: string): void
+  /**
+   * The speech bubble's box (§9.4) relative to the ground-contact point, for a pet drawn at `ground` with `petBox`
+   * (src/shared/bubbleLayout.ts); null while no bubble is shown. Absent: there is never a bubble. A throw or a
+   * malformed box counts as no bubble (it just can't be clicked).
+   */
+  bubbleBox?(ground: Point, petBox: Box): Box | null
+  /** The bubble was clicked (pressed and released over it): dismiss it. */
+  bubbleClicked?(): void
 }
 
 export type InteractionLabel = 'none' | 'near' | 'hover' | 'press' | 'drag' | 'menu'
@@ -147,6 +161,10 @@ export class PetInteraction {
   private press: Press | null = null
   /** The open context menu (identity only); null when none is open. */
   private menu: object | null = null
+  /** The last tick saw a bubble (bubbleBox gave a box). */
+  private bubbleShown = false
+  /** A press began on the bubble and hasn't been released (see the header). */
+  private bubblePress = false
 
   // On-screen cache (onScreen.ts). The answer is kept with the time its question was asked.
   private onScreenAnswer: { value: boolean | null; askedAt: number } | null = null
@@ -218,14 +236,24 @@ export class PetInteraction {
     })
   }
 
-  /** pet:pointer — 'down' grabs, 'up' releases, 'contextmenu' opens the menu. The renderer never sends ctrl-clicks as 'down'. */
+  /**
+   * pet:pointer — 'down' grabs, 'up' releases, 'contextmenu' opens the menu. The renderer never sends ctrl-clicks as
+   * 'down'. Presses and releases on the bubble (target 'bubble') are routed to bubbleClicked instead (see the header).
+   */
   handlePointer(msg: PetPointerMsg): void {
     this.safely('handlePointer', () => {
       if (!this.accepts(msg.epoch)) return
       if (msg.kind === 'down') {
-        if (msg.button === 0) this.grab(msg)
+        if (msg.button !== 0) return
+        if (msg.target === 'bubble') this.pressBubble()
+        else {
+          this.bubblePress = false
+          this.grab(msg)
+        }
       } else if (msg.kind === 'up') {
-        if (msg.button === 0) this.release(finitePoint(msg.screenX, msg.screenY))
+        if (msg.button !== 0) return
+        if (this.bubblePress) this.releaseBubble(msg.target === 'bubble')
+        this.release(finitePoint(msg.screenX, msg.screenY))
       } else if (msg.kind === 'contextmenu') {
         this.openMenu()
       }
@@ -382,8 +410,11 @@ export class PetInteraction {
     if (!cursor) return 'the cursor position is unavailable'
     const displayed = this.attempt('displayedPoint', () => this.deps.displayedPoint(now))
     if (displayed === FAILED || !isPoint(displayed)) return 'the drawn pet position is unavailable'
-    const petBox = this.attempt('petBox', () => this.deps.petBox())
-    if (petBox === FAILED || (petBox !== null && !isBox(petBox))) return 'the pet box is invalid'
+    const ownBox = this.attempt('petBox', () => this.deps.petBox())
+    if (ownBox === FAILED || (ownBox !== null && !isBox(ownBox))) return 'the pet box is invalid'
+    const bubble = ownBox === null ? null : this.readBubbleBox(displayed, ownBox)
+    this.bubbleShown = bubble !== null
+    const petBox = ownBox === null ? null : withBubbleBox(ownBox, bubble)
     const overlayShown = this.attempt('overlayShown', () => this.deps.overlayShown())
     const petDrawn = this.attempt('petDrawn', () => this.deps.petDrawn())
     const fullscreen = this.attempt('frontmostFullscreen', () => this.deps.frontmostFullscreen())
@@ -493,6 +524,20 @@ export class PetInteraction {
     )
   }
 
+  /** A press on the bubble: remembered until its release; never while a press or the menu is in progress. */
+  private pressBubble(): void {
+    if (this.press || this.menu) return
+    this.bubblePress = this.bubbleShown
+  }
+
+  /** The release of a press that began on the bubble: a click if it is still over the bubble. */
+  private releaseBubble(overBubble: boolean): void {
+    this.bubblePress = false
+    if (!overBubble || this.press || this.menu || !this.bubbleShown) return
+    const clicked = this.deps.bubbleClicked
+    if (clicked) this.attempt('bubbleClicked', () => clicked.call(this.deps))
+  }
+
   private grab(msg: Extract<PetPointerMsg, { kind: 'down' }>): void {
     if (this.press || this.menu) return // a second 'down' while held keeps the first press
     const cursor = finitePoint(msg.screenX, msg.screenY)
@@ -562,6 +607,7 @@ export class PetInteraction {
     const menu = this.menu
     this.press = null
     this.menu = null
+    this.bubblePress = false
     if (press) {
       // Where the overlay draws it now: no jump, and it falls from there if it is in the air.
       const drawn = this.attempt('displayedPoint', () => this.deps.displayedPoint(this.readNow()))
@@ -589,6 +635,7 @@ export class PetInteraction {
 
   private bumpEpoch(): void {
     const epoch = ++this.epochValue
+    this.bubblePress = false // a release from the new epoch can't finish a press from the old one
     this.lastSent = null // the overlay forgets its hover on a reset: the stream sends it a fresh cursor sample
     this.attempt('sendHoverReset', () => this.deps.sendHoverReset(epoch))
   }
@@ -637,6 +684,14 @@ export class PetInteraction {
     if (this.failing.has(what)) return
     this.failing.add(what)
     this.log(`${what} failed: ${errorText(err)}`)
+  }
+
+  /** The bubble's box for a pet drawn at `ground`; null without one, and when bubbleBox throws or misbehaves. */
+  private readBubbleBox(ground: Point, petBox: Box): Box | null {
+    const bubbleBox = this.deps.bubbleBox
+    if (!bubbleBox) return null
+    const box = this.attempt('bubbleBox', () => bubbleBox.call(this.deps, { x: ground.x, y: ground.y }, { ...petBox }))
+    return box !== FAILED && box !== null && isBox(box) ? box : null
   }
 
   private readCursor(): Point | null {

@@ -9,6 +9,7 @@
 import {
   boxAt,
   inflateRect,
+  isBox,
   isRect,
   rectContainsPoint,
   rectContainsRect,
@@ -124,4 +125,19 @@ export function shouldForceClickThrough(i: {
   marginPt: number
 }): boolean {
   return i.mouseEnabled && !i.engaged && i.petBox !== null && !cursorNearPet(i.cursor, i.pet, i.petBox, i.marginPt)
+}
+
+/**
+ * The pet's box and the speech bubble's box (§9.4), both relative to the ground-contact point, as one box: the
+ * smallest that holds both. While the bubble is shown the grab area, its near zone and the safety net all use it, so
+ * the bubble can be clicked (it is dismissed). Without a bubble (null), or with a malformed one, the pet's box alone.
+ */
+export function withBubbleBox(petBox: Box, bubbleBox: Box | null): Box {
+  if (!bubbleBox || !isBox(bubbleBox)) return petBox
+  return {
+    left: Math.min(petBox.left, bubbleBox.left),
+    top: Math.min(petBox.top, bubbleBox.top),
+    right: Math.max(petBox.right, bubbleBox.right),
+    bottom: Math.max(petBox.bottom, bubbleBox.bottom),
+  }
 }
