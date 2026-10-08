@@ -14,6 +14,7 @@
 
 import type { EconomyEvent } from './economy/economy'
 import type { Point } from '../shared/geometry'
+import type { PetMode } from '../shared/modes'
 import type { BrainActivity, GoalKind, LifeSnapshot, TimeScale } from '../shared/life'
 import type { BehaviorState, Mood, PetReactionKind } from '../shared/types'
 import { tuning } from '../shared/tuning'
@@ -119,6 +120,11 @@ export class PetLife {
     if (kind === 'drag' || kind === 'command') this.deps.brain.interrupt()
   }
 
+  /** The mode or the hangout spot changed (§10.3): the brain drops its plan and chooses again under the new rules. */
+  modeChanged(): void {
+    this.deps.brain.interrupt()
+  }
+
   /** §10.2 an app launched: run to its window and eat (`target`: its window top, null until it appears). */
   appLaunched(bundleId: string, target: Point | null): void {
     const now = this.deps.clock.now()
@@ -150,7 +156,18 @@ export class PetLife {
   }
 
   /** Each simulation wake while shown: a greeting due after a wake-up, then the brain (when it acts by itself). */
-  tickBrain(loco: BrainLocomotion, extras: { cursor: Point; home: Point; foodSpot: Point | null; enabled: boolean }): void {
+  tickBrain(
+    loco: BrainLocomotion,
+    extras: {
+      cursor: Point
+      home: Point
+      foodSpot: Point | null
+      enabled: boolean
+      /** §10.3 (M7); absent: Roam. */
+      mode?: PetMode
+      hangout?: { centre: Point; radiusPt: number } | null
+    },
+  ): void {
     const d = this.deps
     const now = d.clock.now()
     if (this.greetAtS !== null && now >= this.greetAtS) {
@@ -170,6 +187,8 @@ export class PetLife {
         cursor: extras.cursor,
         home: extras.home,
         foodSpot: extras.foodSpot,
+        mode: extras.mode ?? 'roam',
+        hangout: extras.hangout ?? null,
       },
       loco,
     )

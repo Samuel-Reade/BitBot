@@ -309,6 +309,68 @@ describe('trayMenuTemplate', () => {
   })
 })
 
+describe('trayMenuTemplate Mode ▸ (§15.2, M7)', () => {
+  type Item = { label?: string; type?: string; checked?: boolean; enabled?: boolean; accelerator?: string; submenu?: unknown; click?: unknown }
+  const press = (item: Item | undefined): void => (item?.click as (...args: unknown[]) => void)({}, undefined, {})
+  const setup = (mode: { current: 'roam' | 'stay' | 'hangout'; spots: { id: string; name: string }[]; activeSpotId: string | null }) => {
+    const calls: string[] = []
+    const items = trayMenuTemplate(
+      { visible: true, toggleAccelerator: null, toggleStayAccelerator: 'Alt+Command+S', mode },
+      {
+        toggleVisible: () => calls.push('toggle'),
+        quit: () => calls.push('quit'),
+        setMode: (m) => calls.push(`mode:${m}`),
+        selectSpot: (id) => calls.push(`spot:${id}`),
+        forgetSpot: (id) => calls.push(`forget:${id}`),
+      },
+    ) as Item[]
+    const modeItem = items.find((i) => i.label === 'Mode')
+    return { calls, items, sub: (modeItem?.submenu ?? []) as Item[] }
+  }
+
+  it('comes after the header, before Hide Bitbot; Roam and Stay are radio items with ⌥⌘S on Stay', () => {
+    const { items, sub, calls } = setup({ current: 'roam', spots: [], activeSpotId: null })
+    expect(items.map((i) => i.type ?? i.label)).toEqual(['Bitbot', 'separator', 'Mode', 'Hide Bitbot', 'separator', 'Quit Bitbot'])
+    expect(sub.map((i) => [i.label, i.checked])).toEqual([
+      ['Roam', true],
+      ['Stay', false],
+      ['Hang out', undefined],
+    ])
+    expect(sub[1]?.accelerator).toBe('Alt+Command+S')
+    press(sub[1])
+    press(sub[0])
+    expect(calls).toEqual(['mode:stay', 'mode:roam'])
+    // No spots yet: a hint.
+    expect((sub[2]?.submenu as Item[])[0]).toMatchObject({ enabled: false })
+  })
+
+  it('Hang out ▸ lists the spots with the active one checked, and forgets it', () => {
+    const spots = [
+      { id: 'spot-1', name: 'Dock, left side' },
+      { id: 'spot-2', name: 'On Notes' },
+    ]
+    const { sub, calls } = setup({ current: 'hangout', spots, activeSpotId: 'spot-2' })
+    expect(sub[0]?.checked).toBe(false)
+    expect(sub[2]?.label).toBe('Hang out: On Notes')
+    const list = sub[2]?.submenu as Item[]
+    expect(list.map((i) => [i.type === 'separator' ? '-' : i.label, i.checked])).toEqual([
+      ['Dock, left side', false],
+      ['On Notes', true],
+      ['-', undefined],
+      ['Forget “On Notes”', undefined],
+    ])
+    press(list[0])
+    press(list[3])
+    expect(calls).toEqual(['spot:spot-1', 'forget:spot-2'])
+  })
+
+  it('in Roam no spot is checked even if one was active before', () => {
+    const { sub } = setup({ current: 'roam', spots: [{ id: 'spot-1', name: 'Middle' }], activeSpotId: 'spot-1' })
+    expect(sub[2]?.label).toBe('Hang out')
+    expect((sub[2]?.submenu as Item[]).map((i) => i.checked)).toEqual([false])
+  })
+})
+
 describe('formatToday / formatWhole', () => {
   it('lists all five currencies in order, icon and number, two spaces apart (§15.2)', () => {
     expect(formatToday({ crumbs: 0, pellets: 0, treats: 0, mileage: 0, sparks: 0 })).toBe('Today: 🍞 0  ⚪ 0  🎁 0  🧭 0  ✨ 0')
@@ -341,12 +403,37 @@ describe('formatToday / formatWhole', () => {
 })
 
 describe('petContextMenuTemplate', () => {
-  it('Pet, Go home, a separator and Hide (§15.3 order), each calling its action', () => {
+  const press = (item: { click?: unknown } | undefined): void => (item?.click as (...args: unknown[]) => void)({}, undefined, {})
+  const setup = (mode: 'roam' | 'stay' | 'hangout', onApp: string | null) => {
     const calls: string[] = []
-    const items = petContextMenuTemplate({ pet: () => calls.push('pet'), goHome: () => calls.push('home'), hide: () => calls.push('hide') })
-    expect(items.map((item) => item.type ?? item.label)).toEqual(['Pet', 'Go home', 'separator', 'Hide'])
-    for (const i of [0, 1, 3]) (items[i]?.click as (...args: unknown[]) => void)({}, undefined, {})
-    expect(calls).toEqual(['pet', 'home', 'hide'])
+    const a = (name: string) => () => void calls.push(name)
+    const items = petContextMenuTemplate(
+      { mode, onApp },
+      { pet: a('pet'), stayHere: a('stay'), roam: a('roam'), hangOutHere: a('here'), hangOutOnApp: a('app'), goHome: a('home'), hide: a('hide') },
+    )
+    return { items, calls, labels: items.map((item) => item.type ?? item.label) }
+  }
+
+  it('Pet, Stay here, Hang out here, Go home, a separator and Hide (§15.3 order), each calling its action', () => {
+    const { items, calls, labels } = setup('roam', null)
+    expect(labels).toEqual(['Pet', 'Stay here', 'Hang out here', 'Go home', 'separator', 'Hide'])
+    for (const i of [0, 1, 2, 3, 5]) press(items[i])
+    expect(calls).toEqual(['pet', 'stay', 'here', 'home', 'hide'])
+  })
+
+  it('in Stay it offers Roam instead', () => {
+    const { items, calls, labels } = setup('stay', null)
+    expect(labels[1]).toBe('Roam')
+    press(items[1])
+    expect(calls).toEqual(['roam'])
+  })
+
+  it('on an app’s window: both "Hang out here (this spot)" and "Hang out on <App>" (§10.3)', () => {
+    const { items, calls, labels } = setup('hangout', 'Notes')
+    expect(labels).toEqual(['Pet', 'Stay here', 'Hang out here (this spot)', 'Hang out on Notes', 'Go home', 'separator', 'Hide'])
+    press(items[2])
+    press(items[3])
+    expect(calls).toEqual(['here', 'app'])
   })
 })
 

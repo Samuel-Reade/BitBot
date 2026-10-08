@@ -7,7 +7,7 @@ import { Menu, nativeImage, Tray, type NativeImage } from 'electron'
 import { alphaToBgra, TRAY_ICON_PT, trayIconAlpha } from './trayIcon'
 import type { HotkeyAction } from '../../shared/hotkeys'
 import type { Currency } from '../../shared/types'
-import { formatToday, trayMenuTemplate, type TrayMenuActions } from './trayMenu'
+import { formatToday, trayMenuTemplate, type TrayMenuActions, type TrayModeState } from './trayMenu'
 
 /** The template image at 1× and 2× (macOS tints a template for the menu bar's appearance; only its alpha counts). */
 export function trayImage(): NativeImage {
@@ -28,6 +28,8 @@ export interface BitbotTrayOptions {
   today(): Record<Currency, number> | null
   /** Input Monitoring is not granted: the gentle reminder line (§7.1). */
   inputMonitoringOff(): boolean
+  /** Mode ▸ (M7): the mode and saved spots; absent: no Mode ▸. */
+  mode?(): TrayModeState
 }
 
 export class BitbotTray {
@@ -67,7 +69,8 @@ export class BitbotTray {
     if (!tray || tray.isDestroyed()) return
     const today = this.opts.today()
     const inputMonitoringOff = this.opts.inputMonitoringOff()
-    const key = `${this.visible}|${inputMonitoringOff}|${today ? formatToday(today) : ''}`
+    const mode = this.opts.mode?.()
+    const key = `${this.visible}|${inputMonitoringOff}|${today ? formatToday(today) : ''}|${mode ? JSON.stringify(mode) : ''}`
     if (!force && key === this.shownKey) return
     this.shownKey = key
     const a = (action: HotkeyAction): string | null => this.opts.accelerator(action)
@@ -77,6 +80,8 @@ export class BitbotTray {
         toggleAccelerator: a('toggleVisible'),
         comeHereAccelerator: a('comeHere'),
         goHomeAccelerator: a('goHome'),
+        toggleStayAccelerator: a('toggleStay'),
+        ...(mode ? { mode } : {}),
         today,
         inputMonitoringOff,
       },

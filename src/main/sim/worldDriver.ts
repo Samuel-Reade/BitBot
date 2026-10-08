@@ -120,6 +120,42 @@ export class WorldDriver {
     return this.topOf((w) => w.bundleId === bundleId && this.current?.windows.has(w.wid) === true)
   }
 
+  /**
+   * An app-anchored hangout spot now (§10.3): relativeX (0 left .. 1 right) along the frame of `bundleId`'s frontmost
+   * eligible window, moved onto the nearest visible piece of its top; null: the app has no window top to stand on.
+   */
+  appSpot(bundleId: string, relativeX: number): Point | null {
+    const world = this.current
+    if (!world) return null
+    for (const w of this.windows) {
+      if (w.bundleId !== bundleId || !world.windows.has(w.wid)) continue
+      const tops = world.segments.filter((s) => s.windowId === w.wid)
+      if (tops.length === 0) continue
+      const want = w.x + relativeX * w.w
+      let best: Point | null = null
+      for (const s of tops) {
+        const p = { x: Math.min(s.x1, Math.max(s.x0, want)), y: s.y }
+        if (!best || Math.abs(p.x - want) < Math.abs(best.x - want)) best = p
+      }
+      return best
+    }
+    return null
+  }
+
+  /**
+   * The app window the pet stands on (for "Hang out on <App>"): its bundle ID and pid, and how far along its frame the
+   * pet is (0..1); null: on the ground, in the air, or on a window without a bundle ID.
+   */
+  standingOn(loco: Locomotion | null): { bundleId: string; pid: number; relativeX: number } | null {
+    const world = this.current
+    const surface = loco?.state.surface
+    if (!world || !surface) return null
+    const seg = world.segments.find((s) => s.id === surface)
+    const w = seg?.windowId == null ? undefined : this.windows.find((x) => x.wid === seg.windowId)
+    if (!w || !w.bundleId || w.w <= 0) return null
+    return { bundleId: w.bundleId, pid: w.pid, relativeX: Math.min(1, Math.max(0, (loco.state.x - w.x) / w.w)) }
+  }
+
   private topOf(match: (w: HelperWindow) => boolean): Point | null {
     const world = this.current
     if (!world) return null

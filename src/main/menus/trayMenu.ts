@@ -1,10 +1,14 @@
-// The tray (menu-bar) menu: the M5 subset of BITBOT_SPEC.md §15.2, in its order (a disabled "Bitbot" header and
-// today's earned currencies, Come here, Go home, Hide / Show Bitbot, the Input Monitoring reminder while it is off,
-// Developer… in dev builds, Quit; mood, modes and settings arrive with later milestones). Pure: a template for
+// The tray (menu-bar) menu: the M7 subset of BITBOT_SPEC.md §15.2, in its order (a disabled "Bitbot" header and
+// today's earned currencies, Mode ▸, Come here, Go home, Hide / Show Bitbot, the Input Monitoring reminder while it is
+// off, Developer… in dev builds, Quit; the pet's name and mood word and Settings… arrive with M8). Pure: a template for
 // Menu.buildFromTemplate (type-only Electron import), rebuilt whenever the state changes.
+// - Mode ▸ Roam / Stay as radio items, then Hang out ▸ with the saved spots (the active one checked). A radio item
+//   can't open a submenu, so the Hang out submenu's label names the active spot while in Hangout ("Hang out: Dock,
+//   left side").
 
 import type { MenuItemConstructorOptions } from 'electron'
 import { CURRENCIES } from '../../shared/economy'
+import type { PetMode } from '../../shared/modes'
 import type { Currency } from '../../shared/types'
 
 export interface TrayMenuState {
@@ -17,10 +21,20 @@ export interface TrayMenuState {
   toggleAccelerator: string | null
   comeHereAccelerator?: string | null
   goHomeAccelerator?: string | null
+  toggleStayAccelerator?: string | null
+  /** The mode and the saved hangout spots; absent: no Mode ▸ (and without setMode in the actions). */
+  mode?: TrayModeState
   /** Today's earned totals (EconomySnapshot currencies[c].earned); null or absent: no "Today:" line. */
   today?: Record<Currency, number> | null
   /** Input Monitoring is not granted (§7.1): the menu shows the gentle reminder (when given turnOnInputMonitoring). */
   inputMonitoringOff?: boolean
+}
+
+export interface TrayModeState {
+  current: PetMode
+  spots: readonly { id: string; name: string }[]
+  /** The active spot (Hangout's); null: none. */
+  activeSpotId: string | null
 }
 
 export interface TrayMenuActions {
@@ -28,6 +42,10 @@ export interface TrayMenuActions {
   /** §10.4 Come here / Go home (M4). Without them the menu has neither item. */
   comeHere?(): void
   goHome?(): void
+  /** Mode ▸ (M7): Roam / Stay, hang out at a saved spot, forget one. */
+  setMode?(mode: 'roam' | 'stay'): void
+  selectSpot?(id: string): void
+  forgetSpot?(id: string): void
   /** "Input Monitoring is off — Turn on…" (§7.1, §15.2): the way to grant it. Without it the reminder is not shown. */
   turnOnInputMonitoring?(): void
   /** Opens the developer panel (§14.1). Given only in dev builds: without it the menu has no "Developer…". */
@@ -62,11 +80,35 @@ function item(label: string, click: () => void, accelerator: string | null | und
   return out
 }
 
+/**
+ * Mode ▸ (§15.2): Roam, Stay, Hang out ▸ <spots…>, Forget "<active>". (SPEC-DEVIATION: §15.2's "Manage spots…" opens
+ * the settings window, M8; until then the active spot can be forgotten here, and spots are named after their place.)
+ */
+function modeSubmenu(state: TrayMenuState, mode: TrayModeState, actions: TrayMenuActions): MenuItemConstructorOptions[] {
+  const setMode = (m: 'roam' | 'stay'): void => actions.setMode?.(m)
+  const stay: MenuItemConstructorOptions = { label: 'Stay', type: 'radio', checked: mode.current === 'stay', click: () => setMode('stay') }
+  if (state.toggleStayAccelerator) stay.accelerator = state.toggleStayAccelerator
+  const active = mode.current === 'hangout' ? mode.spots.find((s) => s.id === mode.activeSpotId) : undefined
+  const spots: MenuItemConstructorOptions[] =
+    mode.spots.length === 0
+      ? [{ label: 'No spots yet: right-click Bitbot, Hang out here', enabled: false }]
+      : mode.spots.map((s) => ({ label: s.name, type: 'radio' as const, checked: s.id === active?.id, click: () => actions.selectSpot?.(s.id) }))
+  if (active && actions.forgetSpot) {
+    spots.push({ type: 'separator' }, { label: `Forget “${active.name}”`, click: () => actions.forgetSpot?.(active.id) })
+  }
+  return [
+    { label: 'Roam', type: 'radio', checked: mode.current === 'roam', click: () => setMode('roam') },
+    stay,
+    { label: active ? `Hang out: ${active.name}` : 'Hang out', submenu: spots },
+  ]
+}
+
 export function trayMenuTemplate(state: TrayMenuState, actions: TrayMenuActions): MenuItemConstructorOptions[] {
   const items: MenuItemConstructorOptions[] = [{ label: 'Bitbot', enabled: false }]
   if (state.today) items.push({ label: formatToday(state.today), enabled: false })
   items.push({ type: 'separator' })
   const { comeHere, goHome, turnOnInputMonitoring } = actions
+  if (state.mode && actions.setMode) items.push({ label: 'Mode', submenu: modeSubmenu(state, state.mode, actions) })
   if (comeHere) items.push(item('Come here', () => comeHere(), state.comeHereAccelerator))
   if (goHome) items.push(item('Go home', () => goHome(), state.goHomeAccelerator))
   items.push(item(state.visible ? 'Hide Bitbot' : 'Show Bitbot', () => actions.toggleVisible(), state.toggleAccelerator))

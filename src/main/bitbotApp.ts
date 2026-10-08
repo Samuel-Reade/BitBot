@@ -8,7 +8,9 @@
 // - The overlay window and its page (PetWindow), the grab area (ElectronHitWindow), decided by PetInteraction (one
 //   instance for the app's lifetime).
 // - bitbot-helper: the overlay's on-screen check, and the fullscreen and Space-change pushes.
-// - The tray icon, the ⌥⌘B hotkey and the activation monitor (the self-reporting focus check).
+// - The tray icon, the hotkeys (⌥⌘B, ⌥⌘C, ⌥⌘H, ⌥⌘S) and the activation monitor (the self-reporting focus check).
+// - Modes (§10.3, M7; sim/modes.ts): Roam / Stay / Hangout from the tray's Mode ▸, the pet's menu and ⌥⌘S; the brain
+//   gets the mode and the active spot, Go home goes to the spot. Kept in memory until M8 saves them.
 // - Everything that must end an interaction or make the grab area wait for a fresh on-screen answer: Space changes,
 //   app activations, fullscreen apps, helper restarts, display changes, sleep and wake, lock and unlock, the overlay
 //   page or the grab area going away, uncaught errors.
@@ -39,6 +41,7 @@ import { resolveHelperPath } from './helper/paths'
 import type { FrontmostFullscreenMsg, HelperWindow } from './helper/protocol'
 import { Hotkeys } from './hotkeys'
 import { petContextMenuTemplate } from './menus/petContextMenu'
+import { ModeState, type SpotLookup } from './sim/modes'
 import { BitbotTray } from './menus/tray'
 import { SignalGate } from './signals'
 import { systemClock } from './sim/clock'
@@ -245,6 +248,11 @@ export class BitbotApp {
   private reaction: PetReaction | null = null
   /** Where the pet was sent while it couldn't go (in the air, held): it goes when it stands again. */
   private pendingSend: Point | null = null
+  /** §10.3 the mode and the hangout spots (M8 saves `modes.settings`). */
+  private readonly modes = new ModeState()
+  /** App names by bundle ID, from the helper's app events and appInfo (§10.3 "Hang out on <App>"; never window titles). */
+  private readonly appNames = new Map<string, string>()
+  private readonly appNamesAsked = new Set<string>()
   /** Dev builds: the last movement line logged (logMovement). */
   private lastMovementLine = ''
   private menu: { menu: Menu; win: BrowserWindow } | null = null
@@ -470,6 +478,9 @@ export class BitbotApp {
         toggleVisible: () => this.toggleVisible('tray menu'),
         comeHere: () => this.comeHere('tray menu'),
         goHome: () => this.goHome('tray menu'),
+        setMode: (mode) => this.setMode(mode, 'tray menu'),
+        selectSpot: (id) => this.selectSpot(id),
+        forgetSpot: (id) => this.forgetSpot(id),
         turnOnInputMonitoring: () => void this.turnOnInputMonitoring(),
         // Dev builds only: the menu has no "Developer…" without it.
         ...(devPanel ? { developer: () => this.guarded('dev panel', () => devPanel.open()) } : {}),
@@ -481,6 +492,11 @@ export class BitbotApp {
         return { crumbs: c.crumbs.earned, pellets: c.pellets.earned, treats: c.treats.earned, mileage: c.mileage.earned, sparks: c.sparks.earned }
       },
       inputMonitoringOff: () => this.helper !== null && !this.inputTap.isCounting,
+      mode: () => ({
+        current: this.modes.mode,
+        spots: this.modes.spots.map((s) => ({ id: s.id, name: s.name })),
+        activeSpotId: this.modes.active?.id ?? null,
+      }),
     })
     this.relayout = new Debouncer(tuning.overlay.displayChangeDebounceMs, () => this.guarded('display re-layout', () => this.layOut()))
   }
@@ -745,12 +761,98 @@ export class BitbotApp {
     this.sendTo(cursor, `come here (${source})`)
   }
 
-  /** §10.4 Go home: to the default home on the ground (hangout spots come with M7). */
+  /** §10.4 Go home: to the active hangout spot, else the default home on the ground. */
   goHome(source: string): void {
     const loco = this.loco
     if (!loco || !this.isPetVisible()) return
-    const a = loco.area
-    this.sendTo({ x: a.minX + tuning.brain.homeX * (a.maxX - a.minX), y: a.groundY }, `go home (${source})`)
+    this.sendTo(this.modes.home(this.spotLookup(loco.area)), `go home (${source})`)
+  }
+
+  /** §10.3 Roam, or Stay where it is now (it stops walking; commands and drops still move it). */
+  setMode(mode: 'roam' | 'stay', source: string): void {
+    const loco = this.loco
+    this.modes.setMode(mode, loco ? { x: loco.state.x, y: loco.state.y } : undefined)
+    if (mode === 'stay') this.stayPut()
+    this.modeChanged(`${mode} (${source})`)
+  }
+
+  /** §10.5 ⌥⌘S: Stay, or back to the mode before it. */
+  toggleStay(source: string): void {
+    const loco = this.loco
+    this.modes.toggleStay(loco ? { x: loco.state.x, y: loco.state.y } : undefined)
+    if (this.modes.mode === 'stay') this.stayPut()
+    this.modeChanged(`toggle Stay → ${this.modes.mode} (${source})`)
+  }
+
+  /** "Hang out here" (§10.3): a screen spot where the pet stands (on the surface under it while in the air). */
+  hangOutHere(source: string): void {
+    const loco = this.loco
+    if (!loco) return
+    const p = { x: loco.state.x, y: loco.state.surface !== null ? loco.state.y : (loco.supportY ?? loco.area.groundY) }
+    const spot = this.modes.hangOutHere(p, (this.display ?? primaryDisplay()).id, loco.area)
+    this.modeChanged(`hang out at "${spot.name}" (${source})`)
+  }
+
+  /** "Hang out on <App>" (§10.3): an app-anchored spot where the pet stands along that app's window top. */
+  hangOutOnApp(source: string): void {
+    const on = this.worldDriver.standingOn(this.loco)
+    if (!on) return
+    const spot = this.modes.hangOutOnApp(on.bundleId, this.appNameFor(on.bundleId, on.pid), on.relativeX)
+    this.modeChanged(`hang out on "${spot.name}" (${source})`)
+  }
+
+  private selectSpot(id: string): void {
+    if (this.modes.selectSpot(id)) this.modeChanged(`hang out at "${this.modes.active?.name ?? id}" (tray menu)`)
+  }
+
+  private forgetSpot(id: string): void {
+    this.modes.forgetSpot(id)
+    this.modeChanged(`forgot a spot (tray menu)`)
+  }
+
+  /** Stay: stops where it is (in the air it lands first, then stays). */
+  private stayPut(): void {
+    this.pendingSend = null
+    this.loco?.stop()
+  }
+
+  private modeChanged(why: string): void {
+    this.life.modeChanged()
+    this.tray.refresh()
+    if (this.dev) this.log(`[bitbot] mode: ${why}`)
+  }
+
+  /** The default home (§10.4): the middle of the Dock unless settings choose a spot (M8). */
+  private defaultHome(a: PetArea): Point {
+    return { x: a.minX + tuning.brain.homeX * (a.maxX - a.minX), y: a.groundY }
+  }
+
+  private spotLookup(a: PetArea): SpotLookup {
+    return { appSpot: (bundleId, relativeX) => this.worldDriver.appSpot(bundleId, relativeX), defaultHome: this.defaultHome(a) }
+  }
+
+  /**
+   * An app's name for "Hang out on <App>": from the helper's app events, else asked of the helper once (for next time)
+   * with the bundle ID's last part meanwhile ("com.apple.Notes" → "Notes").
+   */
+  private appNameFor(bundleId: string, pid: number): string {
+    const known = this.appNames.get(bundleId)
+    if (known) return known
+    const helper = this.helper
+    if (helper?.isRunning && !this.appNamesAsked.has(bundleId)) {
+      this.appNamesAsked.add(bundleId)
+      helper.appInfo(pid).then(
+        (info) => {
+          if (info.appName && info.bundleId === bundleId) this.appNames.set(bundleId, info.appName)
+        },
+        () => this.appNamesAsked.delete(bundleId),
+      )
+    }
+    return bundleId.split('.').pop() || bundleId
+  }
+
+  private rememberAppName(bundleId: string | null, appName: string | null): void {
+    if (bundleId && appName) this.appNames.set(bundleId, appName)
   }
 
   /** Sends the pet to `p` (or the reachable place nearest it); a pet in the air or held goes once it can. */
@@ -888,16 +990,33 @@ export class BitbotApp {
     )
   }
 
-  /** The native pet menu (§15.3, M1: only "Hide") over the grab area, at the cursor. */
+  /** The native pet menu (§15.3, the M7 subset: petContextMenu.ts) over the grab area, at the cursor. */
   private popupPetMenu(onClose: () => void): void {
     const win = this.hitWindow.window
     if (!win) throw new Error('there is no grab area to open the menu over')
+    const on = this.worldDriver.standingOn(this.loco)
     const menu = Menu.buildFromTemplate(
-      petContextMenuTemplate({
+      petContextMenuTemplate({ mode: this.modes.mode, onApp: on ? this.appNameFor(on.bundleId, on.pid) : null }, {
         pet: () => {
           this.activation.menuChoice('Pet')
           this.react('petted')
           this.life.interaction('pet')
+        },
+        stayHere: () => {
+          this.activation.menuChoice('Stay here')
+          this.setMode('stay', 'pet menu')
+        },
+        roam: () => {
+          this.activation.menuChoice('Roam')
+          this.setMode('roam', 'pet menu')
+        },
+        hangOutHere: () => {
+          this.activation.menuChoice('Hang out here')
+          this.hangOutHere('pet menu')
+        },
+        hangOutOnApp: () => {
+          this.activation.menuChoice('Hang out on app')
+          this.hangOutOnApp('pet menu')
         },
         goHome: () => {
           this.activation.menuChoice('Go home')
@@ -986,6 +1105,7 @@ export class BitbotApp {
     })
     helper.on('appLaunched', (m) => {
       this.ingest.appLaunched(m.bundleId, m.pid)
+      this.rememberAppName(m.bundleId, m.appName)
       // §10.2 run to the new app's window and eat (not for Bitbot itself).
       if (m.bundleId && m.pid !== process.pid && m.bundleId !== BUNDLE_ID) this.life.appLaunched(m.bundleId, this.worldDriver.windowTopFor(m.bundleId))
     })
@@ -1018,6 +1138,7 @@ export class BitbotApp {
       this.interaction.invalidateOnScreen()
       this.observe()
       this.ingest.appActivated(m.bundleId, m.pid)
+      this.rememberAppName(m.bundleId, m.appName)
     })
     // The world (§8): pushed at the rate WorldDriver sets (none until the pet exists, none while hidden).
     helper.on('snapshot', (m) => this.guarded('window snapshot', () => this.worldDriver.onSnapshot(this.worldWindows(m.windows), clock.now(), this.loco)))
@@ -1074,6 +1195,7 @@ export class BitbotApp {
       toggleVisible: () => this.toggleVisible('⌥⌘B'),
       comeHere: () => this.comeHere('⌥⌘C'),
       goHome: () => this.goHome('⌥⌘H'),
+      toggleStay: () => this.toggleStay('⌥⌘S'),
     })
     for (const action of result.registered) this.log(`[bitbot] hotkey registered: ${DEFAULT_HOTKEYS[action]} (${action})`)
     for (const action of result.failed) {
@@ -1256,13 +1378,21 @@ export class BitbotApp {
     }
     loco.setSpeedFactor(this.life.stuffed ? tuning.move.stuffedSpeedFactor : 1)
     const o = this.overrides.current
-    const a = loco.area
+    const mode = this.modes.mode
+    const spot = mode === 'hangout' ? this.modes.active : null
+    const lookup = this.spotLookup(loco.area)
+    const centre = spot ? this.modes.spotPoint(spot, lookup).point : null
     this.life.tickBrain(loco, {
       cursor: this.opts.cursor ? this.opts.cursor() : screen.getCursorScreenPoint(),
-      home: { x: a.minX + tuning.brain.homeX * (a.maxX - a.minX), y: a.groundY },
+      home: centre ?? this.defaultHome(loco.area),
       foodSpot: this.worldDriver.foodSpot(),
       enabled: o.wander && o.state === null && this.pendingSend === null,
+      mode,
+      hangout: centre ? { centre, radiusPt: tuning.brain.hangoutRadiusPt } : null,
     })
+    // §10.4 Stay: wherever it comes to rest (a drop, a command, a fall) is where it stays.
+    const s = loco.state
+    if (mode === 'stay' && s.behavior === 'idle' && s.surface !== null) this.modes.stayAt({ x: s.x, y: s.y })
   }
 
   /** The life tick (tuning.needs.hiddenTickHz, shown or hidden): needs, sleep, economy events, the asleep snapshot rate. */

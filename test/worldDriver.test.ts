@@ -158,6 +158,30 @@ describe('WorldDriver food spots', () => {
   })
 })
 
+describe('WorldDriver app spots (§10.3)', () => {
+  it('a point along the app’s window top, kept on its visible top; none without a window', () => {
+    const { driver, loco } = setup()
+    driver.onSnapshot([W1], 0, loco)
+    // W1: frame x 400..800, top y 700, visible top x 420..780.
+    expect(driver.appSpot('com.example.app', 0.5)).toEqual({ x: 600, y: 700 })
+    expect(driver.appSpot('com.example.app', 0)).toEqual({ x: 420, y: 700 })
+    expect(driver.appSpot('com.example.app', 1)).toEqual({ x: 780, y: 700 })
+    expect(driver.appSpot('com.nope', 0.5)).toBeNull()
+    // The window moved: the spot follows it.
+    driver.onSnapshot([{ ...W1, x: 500, y: 500 }], 10, loco)
+    expect(driver.appSpot('com.example.app', 0.5)).toEqual({ x: 700, y: 500 })
+  })
+
+  it('which app window the pet stands on, and how far along it', () => {
+    const { driver, loco } = setup()
+    driver.onSnapshot([W1], 0, loco)
+    expect(driver.standingOn(loco)).toBeNull() // on the ground
+    loco.teleport({ x: 500, y: 700 })
+    expect(loco.state.surface).toBe('top:1:0')
+    expect(driver.standingOn(loco)).toEqual({ bundleId: 'com.example.app', pid: W1.pid, relativeX: 0.25 })
+  })
+})
+
 describe('WorldDriver asleep', () => {
   it('a sleeping pet asks for the asleep snapshot rate (§5.3)', () => {
     const { driver, loco, rates } = setup()
