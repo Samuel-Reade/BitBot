@@ -379,7 +379,6 @@ export const tuning = {
     ],
   },
 
-  /** Character animation (§6.4). */
   /** §9.4 the daily summary bubble and other speech (M8). */
   ui: {
     /**
@@ -489,6 +488,7 @@ export const tuning = {
       },
     },
   },
+  /** Character animation (§6.4). */
   anim: {
     /**
      * The default idle style (types.ts IdleMode; the dev panel switches it). SPEC-DEVIATION, decided by the user
@@ -835,7 +835,6 @@ export const tuning = {
     },
   },
 
-  /** bitbot-helper process management (§5.3). */
   /** §16 the save file (M8). */
   persistence: {
     /** §16 autosave every 60 s. Lower = less lost on a crash, more disk writes (each is a few tens of KB). */
@@ -869,6 +868,7 @@ export const tuning = {
     maxBundleIdLength: 255,
     maxHotkeyLength: 64,
   },
+  /** bitbot-helper process management (§5.3). */
   helper: {
     /** Wait for a reply before a request rejects. Lower = faster failure detection, more spurious timeouts on a busy Mac. */
     requestTimeoutMs: 2000,
