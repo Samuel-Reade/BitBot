@@ -4,6 +4,8 @@ import { app, type BrowserWindow } from 'electron'
 // Renderer pages built by electron-vite (see electron.vite.config.ts `renderer.build.rollupOptions.input`).
 export const PAGES = {
   pet: 'pet/index.html',
+  /** The developer panel (dev builds only, src/main/dev/devPanel.ts). */
+  devPanel: 'devpanel/index.html',
   spikeDebug: 'spike/debug.html',
 } as const
 export type PageId = keyof typeof PAGES

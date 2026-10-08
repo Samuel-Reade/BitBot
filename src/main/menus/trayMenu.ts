@@ -1,5 +1,5 @@
-// The tray (menu-bar) menu: the M1 subset of BITBOT_SPEC.md §15.2 (a disabled "Bitbot" header, Hide / Show Bitbot,
-// Quit; mood, today's currencies, modes, Come here / Go home, settings and the developer panel arrive with later
+// The tray (menu-bar) menu: the M1–M2 subset of BITBOT_SPEC.md §15.2 (a disabled "Bitbot" header, Hide / Show Bitbot,
+// Developer… in dev builds, Quit; mood, today's currencies, modes, Come here / Go home and settings arrive with later
 // milestones). Pure: a template for Menu.buildFromTemplate (type-only Electron import), rebuilt whenever the state
 // changes.
 
@@ -14,6 +14,8 @@ export interface TrayMenuState {
 
 export interface TrayMenuActions {
   toggleVisible(): void
+  /** Opens the developer panel (§14.1). Given only in dev builds: without it the menu has no "Developer…". */
+  developer?(): void
   quit(): void
 }
 
@@ -26,10 +28,8 @@ export function trayMenuTemplate(state: TrayMenuState, actions: TrayMenuActions)
   // shown accelerator is also a live key equivalent while the menu is open. Harmless, because the global shortcut owns
   // ⌥⌘B anyway; so it is shown only when that shortcut registered, never advertising a key that does nothing.
   if (state.toggleAccelerator) toggle.accelerator = state.toggleAccelerator
-  return [
-    { label: 'Bitbot', enabled: false },
-    toggle,
-    { type: 'separator' },
-    { label: 'Quit Bitbot', click: () => actions.quit() },
-  ]
+  const items: MenuItemConstructorOptions[] = [{ label: 'Bitbot', enabled: false }, toggle, { type: 'separator' }]
+  if (actions.developer) items.push({ label: 'Developer…', click: () => actions.developer?.() })
+  items.push({ label: 'Quit Bitbot', click: () => actions.quit() })
+  return items
 }

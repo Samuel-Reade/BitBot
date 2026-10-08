@@ -1,0 +1,163 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
+    />
+    <title>Bitbot Developer</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #1d1d1f;
+        --muted: #6e6e73;
+        --line: #d2d2d7;
+        --panel: #f5f5f7;
+        --accent: #0a84ff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #f5f5f7;
+          --muted: #a1a1a6;
+          --line: #3a3a3c;
+          --panel: #2c2c2e;
+        }
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        font: 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+        color: var(--fg);
+        background: Canvas;
+      }
+      main {
+        padding: 10px 12px 16px;
+      }
+      section {
+        margin-bottom: 12px;
+      }
+      h2 {
+        margin: 0 0 6px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+      #status {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 2px 10px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: var(--panel);
+        font-variant-numeric: tabular-nums;
+      }
+      #status dt {
+        color: var(--muted);
+      }
+      #status dd {
+        margin: 0;
+      }
+      .choices {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px 10px;
+      }
+      .choices label {
+        white-space: nowrap;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+      .row > span:first-child {
+        width: 54px;
+        color: var(--muted);
+      }
+      input[type='range'] {
+        flex: 1;
+      }
+      select {
+        min-width: 120px;
+      }
+      .forced {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      #error {
+        color: #ff453a;
+      }
+      button {
+        font: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h2>Status</h2>
+        <dl id="status">
+          <dt>pet:state</dt>
+          <dd id="st-state">–</dd>
+          <dt>Simulation</dt>
+          <dd id="st-sim">–</dd>
+          <dt>Look</dt>
+          <dd id="st-look">–</dd>
+          <dt>Pet</dt>
+          <dd id="st-visible">–</dd>
+          <dt>Overlay</dt>
+          <dd id="st-rates">–</dd>
+        </dl>
+        <p id="error" hidden></p>
+      </section>
+      <section>
+        <h2>State</h2>
+        <div class="choices" id="state"></div>
+      </section>
+      <section>
+        <h2>Mood and dust</h2>
+        <div class="row">
+          <span>Mood</span>
+          <select id="mood"></select>
+        </div>
+        <div class="row">
+          <span>Dust</span>
+          <input id="dust" type="range" min="0" max="1" step="0.05" />
+          <output id="dust-value"></output>
+        </div>
+        <div class="row">
+          <span>Facing</span>
+          <div class="choices" id="facing"></div>
+        </div>
+      </section>
+      <section>
+        <h2>Face</h2>
+        <div class="row">
+          <span>Eyes</span>
+          <select id="eyes"></select>
+        </div>
+        <div class="row">
+          <span>Mouth</span>
+          <select id="mouth"></select>
+        </div>
+        <div class="row">
+          <span>Overlays</span>
+          <div class="choices" id="overlays"></div>
+        </div>
+      </section>
+      <section>
+        <h2>Idle style</h2>
+        <div class="choices" id="idle"></div>
+      </section>
+      <section>
+        <button id="reset" type="button">Reset everything</button>
+      </section>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

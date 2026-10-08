@@ -237,6 +237,22 @@ describe('trayMenuTemplate', () => {
     expect(a.calls).toEqual(['toggle', 'quit'])
     expect(items[0]?.click).toBeUndefined()
   })
+
+  it('has no Developer… without the developer action (packaged builds)', () => {
+    const items = trayMenuTemplate({ visible: true, toggleAccelerator: null }, actions())
+    expect(items.some((item) => item.label?.startsWith('Developer'))).toBe(false)
+  })
+
+  it('lists Developer… before Quit when given the developer action (dev builds, §15.2), and calls it', () => {
+    const a = actions()
+    let opened = 0
+    const items = trayMenuTemplate({ visible: true, toggleAccelerator: null }, { ...a, developer: () => opened++ })
+    expect(items.map((item) => item.type ?? item.label)).toEqual(['Bitbot', 'Hide Bitbot', 'separator', 'Developer…', 'Quit Bitbot'])
+    click(items[3])
+    expect(opened).toBe(1)
+    click(items[4])
+    expect(a.calls).toEqual(['quit'])
+  })
 })
 
 describe('petContextMenuTemplate', () => {
