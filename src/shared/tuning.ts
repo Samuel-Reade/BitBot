@@ -530,9 +530,10 @@ export const tuning = {
     /**
      * Activity vs a break: the user counts as active while the system idle time (powerMonitor) is under activeIdleS,
      * and as on a break once it reaches breakMin minutes (§9.3). Checked every idlePollS seconds. Lower activeIdleS =
-     * stricter "active" (a pause to read counts as idle sooner).
+     * stricter "active" (a pause to read counts as idle sooner). One sample adds at most maxStepS of active time, so a
+     * late sample (after sleep, a stalled main process) doesn't count the gap as activity.
      */
-    activity: { activeIdleS: 60, idlePollS: 5 },
+    activity: { activeIdleS: 60, idlePollS: 5, maxStepS: 10 },
     /** Nutrition weights per payout (§7.5): every payout also feeds nutrition (hunger in M6, evolution in Phase 2). */
     nutritionWeights: { crumbs: 1, pellets: 1, treats: 1, mileage: 1, sparks: 4 },
     /** Diet vector over the trailing windowDays (§7.5); the ledger keeps historyDays of daily totals. */
@@ -546,6 +547,11 @@ export const tuning = {
     scroll: { tickPt: 40, maxTicksPerS: 20 },
     /** Mouse travel is sampled this often (§7.1: 20 Hz), Hz. Higher = finer mileage, more main-process wake-ups. */
     cursorPollHz: 20,
+    /**
+     * Dev panel injections (§14.1) when DevInject.amount is absent: keys, clicks, scroll ticks, pt of mouse travel, and
+     * the length of an injected break, min (10: long enough for welcome back and a healthy session).
+     */
+    devInject: { keys: 100, clicks: 20, scrollTicks: 50, mileagePt: 5000, breakMin: 10 },
   },
 
   /** Behavior (§10.2). M3 has only `wander`; the utility AI (M6) replaces it. */
