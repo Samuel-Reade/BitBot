@@ -7,7 +7,8 @@
 // - Asleep (§9.3): the computer idle sleepAfterIdleMin, or the Mac asleep. On the return: a stretch and a yawn
 //   (reaction 'wakeUp'), then a greeting.
 // - The brain (sim/brain/brain.ts) chooses what the pet does while it is shown and acts by itself; the user's commands
-//   and grabs interrupt it; an app launch sends it running to the new app's window to eat (§10.2).
+//   and grabs interrupt it; an app launch sends it running to the new app's window to eat (§10.2). The restlessness
+//   setting (§15.4) goes to it with every tick (tickBrain extras), so a change applies from the next decision.
 // - Interactions (pet, drag, command, app launch) lower boredom; the first after a dusty return shakes the dust off
 //   (reaction 'shakeOff', §9.1). The economy's welcome back and return after neglect greet and celebrate (§7.2, §9.3).
 // - The state pet:state shows: stateMachine.ts resolveState (§10.1 priorities).
@@ -166,6 +167,8 @@ export class PetLife {
       /** §10.3 (M7); absent: Roam. */
       mode?: PetMode
       hangout?: { centre: Point; radiusPt: number } | null
+      /** §15.4 settings.restlessness, 0..1; absent: as tuned (Brain restlessnessScales). */
+      restlessness?: number
     },
   ): void {
     const d = this.deps
@@ -189,6 +192,7 @@ export class PetLife {
         foodSpot: extras.foodSpot,
         mode: extras.mode ?? 'roam',
         hangout: extras.hangout ?? null,
+        restlessness: extras.restlessness ?? tuning.brain.restlessness.asTuned,
       },
       loco,
     )

@@ -26,7 +26,7 @@ export const IPC = {
   petCursor: 'pet:cursor',
   /** main → overlay: main reset the grab area on its own (new epoch); forget hover and any press. Payload: PetHoverResetMsg */
   petHoverReset: 'pet:hover-reset',
-  /** main → overlay: shown / hidden by the user (hotkey, menus). Payload: PetVisibleMsg */
+  /** main → overlay: shown / hidden (the user, macOS, a fullscreen app, the locked screen; §8.6 fade). Payload: PetVisibleMsg */
   petVisible: 'pet:visible',
   /** main → overlay: are you alive? Payload: PetPingMsg */
   petPing: 'pet:ping',

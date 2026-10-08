@@ -125,10 +125,18 @@ export interface PetHoverResetMsg {
   epoch: number
 }
 
-/** pet:visible — main → overlay. */
+/**
+ * pet:visible — main → overlay: the pet is shown or hidden (src/main/visibility.ts: by the user, macOS, a fullscreen
+ * app, the locked screen). Hidden, the page stops rendering at once and its grab-area state is reset.
+ */
 export interface PetVisibleMsg {
   visible: boolean
   epoch: number
+  /**
+   * §8.6 fade out / in over tuning.overlay.fadeMs (fullscreen, lock) instead of at once (the user's hide). Absent:
+   * false. The page skips the fade under prefers-reduced-motion.
+   */
+  fade?: boolean
 }
 
 /** pet:hover — overlay → main: the cursor is / is no longer over the pet's silhouette. */
@@ -280,7 +288,12 @@ export function isPetHoverResetMsg(value: unknown): value is PetHoverResetMsg {
 }
 
 export function isPetVisibleMsg(value: unknown): value is PetVisibleMsg {
-  return isRecord(value) && typeof value['visible'] === 'boolean' && isCount(value['epoch'])
+  return (
+    isRecord(value) &&
+    typeof value['visible'] === 'boolean' &&
+    isCount(value['epoch']) &&
+    (value['fade'] === undefined || typeof value['fade'] === 'boolean')
+  )
 }
 
 export function isPetHoverMsg(value: unknown): value is PetHoverMsg {

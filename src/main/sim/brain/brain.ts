@@ -36,6 +36,11 @@
 // The brain only stops goals it set itself (a command the app walks the pet to is never cut short; call interrupt()
 // first, then command Locomotion). An in-place activity ends when the pet is moved off its spot (flung, dropped) —
 // greet and celebrate play anyway.
+//
+// Restlessness (§15.4 the settings slider, BrainInput.restlessness 0..1): restlessnessScales() turns it into three
+// multipliers (tuning.brain.restlessness), all exactly 1 at asTuned (0.5, the default), so the brain is then exactly as
+// tuned: the pauses (decisionS and the sit and peek durations), the softmax temperature, and the weights of the goals
+// that move it for their own sake (explore, climb, peek, approachCursor). Eat, nap and sleep are never scaled.
 
 import { distance, type Point } from '../../../shared/geometry'
 import { GOAL_KINDS, type BrainActivity, type GoalKind, type NeedLevels } from '../../../shared/life'
@@ -78,6 +83,8 @@ export interface BrainInput {
    * it finds itself farther away (after eating at a launched app's window, say). Null / absent: no spot.
    */
   hangout?: { centre: Point; radiusPt: number } | null
+  /** §15.4 the restlessness setting, 0..1 (restlessnessScales); absent: tuning.brain.restlessness.asTuned (as tuned). */
+  restlessness?: number
 }
 
 type BrainParams = typeof tuning.brain
@@ -117,6 +124,27 @@ const ANYWHERE: ReadonlySet<BrainActivity> = new Set<BrainActivity>(['greet', 'c
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
 
+/** What restlessness does to the brain (see the file comment); every one is exactly 1 at asTuned. */
+export interface RestlessnessScales {
+  /** × decisionS and the sit and peek durations. */
+  pause: number
+  /** × temperature. */
+  temperature: number
+  /** × the weights of explore, climb, peek and approachCursor. */
+  movement: number
+}
+
+/** The multipliers for `restlessness` (0..1, clamped; not a number: asTuned), linear from [at 0] to 1 at asTuned to [at 1]. */
+export function restlessnessScales(restlessness: number | undefined, params: BrainParams['restlessness']): RestlessnessScales {
+  const mid = params.asTuned
+  const r = restlessness !== undefined && Number.isFinite(restlessness) ? clamp(restlessness, 0, 1) : mid
+  const scale = ([at0, at1]: readonly [number, number]): number => {
+    if (r === mid) return 1
+    return r < mid ? at0 + (1 - at0) * (r / mid) : 1 + (at1 - 1) * ((r - mid) / (1 - mid))
+  }
+  return { pause: scale(params.pauseScale), temperature: scale(params.temperatureScale), movement: scale(params.movementScale) }
+}
+
 export class Brain {
   private doing: Doing | null = null
   private errand: Errand | null = null
@@ -134,6 +162,8 @@ export class Brain {
   private lastScores: Record<GoalKind, number> | null = null
   /** Window ids it stood on, and when last (explore prefers the others). */
   private readonly visited = new Map<number, number>()
+  /** From the newest input's restlessness (tick). */
+  private restless: RestlessnessScales = { pause: 1, temperature: 1, movement: 1 }
 
   constructor(
     private readonly params: BrainParams,
@@ -204,6 +234,7 @@ export class Brain {
   tick(input: BrainInput, loco: BrainLocomotion): void {
     const now = input.nowS
     const s = loco.state
+    this.restless = restlessnessScales(input.restlessness, this.params.restlessness)
     if (this.interrupted) {
       this.interrupted = false
       this.waitUntilS = now + this.decisionDelayS()
@@ -317,15 +348,16 @@ export class Brain {
     const content = input.mood === 'content' || input.mood === 'happy'
     const sleepy = input.needs.energy <= n.energy.sleepyAt || input.mood === 'sleepy'
     const calm = input.stuffed || sleepy ? p.calmScale : 1
+    const move = calm * this.restless.movement
 
     const raw: Record<GoalKind, number> = {
       eat: w.eat * (hunger ** p.needExponent + (input.needs.hunger >= n.hunger.seeksFoodAt ? p.seeksFoodBoost : 0)) * calm,
       nap: w.nap * tired ** p.needExponent,
-      explore: w.explore * (boredom + bored) * calm,
-      climb: w.climb * (boredom + bored) * calm,
+      explore: w.explore * (boredom + bored) * move,
+      climb: w.climb * (boredom + bored) * move,
       sit: w.sit * (content ? p.contentSitScale : 1),
-      peek: w.peek * (boredom + bored) * calm,
-      approachCursor: w.approachCursor * (boredom + lonely + bored) * calm,
+      peek: w.peek * (boredom + bored) * move,
+      approachCursor: w.approachCursor * (boredom + lonely + bored) * move,
       idle: w.idle,
     }
     const onWall = loco.state.attach !== 'floor'
@@ -348,7 +380,7 @@ export class Brain {
   private pick(scores: Record<GoalKind, number>, available: Set<GoalKind>): GoalKind {
     const goals = GOAL_KINDS.filter((g) => available.has(g))
     if (goals.length === 0) return 'idle'
-    const t = this.params.temperature
+    const t = this.params.temperature * this.restless.temperature
     const max = Math.max(...goals.map((g) => scores[g]))
     if (!(t > 0)) return goals.find((g) => scores[g] === max) as GoalKind
     const weights = goals.map((g) => Math.exp((scores[g] - max) / t))
@@ -520,10 +552,10 @@ export class Brain {
         untilS = now + a.eat
         break
       case 'sit':
-        untilS = now + this.inRange(a.sit)
+        untilS = now + this.inRange(a.sit) * this.restless.pause
         break
       case 'peek':
-        untilS = now + this.inRange(a.peek)
+        untilS = now + this.inRange(a.peek) * this.restless.pause
         break
       case 'sleep':
         untilS = sleep === 'nap' ? now + this.inRange(a.nap) : null
@@ -597,7 +629,7 @@ export class Brain {
   }
 
   private decisionDelayS(): number {
-    return this.inRange(this.params.decisionS)
+    return this.inRange(this.params.decisionS) * this.restless.pause
   }
 
   private inRange(r: readonly [number, number]): number {

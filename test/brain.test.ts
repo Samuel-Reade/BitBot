@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Brain, type BrainInput, type BrainLocomotion } from '../src/main/sim/brain/brain'
+import { Brain, restlessnessScales, type BrainInput, type BrainLocomotion } from '../src/main/sim/brain/brain'
 import { MOVEMENT_GOALS } from '../src/main/sim/brain/stateMachine'
 import { Locomotion } from '../src/main/sim/locomotion/locomotion'
 import type { World } from '../src/main/sim/world/worldModel'
@@ -587,5 +587,134 @@ describe('Brain: Hangout mode (§10.3)', () => {
       return false
     })
     expect(farthest).toBeGreaterThan(B.hangoutRadiusPt + 60)
+  })
+})
+
+describe('Brain: restlessness (§15.4)', () => {
+  const R = B.restlessness
+
+  it('the scales: exactly 1 at asTuned (and when absent or not a number), the tuned ends at 0 and 1, clamped', () => {
+    for (const r of [R.asTuned, undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(restlessnessScales(r, R)).toEqual({ pause: 1, temperature: 1, movement: 1 })
+    }
+    const ends = { pause: R.pauseScale, temperature: R.temperatureScale, movement: R.movementScale }
+    for (const [r, i] of [[0, 0], [-1, 0], [1, 1], [2, 1]] as const) {
+      const s = restlessnessScales(r, R)
+      expect(s.pause).toBeCloseTo(ends.pause[i])
+      expect(s.temperature).toBeCloseTo(ends.temperature[i])
+      expect(s.movement).toBeCloseTo(ends.movement[i])
+    }
+    // Monotonic: more restless = shorter pauses, more randomness, more moving about.
+    let prev = restlessnessScales(0, R)
+    for (let r = 0.1; r <= 1.0001; r += 0.1) {
+      const s = restlessnessScales(r, R)
+      expect(s.pause).toBeLessThan(prev.pause)
+      expect(s.temperature).toBeGreaterThan(prev.temperature)
+      expect(s.movement).toBeGreaterThan(prev.movement)
+      prev = s
+    }
+  })
+
+  it('0.5 is exactly today’s brain: the same seed lives the same life with or without it', () => {
+    for (const [seed, needs] of [
+      [9, { boredom: 80, hunger: 50 }],
+      [4, { boredom: 30, energy: 40 }],
+      [21, { boredom: 100, hunger: 75, energy: 20 }],
+    ] as const) {
+      const a = sim({ seed, needs })
+      const b = sim({ seed, needs, input: { restlessness: 0.5 } })
+      const scoresA: (Record<GoalKind, number> | null)[] = []
+      const scoresB: (Record<GoalKind, number> | null)[] = []
+      for (let i = 0; i < 60; i++) {
+        run(a, 10)
+        run(b, 10)
+        scoresA.push(a.brain.scores)
+        scoresB.push(b.brain.scores)
+        expect(at(b)).toEqual(at(a))
+      }
+      expect(b.seen).toEqual(a.seen)
+      expect(scoresB).toEqual(scoresA)
+      expect(b.brain.goalKind).toBe(a.brain.goalKind)
+    }
+  })
+
+  /** Movement-goal decisions over a simulated hour (a fairly bored, rested, fed pet). */
+  function movementInAnHour(restlessness: number, seed: number): { moving: number; decisions: number } {
+    const s = sim({ seed, needs: { boredom: 50 }, input: { restlessness } })
+    let last = s.brain.scores
+    let moving = 0
+    let decisions = 0
+    run(s, 3600, () => {
+      if (s.brain.scores !== last) {
+        last = s.brain.scores
+        decisions++
+        if (MOVEMENT_GOALS.includes(s.brain.goalKind as GoalKind)) moving++
+      }
+      return false
+    })
+    return { moving, decisions }
+  }
+
+  it('1 chooses movement goals more often than 0 over a simulated hour (and decides more often)', () => {
+    for (const seed of [1, 2, 3]) {
+      const calm = movementInAnHour(0, seed)
+      const restless = movementInAnHour(1, seed)
+      expect(restless.moving).toBeGreaterThan(calm.moving * 1.5)
+      expect(restless.decisions).toBeGreaterThan(calm.decisions)
+      expect(calm.moving).toBeGreaterThan(0) // calm, not frozen
+    }
+  })
+
+  it('scales the movement weights and the pauses, never eat, nap, sit or idle', () => {
+    const w = world([W1, W2, W3])
+    const needs: NeedLevels = { hunger: 70, energy: 30, fullness: 30, boredom: 60, dust: 0 }
+    const scoresAt = (restlessness: number): Record<GoalKind, number> => {
+      const brain = new Brain(B, N, seeded(3))
+      const input = { ...sim().input, needs, restlessness }
+      for (let t = DT; brain.scores === null; t += DT) brain.tick({ ...input, nowS: t }, new StillLoco(w))
+      return brain.scores as Record<GoalKind, number>
+    }
+    const mid = scoresAt(0.5)
+    for (const r of [0, 1]) {
+      const s = scoresAt(r)
+      const m = restlessnessScales(r, R).movement
+      for (const g of MOVEMENT_GOALS) expect(s[g]).toBeCloseTo(mid[g] * m)
+      for (const g of ['eat', 'nap', 'sit', 'idle'] as GoalKind[]) expect(s[g]).toBe(mid[g])
+    }
+    // The first decision comes decisionS × pause after the pet is free.
+    const firstDecisionAt = (restlessness: number): number => {
+      const brain = new Brain(B, N, () => 0.999)
+      const input = { ...sim().input, restlessness }
+      let t = DT
+      for (; brain.scores === null; t += DT) brain.tick({ ...input, nowS: t }, new StillLoco(w))
+      return t
+    }
+    expect(firstDecisionAt(1)).toBeCloseTo(B.decisionS[1] * R.pauseScale[1], 0)
+    expect(firstDecisionAt(0)).toBeCloseTo(B.decisionS[1] * R.pauseScale[0], 0)
+  })
+
+  it('0 still eats and sleeps normally', () => {
+    const hungry = sim({ needs: { hunger: 95 }, input: { restlessness: 0 } })
+    expect(run(hungry, 30, () => hungry.brain.activity === 'eat')).toBe(true)
+    expect(distance(at(hungry), FOOD)).toBeLessThan(2)
+    const start = hungry.t
+    run(hungry, 10, () => hungry.brain.activity !== 'eat')
+    expect(hungry.t - start).toBeCloseTo(B.activityS.eat, 1)
+
+    const sleepy = sim({ needs: { energy: 15 }, input: { mood: 'sleepy', restlessness: 0 } })
+    expect(run(sleepy, 120, () => sleepy.brain.activity === 'sleep')).toBe(true)
+    expect(distance(at(sleepy), HOME)).toBeLessThan(2)
+    const napStart = sleepy.t
+    run(sleepy, 200, () => sleepy.brain.activity !== 'sleep')
+    expect(sleepy.t - napStart).toBeGreaterThanOrEqual(B.activityS.nap[0] - DT)
+    expect(sleepy.t - napStart).toBeLessThanOrEqual(B.activityS.nap[1] + DT)
+
+    const asleep = sim({ start: { x: 1000, y: 600 }, input: { asleep: true, restlessness: 0 } })
+    expect(run(asleep, 60, () => asleep.brain.activity === 'sleep')).toBe(true)
+    expect(distance(at(asleep), HOME)).toBeLessThan(2)
+
+    const napNow = sim({ needs: { energy: N.energy.napAt }, input: { napNow: true, restlessness: 0 } })
+    run(napNow, 0.2)
+    expect(napNow.brain.activity).toBe('sleep')
   })
 })
