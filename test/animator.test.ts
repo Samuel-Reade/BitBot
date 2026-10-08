@@ -566,4 +566,91 @@ describe('Animator: reactions (§10.4)', () => {
     anim.update(100 + A.react.dizzyS * 1000 + 10, { ...base, reaction: { kind: 'dizzy', seq: 1 } })
     expect(anim.face?.eyes).not.toBe('dizzy')
   })
+
+  it('wakeUp (§9.3): stretches tall with both arms up and yawns, then opens its eyes, settles and stops', () => {
+    const { rig, anim } = setup()
+    const base = input({ idleMode: 'still' })
+    const armRestL = armShoulder(1).rotationZ
+    anim.update(0, { ...base, reaction: null })
+    const startMs = 100
+    const wake = { ...base, reaction: { kind: 'wakeUp' as const, seq: 1 } }
+    let tallest = 1
+    let armsUp = 0
+    let yawned = false
+    let opened = false
+    const endMs = startMs + A.react.wakeUpS * 1000
+    for (let t = startMs; t < endMs; t += 16) {
+      const r = anim.update(t, wake)
+      expect(r.wakeAt).toBe(t)
+      tallest = Math.max(tallest, rig.body.scale.y)
+      armsUp = Math.max(armsUp, (rig.joints.armL?.rotation.z ?? 0) - armRestL)
+      const u = (t - startMs) / (endMs - startMs)
+      if (u < A.react.wakeYawnUntil) {
+        expect(anim.face).toMatchObject({ eyes: 'closed', mouth: 'yawn' })
+        yawned = true
+      } else {
+        expect(anim.face?.eyes).toBe('open')
+        opened = true
+      }
+    }
+    expect(yawned && opened).toBe(true)
+    expect(tallest).toBeCloseTo(A.react.wakeStretch, 2)
+    expect(armsUp).toBeCloseTo(A.react.wakeArmsUp, 2)
+    // Settled back to the still pose; nothing more to render until the next blink.
+    const after = anim.update(endMs + 10, wake)
+    expect(rig.body.scale.y).toBeCloseTo(1, 6)
+    expect(rig.joints.armL?.rotation.z).toBeCloseTo(armRestL, 6)
+    expect(after.wakeAt).not.toBe(endMs + 10)
+    // The same seq again plays nothing.
+    anim.update(endMs + 500, wake)
+    expect(rig.body.scale.y).toBeCloseTo(1, 6)
+  })
+
+  it('shakeOff (§9.1): a fast shake with happy eyes; the dust specks stay on, then fall away by the end', () => {
+    const { rig, anim } = setup()
+    const base = input({ idleMode: 'still' })
+    const dusty = 0.8
+    anim.update(0, { ...base, dust: dusty, reaction: null })
+    const specks = rig.dust?.count ?? 0
+    expect(specks).toBeGreaterThan(0)
+    expect(anim.face?.overlays).toContain('dust')
+    // Main clears the dust in the same pet:state that starts the shake.
+    const shake = { ...base, dust: 0, reaction: { kind: 'shakeOff' as const, seq: 1 } }
+    const startMs = 100
+    const endMs = startMs + A.react.shakeOffS * 1000
+    const rollSigns = new Set<number>()
+    let squashed = 1
+    for (let t = startMs; t < endMs; t += 8) {
+      const r = anim.update(t, shake)
+      expect(r.wakeAt).toBe(t)
+      expect(anim.face?.eyes).toBe('happy')
+      expect(anim.face?.mouth).not.toBe('wavy')
+      const z = rig.figure.quaternion.z
+      if (Math.abs(z) > 0.02) rollSigns.add(Math.sign(z))
+      squashed = Math.min(squashed, rig.body.scale.y)
+      if ((t - startMs) / (endMs - startMs) < A.react.shakeShedFrom) {
+        expect(rig.dust?.count).toBe(specks)
+        expect(anim.face?.overlays).toContain('dust')
+      }
+    }
+    expect(rollSigns.size).toBe(2)
+    expect(squashed).toBeLessThan(1 - A.react.shakeSquash / 2)
+    anim.update(endMs + 10, shake)
+    expect(rig.dust?.count).toBe(0)
+    expect(anim.face?.overlays).not.toContain('dust')
+  })
+
+  it('the wakeUp and shakeOff poses and faces play only standing (not held or climbing)', () => {
+    for (const more of [{ state: 'held' as const }, { state: 'climb' as const, attach: 'wallRight' as const }]) {
+      const { rig, anim } = setup()
+      const base = input({ idleMode: 'still', ...more })
+      anim.update(0, { ...base, reaction: null })
+      anim.update(1000, { ...base, reaction: null })
+      const scale = rig.body.scale.y
+      anim.update(1016, { ...base, reaction: { kind: 'wakeUp', seq: 1 } })
+      anim.update(1016 + A.react.wakeUpS * 500, { ...base, reaction: { kind: 'wakeUp', seq: 1 } })
+      expect(anim.face?.mouth).not.toBe('yawn')
+      expect(Math.abs(rig.body.scale.y - scale)).toBeLessThan((A.react.wakeStretch - 1) / 2)
+    }
+  })
 })

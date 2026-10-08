@@ -94,6 +94,34 @@
       #ec-break-min {
         width: 56px;
       }
+      .needs {
+        display: grid;
+        grid-template-columns: 54px 1fr 28px;
+        align-items: center;
+        gap: 2px 8px;
+        margin: 6px 0;
+        font-variant-numeric: tabular-nums;
+      }
+      .needs .need {
+        color: var(--muted);
+      }
+      .needs meter {
+        width: 100%;
+      }
+      .needs output {
+        text-align: right;
+      }
+      .effect {
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .scores {
+        margin-top: 6px;
+      }
+      .scores tr.chosen td {
+        color: var(--accent);
+        font-weight: 600;
+      }
       .warn {
         color: #ff9f0a;
       }
@@ -166,11 +194,13 @@
         <div class="row">
           <span>Mood</span>
           <select id="mood"></select>
+          <output id="mood-effect" class="effect">—</output>
         </div>
         <div class="row">
           <span>Dust</span>
+          <label><input id="dust-auto" type="checkbox" /> auto</label>
           <input id="dust" type="range" min="0" max="1" step="0.05" />
-          <output id="dust-value"></output>
+          <output id="dust-effect" class="effect">—</output>
         </div>
         <div class="row">
           <span>Facing</span>
@@ -200,7 +230,7 @@
         <h2>World</h2>
         <div class="choices">
           <label><input id="show-world" type="checkbox" /> Show world</label>
-          <label><input id="wander" type="checkbox" /> Wander</label>
+          <label><input id="wander" type="checkbox" /> Acts by itself (brain)</label>
         </div>
         <div class="actions">
           <button id="go-random" type="button">Go somewhere</button>
@@ -222,6 +252,37 @@
           <dt>Goal</dt>
           <dd id="wd-goal">—</dd>
         </dl>
+      </section>
+      <section>
+        <h2>Life</h2>
+        <div class="row">
+          <span>Time</span>
+          <div class="choices" id="time-scale"></div>
+        </div>
+        <div class="needs" id="lf-needs"></div>
+        <dl class="status">
+          <dt>Mood (needs)</dt>
+          <dd id="lf-mood">—</dd>
+          <dt>Stuffed</dt>
+          <dd id="lf-stuffed">—</dd>
+          <dt>Asleep</dt>
+          <dd id="lf-asleep">—</dd>
+          <dt>Activity</dt>
+          <dd id="lf-activity">—</dd>
+          <dt>Goal</dt>
+          <dd id="lf-goal">—</dd>
+          <dt>Continuous use</dt>
+          <dd id="lf-continuous">—</dd>
+        </dl>
+        <table class="ledger scores">
+          <thead>
+            <tr>
+              <th>Goal</th>
+              <th title="Utility at the last decision (§10.2); the chosen goal is marked">Score</th>
+            </tr>
+          </thead>
+          <tbody id="lf-scores"></tbody>
+        </table>
       </section>
       <section>
         <h2>Economy</h2>

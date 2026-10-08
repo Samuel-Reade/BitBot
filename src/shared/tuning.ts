@@ -434,8 +434,35 @@ export const tuning = {
     /**
      * Reactions (pet:state's reaction): petted (§10.4: blush, a happy wiggle; wiggle in rad, for pettedS) and dizzy after
      * a hard toss (dizzy eyes, a wobble; for dizzyS). Longer = the pet dwells on it.
+     * wakeUp (§9.3 "wakes up with a stretch and yawn"): for wakeUpS it stretches to wakeStretch of its height with both
+     * arms up (wakeArmsUp rad) and a slight lean back (wakeLean rad), reaching it at wakeRise and settling from
+     * wakeSettle (fractions of wakeUpS); eyes closed and yawning until wakeYawnUntil, then open. Keep wakeUpS with
+     * tuning.brain.activityS.wakeUp (how long the brain lets it play before greeting).
+     * shakeOff (§9.1 dust shaken off): a fast side-to-side shake for shakeOffS (shakeRoll rad at shakeHz, dying out),
+     * squashing to 1 − shakeSquash at its middle, arms flung out shakeArms rad; the dust specks it had stay on until
+     * shakeShedFrom (fraction of shakeOffS) and fall away by the end.
      */
-    react: { pettedS: 0.9, wiggle: 0.18, wiggleHz: 4, dizzyS: 1.6, wobble: 0.08, wobbleHz: 2.5 },
+    react: {
+      pettedS: 0.9,
+      wiggle: 0.18,
+      wiggleHz: 4,
+      dizzyS: 1.6,
+      wobble: 0.08,
+      wobbleHz: 2.5,
+      wakeUpS: 1.8,
+      wakeStretch: 1.15,
+      wakeArmsUp: 1.9,
+      wakeLean: -0.12,
+      wakeRise: 0.3,
+      wakeSettle: 0.7,
+      wakeYawnUntil: 0.65,
+      shakeOffS: 0.8,
+      shakeRoll: 0.2,
+      shakeHz: 7,
+      shakeSquash: 0.08,
+      shakeArms: 0.6,
+      shakeShedFrom: 0.4,
+    },
     /** Peek (§6.4): leans out (rad), one arm up on the edge (rad). */
     peek: { lean: 0.35, armUp: 2.2 },
     /** Greet (§10.1; not in the §6.4 table): one arm waves (rad up, Hz, ± rad), a small bounce (units). */
@@ -676,6 +703,13 @@ export const tuning = {
       economy: {
         decimals: { raw: 0, credited: 1, earned: 2, multiplier: 2, lifetime: 2, wallet: 2, share: 0, rhythm: 2, nutrition: 1 },
         breakDefaultMin: 10,
+      },
+      /**
+       * The Life section (M6): decimal places of the need levels (0..100), the goal scores, the minutes of continuous
+       * activity, and the dust in effect (0..1, as the Dust slider).
+       */
+      life: {
+        decimals: { need: 0, score: 2, continuousMin: 0, dust: 2 },
       },
     },
     /**

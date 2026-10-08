@@ -2,7 +2,7 @@ import { Vector3 } from 'three'
 import { IPC } from '../../shared/ipc'
 import { DEFAULT_PALETTE_ID, PALETTES, isPaletteId } from '../../shared/palettes'
 import { tuning } from '../../shared/tuning'
-import { isBehaviorState, isMood, type PetSize } from '../../shared/types'
+import { isBehaviorState, isMood, PET_REACTIONS, type PetReactionKind, type PetSize } from '../../shared/types'
 import type { Box } from '../../shared/geometry'
 import { boxFor, isPetAttach, type PetAttach } from '../../shared/world'
 import { Animator, type AnimInput } from './character/animator'
@@ -104,8 +104,18 @@ function applySnapshotPose(query: URLSearchParams, attach: PetAttach): number {
     idleMode: 'continuous',
   }
   // Step into the state at 60 fps, so springs and blends are where they would be.
-  const end = Number.isFinite(t) && t >= 0 ? t * 1000 : 1000
+  let end = Number.isFinite(t) && t >= 0 ? t * 1000 : 1000
   for (let ms = 0; ms < end; ms += 1000 / 60) animator.update(ms, input)
+  // react=<reaction kind> [reactT=<s into it>]: then plays that reaction (dust shaken off from the dust above).
+  const react = query.get('react')
+  if (react !== null && (PET_REACTIONS as readonly string[]).includes(react)) {
+    const reactT = Number(query.get('reactT') ?? '0.5')
+    const start = end
+    end = start + (Number.isFinite(reactT) && reactT >= 0 ? reactT * 1000 : 500)
+    input.reaction = { kind: react as PetReactionKind, seq: 1 }
+    if (react === 'shakeOff') input.dust = 0
+    for (let ms = start; ms < end; ms += 1000 / 60) animator.update(ms, input)
+  }
   return animator.update(end, input).wallTurn ?? 0
 }
 
