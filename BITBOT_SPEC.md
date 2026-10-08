@@ -323,6 +323,8 @@ Each animation state blends over 150–250 ms. All amplitudes and speeds in `tun
 | Celebrate | jump with spin | up | wiggles fast | happy + heart-pop |
 | Peek | half hidden behind a window edge, leans out | one arm on edge | visible | look toward cursor |
 
+> **Decided 2026-10-08:** the pet idles calmly by default: still between short events (a blink, a glance, a breath, an antenna wiggle), about a third of the CPU of the continuous idle in the table above. A way to make Bitbot "busy" comes later. See [docs/decisions/overlay.md](docs/decisions/overlay.md) "M2 measurements".
+
 **Mood cues independent of state** (layered on top):
 - Hungry: antenna droops (−0.9 rad), amber light blinks at 3 Hz, wavy mouth when idle.
 - Stuffed: slower movement (×0.6), occasional burp face, digest "loading" overlay.

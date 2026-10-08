@@ -298,9 +298,9 @@ export const tuning = {
   /** Character animation (§6.4). */
   anim: {
     /**
-     * The default idle style (types.ts IdleMode; the dev panel switches it). SPEC-DEVIATION (pending the user's choice,
-     * docs/decisions/overlay.md "M2 measurements"): §6.4's idle bobs and sways all the time; 'event' holds still
-     * between short events, about a third of the CPU.
+     * The default idle style (types.ts IdleMode; the dev panel switches it). SPEC-DEVIATION, decided by the user
+     * 2026-10-08 ("calm"; docs/decisions/overlay.md "M2 measurements"): §6.4's idle bobs and sways all the time;
+     * 'event' holds still between short events, about a third of the CPU. A user-facing "busy" option comes later.
      */
     idleMode: 'event' as IdleMode,
     /**

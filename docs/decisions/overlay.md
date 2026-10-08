@@ -153,7 +153,7 @@ Measured by the dev check on the same M4 as above (battery, load average ≈4, o
 - Memory: 195 MB (Electron processes).
 - **Neither style meets §11's 3% idle / 1% asleep yet.** Event is about a third of continuous awake and under half asleep.
 
-**Pending the user's choice:** the default is `tuning.anim.idleMode = 'event'` (a SPEC-DEVIATION until decided); the developer panel switches styles to compare them by eye.
+**Decided 2026-10-08: calm (event) by default.** The user chose the calm idle; "eventually there will be a way to make Bitbot busy", not now. `tuning.anim.idleMode = 'event'` carries the SPEC-DEVIATION; the developer panel still switches styles.
 
 For M3: climbing is only previewed in place (rolled a quarter turn about the body's centre). On a real wall the pet turns about its contact point and reaches up to ≈175 pt sideways, past the 240 pt canvas's 120 pt half-width: the canvas anchor has to move with the surface.
 
