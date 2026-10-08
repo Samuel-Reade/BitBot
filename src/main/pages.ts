@@ -6,6 +6,10 @@ export const PAGES = {
   pet: 'pet/index.html',
   /** The developer panel (dev builds only, src/main/dev/devPanel.ts). */
   devPanel: 'devpanel/index.html',
+  /** §15.1 first-launch onboarding (src/main/windows/onboardingWindow.ts). */
+  onboarding: 'onboarding/index.html',
+  /** §15.4 the settings window (src/main/windows/settingsWindow.ts). */
+  settings: 'settings/index.html',
   spikeDebug: 'spike/debug.html',
 } as const
 export type PageId = keyof typeof PAGES

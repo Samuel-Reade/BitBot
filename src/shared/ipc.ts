@@ -3,7 +3,7 @@
 // so renderers cannot reach arbitrary main-process handlers.
 // Payload types and their validators for the pet channels are in ./petProtocol.ts.
 
-export const IPC_ALLOWED_PREFIXES = ['pet:', 'spike:', 'snapshot:', 'debug:'] as const
+export const IPC_ALLOWED_PREFIXES = ['pet:', 'spike:', 'snapshot:', 'debug:', 'onboarding:', 'settings:'] as const
 
 export function isAllowedChannel(channel: string): boolean {
   return IPC_ALLOWED_PREFIXES.some((prefix) => channel.startsWith(prefix))

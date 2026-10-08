@@ -22,6 +22,8 @@ export default defineConfig({
         input: {
           pet: r('src/renderer/pet/index.html'),
           devPanel: r('src/renderer/devpanel/index.html'),
+          onboarding: r('src/renderer/onboarding/index.html'),
+          settings: r('src/renderer/settings/index.html'),
           spikeDebug: r('src/renderer/spike/debug.html'),
         },
       },
