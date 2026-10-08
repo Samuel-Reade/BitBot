@@ -474,6 +474,75 @@ export const tuning = {
     glow: { antennaTip: 0.75, powerLight: 0.75, amberLight: 0.75 },
   },
 
+  /**
+   * Activity and economy (§7). Base values, soft caps, anti-gaming, treat and spark rules, the day boundary. All
+   * counting is in memory: key codes and click buttons are seen only for anti-gaming and never kept (§2, §7.3).
+   */
+  economy: {
+    /** "Day" boundaries are local time with this rollover hour (§7.2: 4:00 AM; late nights count as the previous day). */
+    dayRolloverHour: 4,
+    /** Base value per credited unit (§7.2). Higher = that activity feeds more. */
+    base: {
+      crumbsPerKey: 0.02,
+      pelletsPerClick: 0.1,
+      pelletsPerScrollTick: 0.02,
+      /** Treats: an app launch; one not opened for `returningDays` days; the first-ever launch of a bundle ID. */
+      treatsLaunch: 1,
+      treatsLaunchReturning: 2,
+      treatsLaunchFirstEver: 5,
+      /** Switching to an app that is already running. */
+      treatsActivation: 0.25,
+      /** Mileage per pt of mouse travel (§7.2: 1 per 5,000 pt). */
+      mileagePerPt: 1 / 5000,
+    },
+    /** Daily soft caps S (§7.4): multiplier = 1 / (1 + (earnedToday / S)²). Higher = more before returns diminish. */
+    softCaps: { crumbs: 400, pellets: 150, treats: 25, mileage: 60 },
+    /** §7.3 anti-gaming (in memory, sliding windows). */
+    antiGaming: {
+      /** Same-key hammering: one key code over `share` of the last `window` keydowns credits those keys at `credit`. */
+      hammering: { window: 40, share: 0.6, credit: 0.1 },
+      /** Robotic timing: the last `intervals` inter-event intervals (keys and clicks separately) with a coefficient of variation below minCv credit 0. */
+      robotic: { intervals: 30, minCv: 0.08 },
+      /** Burst ceiling: credited per second at most; the rest is ignored. */
+      burstPerS: { keys: 15, clicks: 8 },
+      /** Mouse jiggle: movement counts only while the cursor's bounding box over windowS exceeds minBoxPt × minBoxPt. */
+      jiggle: { windowS: 2, minBoxPt: 40 },
+    },
+    /** §7.2 / §7.3 treat rules: activations at most once per app per activationCooldownMin; relaunching the same app within relaunchWindowMin gives only the first launch; a launch after returningDays counts as returning. */
+    treats: { activationCooldownMin: 10, relaunchWindowMin: 60, returningDays: 7 },
+    /**
+     * §7.2 sparks: morning wake (first resume/unlock of the day); welcome back after a break of breakMinMin..breakMaxHours
+     * (at most maxPerDay); a healthy session (active ≥ activeMin, then a break ≥ breakMin; at most maxPerDay); the daily
+     * streak (+perDay per day of streak, at most cap, at the day's first wake); coming back after ≥ minDays away.
+     */
+    sparks: {
+      morningWake: 3,
+      welcomeBack: { value: 1, breakMinMin: 5, breakMaxHours: 4, maxPerDay: 6 },
+      healthySession: { value: 1, activeMin: 25, breakMin: 5, maxPerDay: 4 },
+      streak: { perDay: 1, cap: 5 },
+      neglect: { minDays: 2, value: 2 },
+    },
+    /**
+     * Activity vs a break: the user counts as active while the system idle time (powerMonitor) is under activeIdleS,
+     * and as on a break once it reaches breakMin minutes (§9.3). Checked every idlePollS seconds. Lower activeIdleS =
+     * stricter "active" (a pause to read counts as idle sooner).
+     */
+    activity: { activeIdleS: 60, idlePollS: 5 },
+    /** Nutrition weights per payout (§7.5): every payout also feeds nutrition (hunger in M6, evolution in Phase 2). */
+    nutritionWeights: { crumbs: 1, pellets: 1, treats: 1, mileage: 1, sparks: 4 },
+    /** Diet vector over the trailing windowDays (§7.5); the ledger keeps historyDays of daily totals. */
+    diet: { windowDays: 14 },
+    historyDays: 60,
+    /**
+     * Scroll ticks (decided 2026-10-08): a notched wheel counts |lines| (both axes); a trackpad (continuous) counts one
+     * tick per tickPt of |px| scrolled; momentum and zero deltas count nothing; at most maxTicksPerS. Smaller tickPt =
+     * trackpads feed more.
+     */
+    scroll: { tickPt: 40, maxTicksPerS: 20 },
+    /** Mouse travel is sampled this often (§7.1: 20 Hz), Hz. Higher = finer mileage, more main-process wake-ups. */
+    cursorPollHz: 20,
+  },
+
   /** Behavior (§10.2). M3 has only `wander`; the utility AI (M6) replaces it. */
   brain: {
     /**

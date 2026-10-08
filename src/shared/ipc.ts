@@ -50,6 +50,8 @@ export const IPC = {
   debugPanelSet: 'debug:panel-set',
   /** dev panel → main: do something once (go somewhere, stop). Payload: DevPanelAction (src/shared/devPanel.ts) */
   debugPanelAction: 'debug:panel-action',
+  /** dev panel → main: inject activity (keys, clicks, scroll, mileage, launches, wake, a break). Payload: DevInject (src/shared/economy.ts) */
+  debugPanelInject: 'debug:panel-inject',
   /** main → overlay (dev builds, while "show world" is on): the surfaces and the route. Payload: DebugWorldMsg (src/shared/world.ts) */
   debugWorld: 'debug:world',
   /** main → dev panel: the status changed (and about once a second while open). Payload: DevPanelStatus */

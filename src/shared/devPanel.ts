@@ -3,6 +3,7 @@
 // the pet does and what the overlay renders. Later milestones add their sections (needs, currencies, time scale…).
 // Pure; main validates everything the panel sends.
 
+import type { EconomySnapshot } from './economy'
 import { isFaceOverride, type FaceOverride } from './faceStates'
 import { isBehaviorState, isIdleMode, isMood, type BehaviorState, type IdleMode, type LookDirection, type Mood } from './types'
 
@@ -67,6 +68,8 @@ export interface DevPanelStatus {
   framesPerS: number | null
   /** Null before the first snapshot (or without the helper). */
   world: DevWorldStatus | null
+  /** The economy (§14.1 currency table, diet vector); null before it starts. */
+  economy: EconomySnapshot | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
