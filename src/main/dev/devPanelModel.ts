@@ -85,6 +85,7 @@ export function sameDevPanelStatus(a: DevPanelStatus, b: DevPanelStatus): boolea
     a.look === b.look &&
     a.visible === b.visible &&
     a.rendersPerS === b.rendersPerS &&
-    a.framesPerS === b.framesPerS
+    a.framesPerS === b.framesPerS &&
+    JSON.stringify(a.world) === JSON.stringify(b.world)
   )
 }

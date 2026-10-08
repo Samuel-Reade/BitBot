@@ -16,6 +16,11 @@ export const tuning = {
     viewportScale: 2.5,
     /** Where the pet's ground-contact point sits inside the viewport, as fractions of width/height (0 = left/top). */
     anchor: { x: 0.5, y: 0.75 },
+    /**
+     * …while it climbs a wall on its right / left (§6.4 Climb, feet against the wall, about the contact point): the
+     * turned pet reaches up to ~1.8 body heights away from the wall, so the contact point moves toward the wall's side.
+     */
+    climbAnchor: { wallRight: { x: 0.82, y: 0.5 }, wallLeft: { x: 0.18, y: 0.5 } },
     /** Perspective camera (§6.1). Smaller FOV = flatter, more orthographic look. */
     camera: { fovDeg: 32, heightAboveTarget: 0.5 },
     /** Default yaw toward the viewer (radians) for the 3/4 view. 0 = facing straight out of the screen. */
@@ -266,6 +271,12 @@ export const tuning = {
     groundSnapPt: 0.5,
     /** After a fall touches down the pet is in Land (§10.1) this long before Idle, s: the squash-and-settle (§6.4). */
     landS: 0.4,
+    /** A walk longer than this runs instead (§6.4 Run, runSpeed), pt. Lower = a busier pet. */
+    runDistancePt: 400,
+    /** A jump's arc peaks this far above the higher of its two ends, pt. Higher = loftier, slower jumps. */
+    jumpApexPt: 40,
+    /** §8.5 "small bounce on hard landings": a landing faster than minSpeed (pt/s) bounces back up at restitution × speed. */
+    landBounce: { minSpeed: 1400, restitution: 0.18 },
   },
 
   world: {
@@ -275,6 +286,22 @@ export const tuning = {
     minWindowSize: { w: 160, h: 120 },
     /** Edge-coincidence tolerance in pt for occlusion tests (§8.3). */
     occlusionTolerance: 2,
+    /** §8.2: a window needs alpha above this to be a surface (and to hide what is behind it). */
+    minAlpha: 0.5,
+    /**
+     * The pet's size for the world, in body heights (tuning.render.bodyHeightPt for its size): half its width (how far
+     * it stands from a wall it is about to climb, how much room it needs on a wall), the narrowest visible piece of a
+     * window top it uses (§8.3 "shorter than the pet's width"), and how far its contact point stays inside a top's
+     * visible ends (so it doesn't hang half off). Bigger = a more careful pet with fewer places to go.
+     */
+    pet: { halfWidthBodies: 0.6, minSegmentBodies: 1.2, edgeInsetBodies: 0.3 },
+    /**
+     * Route costs (§8.4 "walk < drop < climb < jump"): a route's cost is its travel time (walking, climbing, in the air)
+     * plus these penalties per move, s. Higher = the pet avoids that kind of move.
+     */
+    navPenaltyS: { drop: 0.3, mount: 0.4, climb: 0.6, jump: 0.9 },
+    /** While the pet rides a window, snapshots run fast (snapshotHz.attached) until the window has been still this long, s (decided adaptive polling). */
+    attachedStillS: 1,
     /**
      * A hidden (auto-hide) Dock still keeps a thin strip of the display out of the work area. A work-area edge at most
      * this many pt inside the display edge counts as the display edge (§8.1: with an auto-hiding Dock the ground is
@@ -408,6 +435,15 @@ export const tuning = {
      * out toward white (a flash); 0 = unlit plastic (off).
      */
     glow: { antennaTip: 0.75, powerLight: 0.75, amberLight: 0.75 },
+  },
+
+  /** Behavior (§10.2). M3 has only `wander`; the utility AI (M6) replaces it. */
+  brain: {
+    /**
+     * M3's stand-in for Roam: after arriving it pauses pauseS (random in the range), then goes somewhere reachable:
+     * a window top with probability windowBias (else anywhere), up a wall or window side for fun with climbChance.
+     */
+    wander: { pauseS: [2, 6] as readonly [number, number], windowBias: 0.6, climbChance: 0.15 },
   },
 
   /** bitbot-helper process management (§5.3). */

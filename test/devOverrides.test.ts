@@ -17,7 +17,7 @@ import { BEHAVIOR_STATES, type BehaviorState } from '../src/shared/types'
 describe('defaultDevOverrides', () => {
   it('forces nothing: the simulation state and facing, content, no dust, no face, the tuned idle style', () => {
     const d = defaultDevOverrides()
-    expect(d).toEqual({ state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode: tuning.anim.idleMode })
+    expect(d).toEqual({ state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode: tuning.anim.idleMode, showWorld: false, wander: true })
     expect(isDevOverrides(d)).toBe(true)
     expect(defaultDevOverrides('continuous').idleMode).toBe('continuous')
   })

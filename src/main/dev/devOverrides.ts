@@ -20,7 +20,7 @@ import type { BehaviorState, IdleMode, Mood } from '../../shared/types'
 const SIMULATION_WINS: readonly BehaviorState[] = ['held', 'fall', 'land']
 
 export function defaultDevOverrides(idleMode: IdleMode = tuning.anim.idleMode): DevOverrides {
-  return { state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode }
+  return { state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode, showWorld: false, wander: true }
 }
 
 function copyFace(face: FaceOverride | null): FaceOverride | null {
@@ -51,6 +51,8 @@ export function sameDevOverrides(a: DevOverrides, b: DevOverrides): boolean {
     a.dust === b.dust &&
     a.facing === b.facing &&
     a.idleMode === b.idleMode &&
+    a.showWorld === b.showWorld &&
+    a.wander === b.wander &&
     sameFace(a.face, b.face)
   )
 }
@@ -118,6 +120,8 @@ export class DevOverrideState {
     if (set.facing !== undefined) next.facing = set.facing
     if (set.face !== undefined) next.face = copyFace(set.face)
     if (set.idleMode !== undefined) next.idleMode = set.idleMode
+    if (set.showWorld !== undefined) next.showWorld = set.showWorld
+    if (set.wander !== undefined) next.wander = set.wander
     this.o = next
     return {
       changed: !sameDevOverrides(before, next),

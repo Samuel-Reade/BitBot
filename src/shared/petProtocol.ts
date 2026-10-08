@@ -13,6 +13,7 @@
 import { isBox, isPetArea, isPoint, isRect, type Box, type PetArea, type Point, type Rect } from './geometry'
 import { isPaletteId } from './palettes'
 import { isFaceOverride, type FaceOverride } from './faceStates'
+import { isPetAttach, type PetAttach } from './world'
 import {
   isBehaviorState,
   isIdleMode,
@@ -78,6 +79,8 @@ export interface PetStateMsg {
   dust: number
   /** Where the cursor is, for the eyes (§6.3: within ~300 pt; the overlay uses it only in states that look around). */
   look: LookDirection | null
+  /** Standing (or in the air) vs climbing a wall on its left / right: the overlay turns the pet onto the wall. */
+  attach: PetAttach
   /** y of the surface line under the pet, global pt (the contact shadow is drawn there, §6.1); null: nothing below. */
   supportY: number | null
   /** Do not interpolate from earlier states (first state, release, shown again, display change). */
@@ -238,6 +241,7 @@ export function isPetStateMsg(value: unknown): value is PetStateMsg {
     value['dust'] >= 0 &&
     value['dust'] <= 1 &&
     (value['look'] === null || isLookDirection(value['look'])) &&
+    isPetAttach(value['attach']) &&
     (value['supportY'] === null || isFiniteNumber(value['supportY'])) &&
     typeof value['snap'] === 'boolean'
   )

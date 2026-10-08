@@ -48,6 +48,10 @@ export const IPC = {
   debugPanelGet: 'debug:panel-get',
   /** dev panel → main: change overrides. Payload: DevPanelSet (src/shared/devPanel.ts) */
   debugPanelSet: 'debug:panel-set',
+  /** dev panel → main: do something once (go somewhere, stop). Payload: DevPanelAction (src/shared/devPanel.ts) */
+  debugPanelAction: 'debug:panel-action',
+  /** main → overlay (dev builds, while "show world" is on): the surfaces and the route. Payload: DebugWorldMsg (src/shared/world.ts) */
+  debugWorld: 'debug:world',
   /** main → dev panel: the status changed (and about once a second while open). Payload: DevPanelStatus */
   debugPanelStatus: 'debug:panel-status',
   /** renderer → main: dev snapshot tool — the frame is rendered and ready to capture. */

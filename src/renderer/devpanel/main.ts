@@ -186,7 +186,7 @@ const setIdle = radios(
 )
 
 element('reset', HTMLButtonElement).addEventListener('click', () => {
-  const defaults: DevOverrides = { state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode: tuning.anim.idleMode }
+  const defaults: DevOverrides = { state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode: tuning.anim.idleMode, showWorld: false, wander: true }
   send(defaults)
 })
 

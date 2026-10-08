@@ -532,7 +532,7 @@ export class BitbotApp {
   private simState(loco: Locomotion): PetSimState {
     const s = loco.state
     const f = overriddenFields(this.overrides.current, { behavior: s.behavior, facing: s.facing })
-    return { x: s.x, y: s.y, facing: f.facing, state: f.state, mood: f.mood, dust: f.dust, look: this.look, supportY: loco.supportY }
+    return { x: s.x, y: s.y, facing: f.facing, state: f.state, mood: f.mood, dust: f.dust, look: this.look, attach: 'floor', supportY: loco.supportY }
   }
 
   /** A held pet's newest step (the overlay draws a held pet under the cursor, which that step followed); null unless held. */
@@ -920,7 +920,7 @@ export class BitbotApp {
     const s = this.loco?.state
     const behavior = s?.behavior ?? 'idle'
     const f = overriddenFields(this.overrides.current, { behavior, facing: s?.facing ?? 1 })
-    return { overrides: this.overrides.overrides, state: f.state, simState: behavior, look: this.look, visible: this.isPetVisible() }
+    return { overrides: this.overrides.overrides, state: f.state, simState: behavior, look: this.look, visible: this.isPetVisible(), world: null }
   }
 
   /** A validated debug:panel-set. pet:state carries the change with the next step (or the snap when shown again). */
