@@ -74,6 +74,7 @@ describe('sameDevPanelStatus', () => {
     framesPerS: null,
     world: null,
     economy: null,
+    life: null,
   }
 
   it('compares every field, the overrides by value', () => {

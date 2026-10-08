@@ -257,17 +257,17 @@ element('ec-break', HTMLButtonElement).addEventListener('click', () => {
 })
 
 element('reset', HTMLButtonElement).addEventListener('click', () => {
-  const defaults: DevOverrides = { state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode: tuning.anim.idleMode, showWorld: false, wander: true }
+  const defaults: DevOverrides = { state: null, mood: null, dust: null, facing: null, face: null, idleMode: tuning.anim.idleMode, showWorld: false, wander: true, timeScale: 1 }
   send(defaults)
 })
 
 /** Sets every control from main's overrides. */
 function showOverrides(o: DevOverrides): void {
   setState(o.state ?? AUTO)
-  setMood(o.mood)
+  setMood(o.mood ?? 'content') // M6 page work shows "auto"
   // Not under the user's pointer: a status sent before their newest move would make the slider jump back.
-  if (document.activeElement !== dust) dust.value = String(o.dust)
-  dustValue.textContent = o.dust.toFixed(2)
+  if (document.activeElement !== dust) dust.value = String(o.dust ?? 0)
+  dustValue.textContent = (o.dust ?? 0).toFixed(2)
   setFacing(o.facing === 1 ? 'right' : o.facing === -1 ? 'left' : AUTO)
   setEyes(o.face?.eyes ?? AUTO)
   setMouth(o.face?.mouth ?? AUTO)

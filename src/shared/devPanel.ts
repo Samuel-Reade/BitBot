@@ -5,24 +5,26 @@
 
 import type { EconomySnapshot } from './economy'
 import { isFaceOverride, type FaceOverride } from './faceStates'
+import { isTimeScale, type LifeSnapshot, type TimeScale } from './life'
 import { isBehaviorState, isIdleMode, isMood, type BehaviorState, type IdleMode, type LookDirection, type Mood } from './types'
 
-/** What the dev panel forces. A null state / facing / face means "the simulation's own". */
+/** What the dev panel forces. A null state / mood / dust / facing / face means "the simulation's own". */
 export interface DevOverrides {
   state: BehaviorState | null
-  mood: Mood
+  mood: Mood | null
   /** 0..1 */
-  dust: number
+  dust: number | null
   facing: 1 | -1 | null
   face: FaceOverride | null
   idleMode: IdleMode
   /** The debug view of the world (§14.1: surfaces, visible segments, nav graph, current path) is drawn. */
   showWorld: boolean
   /**
-   * The pet wanders by itself (M3's stand-in for the M6 brain: goes to a random reachable place every few seconds).
-   * Off: it stays where it is unless sent somewhere.
+   * The pet acts by itself (the brain, §10.2; M3's wanderer before it). Off: it stays where it is unless sent somewhere.
    */
   wander: boolean
+  /** §14.1 time scale of the pet's life clock (needs, brain timers); 1 in packaged builds. */
+  timeScale: TimeScale
 }
 
 /**
@@ -70,26 +72,29 @@ export interface DevPanelStatus {
   world: DevWorldStatus | null
   /** The economy (§14.1 currency table, diet vector); null before it starts. */
   economy: EconomySnapshot | null
+  /** Needs, mood, what the brain does (§14.1 live view); null before the pet exists. */
+  life: LifeSnapshot | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-const KEYS: readonly (keyof DevOverrides)[] = ['state', 'mood', 'dust', 'facing', 'face', 'idleMode', 'showWorld', 'wander']
+const KEYS: readonly (keyof DevOverrides)[] = ['state', 'mood', 'dust', 'facing', 'face', 'idleMode', 'showWorld', 'wander', 'timeScale']
 
 export function isDevPanelSet(value: unknown): value is DevPanelSet {
   if (!isRecord(value)) return false
   for (const key of Object.keys(value)) if (!(KEYS as readonly string[]).includes(key)) return false
   const v = value as Record<string, unknown>
   if ('state' in v && !(v['state'] === null || isBehaviorState(v['state']))) return false
-  if ('mood' in v && !isMood(v['mood'])) return false
-  if ('dust' in v && !(typeof v['dust'] === 'number' && v['dust'] >= 0 && v['dust'] <= 1)) return false
+  if ('mood' in v && !(v['mood'] === null || isMood(v['mood']))) return false
+  if ('dust' in v && !(v['dust'] === null || (typeof v['dust'] === 'number' && v['dust'] >= 0 && v['dust'] <= 1))) return false
   if ('facing' in v && !(v['facing'] === null || v['facing'] === 1 || v['facing'] === -1)) return false
   if ('face' in v && !(v['face'] === null || isFaceOverride(v['face']))) return false
   if ('idleMode' in v && !isIdleMode(v['idleMode'])) return false
   if ('showWorld' in v && typeof v['showWorld'] !== 'boolean') return false
   if ('wander' in v && typeof v['wander'] !== 'boolean') return false
+  if ('timeScale' in v && !isTimeScale(v['timeScale'])) return false
   return true
 }
 

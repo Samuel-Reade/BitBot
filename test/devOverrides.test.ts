@@ -15,9 +15,9 @@ import { BEHAVIOR_STATES, type BehaviorState } from '../src/shared/types'
 // The developer panel's overrides (BITBOT_SPEC.md §14.1) and their validation (src/shared/devPanel.ts).
 
 describe('defaultDevOverrides', () => {
-  it('forces nothing: the simulation state and facing, content, no dust, no face, the tuned idle style', () => {
+  it('forces nothing: the simulation state, facing, mood and dust, no face, the tuned idle style, real time', () => {
     const d = defaultDevOverrides()
-    expect(d).toEqual({ state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode: tuning.anim.idleMode, showWorld: false, wander: true })
+    expect(d).toEqual({ state: null, mood: null, dust: null, facing: null, face: null, idleMode: tuning.anim.idleMode, showWorld: false, wander: true, timeScale: 1 })
     expect(isDevOverrides(d)).toBe(true)
     expect(defaultDevOverrides('continuous').idleMode).toBe('continuous')
   })
@@ -120,7 +120,9 @@ describe('isDevPanelSet (debug:panel-set validation)', () => {
       'state',
       [],
       { state: 'dance' },
-      { mood: null },
+      { mood: 'grumpy' },
+      { timeScale: 2 },
+      { timeScale: null },
       { dust: -0.01 },
       { dust: 1.5 },
       { dust: Number.NaN },

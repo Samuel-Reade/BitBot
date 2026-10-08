@@ -556,8 +556,61 @@ export const tuning = {
     devInject: { keys: 100, clicks: 20, scrollTicks: 50, mileagePt: 5000, breakMin: 10 },
   },
 
+  /**
+   * Needs, mood and the healthy rhythm (§9), on the pet's life clock (real time; the dev panel's time scale speeds it).
+   * All levels 0..100.
+   */
+  needs: {
+    /** §9.1 hunger: rises per hour while the user is active / idle or asleep; each payout lowers it by perNutrition × nutrition. ≥ hungryAt: hungry cues; ≥ seeksFoodAt: goes for food. */
+    hunger: { activePerH: 6, idlePerH: 2, perNutrition: 0.8, hungryAt: 60, seeksFoodAt: 85 },
+    /** §9.1 energy: falls per hour of continuous use, recovers per hour once the computer has been idle restAfterIdleMin (or asleep). ≤ sleepyAt: sleepy; ≤ napAt: naps wherever it is. */
+    energy: { activeDropPerH: 8, restPerH: 25, restAfterIdleMin: 5, sleepyAt: 25, napAt: 10 },
+    /**
+     * §9.1 fullness: follows the rate of nutrition over the trailing windowMin (perNutritionPerH × that rate per hour, so
+     * an ordinary workday sits near 40 and twice its pace reaches stuffedAt), never falling faster than decayPerH.
+     */
+    fullness: { windowMin: 30, perNutritionPerH: 0.55, decayPerH: 20, stuffedAt: 80 },
+    /** §9.1 boredom: rises per hour without a direct interaction (pet, drag, command) or an app launch; each one takes off `interaction`. ≥ boredAt: explores, pokes the cursor, peeks. */
+    boredom: { perH: 10, interaction: 30, boredAt: 70 },
+    /** §9.1 dust: per local day the user didn't use the computer at all; all of it shaken off at the first interaction after the return. ≥ visibleAt: visible specks; ≥ lonelyAt: the lonely mood. */
+    dust: { perDay: 15, visibleAt: 30, lonelyAt: 60 },
+    /** §9.3 stuffed: after continuousMin of activity without a breakMin break (or fullness ≥ stuffedAt): payouts × payoutFactor, movement × tuning.move.stuffedSpeedFactor. */
+    stuffed: { continuousMin: 90, payoutFactor: 0.5 },
+    /** §9.3: an idle period this long is a break (resets continuous activity, clears stuffed, welcome back on return), min. */
+    breakMin: 5,
+    /** §9.3 sleep: the computer idle this long → the pet goes home (or to the nearest ground) and sleeps, min. */
+    sleepAfterIdleMin: 10,
+    /** §9.1 "on resume, apply the elapsed time in one step, capped sensibly": at most this much at once, h. */
+    maxCatchUpH: 72,
+    /** §9.3 neglect: no activity this many days pauses progress (Phase 2) and makes the return a celebration. */
+    neglectDays: 2,
+    /** §9.2 mood ties: the earlier in this list wins. */
+    moodPriority: ['hungry', 'sleepy', 'stuffed', 'lonely', 'bored', 'happy', 'content'] as const,
+    /** §9.2 happy: no need pressing and an interaction (petting, playing) within this long, min. */
+    happyAfterInteractionMin: 10,
+    /** The life clock ticks this often while the pet is hidden (§8.6 "the simulation continues at low rate"), Hz. */
+    hiddenTickHz: 1,
+  },
+
   /** Behavior (§10.2). M3 has only `wander`; the utility AI (M6) replaces it. */
   brain: {
+    /**
+     * §10.2 utility AI: a decision every decisionS (random in the range) while not busy; goals scored from the needs,
+     * picked by softmax with this temperature (higher = more random, lower = always the top score). Weights scale each
+     * goal's score: eat ∝ hunger, nap ∝ 1 − energy, explore / climb / peek ∝ boredom, approachCursor ∝ boredom + lonely,
+     * sit and idle are base weights (sit higher when content). Stuffed or sleepy scale the movement goals by calmScale.
+     */
+    decisionS: [2, 6] as readonly [number, number],
+    temperature: 0.35,
+    weights: { eat: 1, nap: 1, explore: 0.8, climb: 0.3, sit: 0.35, peek: 0.15, approachCursor: 0.4, idle: 0.45 },
+    calmScale: 0.35,
+    /** §10.2 run to eat: an app launch makes eating the goal at once; the pet waits up to windowWaitS for the new app's window, else eats where it is. */
+    appLaunch: { windowWaitS: 4 },
+    /** How long each in-place activity lasts, s (ranges are random). */
+    activityS: { eat: 3, sit: [6, 20] as readonly [number, number], peek: [3, 6] as readonly [number, number], greet: 2, celebrate: 2.4, wakeUp: 1.8 },
+    /** Approach cursor stops this far from it, pt. */
+    approachCursorGapPt: 90,
+
     /**
      * M3's stand-in for Roam: after arriving it pauses pauseS (random in the range), then goes somewhere reachable:
      * a window top with probability windowBias (else anywhere), up a wall or window side for fun with climbChance.

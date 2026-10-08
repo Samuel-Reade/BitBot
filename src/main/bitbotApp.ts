@@ -1170,6 +1170,7 @@ export class BitbotApp {
       visible: this.isPetVisible(),
       world: this.worldDriver.status(this.loco),
       economy: this.economy.snapshot(),
+      life: null,
     }
   }
 

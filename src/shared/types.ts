@@ -125,10 +125,11 @@ export function isIdleMode(value: unknown): value is IdleMode {
 
 /**
  * A short reaction the overlay plays once (pet:state's reaction): 'petted' (§10.4: clicked without dragging: blush, a
- * happy wiggle), 'dizzy' (§10.4: landed after a hard toss). seq grows with every new one, so the overlay starts it
+ * happy wiggle), 'dizzy' (§10.4: landed after a hard toss), 'wakeUp' (§9.3: a stretch and a yawn when the user comes
+ * back to a sleeping pet), 'shakeOff' (§9.1: the dust shaken off at the first interaction after a return). seq grows with every new one, so the overlay starts it
  * exactly once, however many states repeat it.
  */
-export const PET_REACTIONS = ['petted', 'dizzy'] as const
+export const PET_REACTIONS = ['petted', 'dizzy', 'wakeUp', 'shakeOff'] as const
 export type PetReactionKind = (typeof PET_REACTIONS)[number]
 export interface PetReaction {
   kind: PetReactionKind

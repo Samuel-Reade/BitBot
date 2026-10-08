@@ -18,7 +18,7 @@ import type { BehaviorState, IdleMode, Mood } from '../../shared/types'
 
 
 export function defaultDevOverrides(idleMode: IdleMode = tuning.anim.idleMode): DevOverrides {
-  return { state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode, showWorld: false, wander: true }
+  return { state: null, mood: null, dust: null, facing: null, face: null, idleMode, showWorld: false, wander: true, timeScale: 1 }
 }
 
 function copyFace(face: FaceOverride | null): FaceOverride | null {
@@ -51,6 +51,7 @@ export function sameDevOverrides(a: DevOverrides, b: DevOverrides): boolean {
     a.idleMode === b.idleMode &&
     a.showWorld === b.showWorld &&
     a.wander === b.wander &&
+    a.timeScale === b.timeScale &&
     sameFace(a.face, b.face)
   )
 }
@@ -68,6 +69,9 @@ export function sameDevPetMsg(a: DevPetMsg, b: DevPetMsg): boolean {
 export interface SimulationFields {
   behavior: BehaviorState
   facing: 1 | -1
+  /** The needs' mood and dust (0..1) (§9; 'content' and 0 before the needs model runs). */
+  mood?: Mood
+  dust?: number
 }
 
 /** pet:state's fields that the overrides decide. */
@@ -80,7 +84,7 @@ export interface OverriddenFields {
 
 export function overriddenFields(o: DevOverrides, sim: SimulationFields): OverriddenFields {
   const state = sim.behavior === 'idle' ? (o.state ?? 'idle') : sim.behavior
-  return { state, facing: o.facing ?? sim.facing, mood: o.mood, dust: o.dust }
+  return { state, facing: o.facing ?? sim.facing, mood: o.mood ?? sim.mood ?? 'content', dust: o.dust ?? sim.dust ?? 0 }
 }
 
 /** What applying a DevPanelSet changed. */
@@ -120,6 +124,7 @@ export class DevOverrideState {
     if (set.idleMode !== undefined) next.idleMode = set.idleMode
     if (set.showWorld !== undefined) next.showWorld = set.showWorld
     if (set.wander !== undefined) next.wander = set.wander
+    if (set.timeScale !== undefined) next.timeScale = set.timeScale
     this.o = next
     return {
       changed: !sameDevOverrides(before, next),
