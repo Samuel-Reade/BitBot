@@ -29,9 +29,14 @@ export interface DevOverrides {
 
 /**
  * debug:panel-action — dev panel → main, one-off: 'goRandom' (somewhere reachable), 'goWindow' (onto a window top),
- * 'climbWall' (up the nearest wall or window side), 'stop' (stop where it is).
+ * 'climbWall' (up the nearest wall or window side), 'stop' (stop where it is); §14.1 the save: 'resetSave' (erase it
+ * and relaunch as a new install), 'loadFixtureFresh' / 'loadFixtureDay3' (test/fixtures/save-*.json, then relaunch),
+ * 'showSummary' (the daily summary bubble now, as if today's had not been shown).
  */
-export const DEV_PANEL_ACTIONS = ['goRandom', 'goWindow', 'climbWall', 'stop'] as const
+export const DEV_PANEL_ACTIONS = ['goRandom', 'goWindow', 'climbWall', 'stop', 'resetSave', 'loadFixtureFresh', 'loadFixtureDay3', 'showSummary'] as const
+
+/** The actions the app handles itself (the save, the summary); the others are the world's (WorldDriver.action). */
+export const SAVE_ACTIONS: readonly DevPanelAction[] = ['resetSave', 'loadFixtureFresh', 'loadFixtureDay3', 'showSummary']
 export type DevPanelAction = (typeof DEV_PANEL_ACTIONS)[number]
 
 export function isDevPanelAction(value: unknown): value is DevPanelAction {

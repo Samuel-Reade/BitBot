@@ -264,6 +264,10 @@ const ACTION_BUTTONS: readonly (readonly [string, DevPanelAction])[] = [
   ['go-window', 'goWindow'],
   ['climb-wall', 'climbWall'],
   ['stop', 'stop'],
+  ['reset-save', 'resetSave'],
+  ['fixture-fresh', 'loadFixtureFresh'],
+  ['fixture-day3', 'loadFixtureDay3'],
+  ['show-summary', 'showSummary'],
 ]
 for (const [id, action] of ACTION_BUTTONS) element(id, HTMLButtonElement).addEventListener('click', () => sendAction(action))
 

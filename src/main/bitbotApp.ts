@@ -19,9 +19,10 @@
 // §2 rules everywhere: when in doubt, fail closed (grab area hidden, click-through on), and never activate Bitbot:
 // windows are only ever shown with showInactive(), and app.show() is never called (see showPet()).
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { app, globalShortcut, Menu, powerMonitor, screen, shell, type BrowserWindow } from 'electron'
-import type { DevPanelSet } from '../shared/devPanel'
+import { SAVE_ACTIONS, type DevPanelAction, type DevPanelSet } from '../shared/devPanel'
 import type { DevInject, EconomySnapshot } from '../shared/economy'
 import type { Box, PetArea, Point } from '../shared/geometry'
 import { DEFAULT_HOTKEYS, type HotkeyAction } from '../shared/hotkeys'
@@ -49,7 +50,7 @@ import { SummaryBubble } from './summaryBubble'
 import { knownAppsView, modesView, type SettingsAppView, type SettingsChange, type SettingsNotice } from '../shared/settingsProtocol'
 import { nodeSaveFs } from './persistence/nodeFs'
 import { freshSave, type SaveFile } from './persistence/saveFile'
-import { SaveStore } from './persistence/saveStore'
+import { decodeSave, SaveStore } from './persistence/saveStore'
 import { assembleSave, behaviorOf, economyStateOf, identityOf, needsStateOf, settingsOf } from './persistence/snapshot'
 import { BitbotTray } from './menus/tray'
 import { SignalGate } from './signals'
@@ -220,6 +221,8 @@ export class BitbotApp {
   private readonly settingsWindow: SettingsWindow
   /** When Bitbot's hotkeys were paused for the settings page's recorder (wall ms); null: not paused. */
   private hotkeysPausedAt: number | null = null
+  /** A dev save action replaced the save and Bitbot relaunches: nothing more is written. */
+  private savesStopped = false
   /** §9.4 the daily summary bubble (made after the economy; PetInteraction asks it through `this.summary?`). */
   private summary: SummaryBubble | null = null
   private readonly tray: BitbotTray
@@ -534,7 +537,7 @@ export class BitbotApp {
       ? new DevPanel({
           status: () => this.devPanelStatus(),
           apply: (set) => this.applyDevPanelSet(set),
-          action: (action) => this.worldDriver.action(action, this.loco),
+          action: (action) => (SAVE_ACTIONS.includes(action) ? this.saveAction(action) : this.worldDriver.action(action, this.loco)),
           inject: (i) => this.ingest.inject(i),
           requestOverlayStats: (timeoutMs) => this.requestOverlayStats(timeoutMs),
           log: (line) => this.log(line),
@@ -1076,13 +1079,44 @@ export class BitbotApp {
     void this.quit('erase all data')
   }
 
+  /** §14.1 the developer panel's save buttons (dev builds only). */
+  private saveAction(action: DevPanelAction): void {
+    const store = this.store
+    if (action === 'showSummary') {
+      this.save.meta.lastSummaryShownDay = null
+      this.summary?.trigger('launch')
+      return
+    }
+    if (!store) return
+    this.autosaver?.stop()
+    this.savesStopped = true // quitting must not write the live state over what this leaves
+    if (action === 'resetSave') {
+      const r = store.erase()
+      this.log(`[bitbot] dev: save reset${r.ok ? '' : ` (${r.problems.join('; ')})`}; relaunching`)
+    } else {
+      const name = action === 'loadFixtureFresh' ? 'save-fresh.json' : 'save-day3.json'
+      const decoded = decodeSave(readFileSync(join(app.getAppPath(), 'test', 'fixtures', name), 'utf8'))
+      if (decoded.kind !== 'ok') {
+        this.log(`[bitbot] dev: fixture ${name} did not load (${decoded.kind})`)
+        this.savesStopped = false
+        this.autosaver?.start()
+        return
+      }
+      store.enableWrites()
+      const r = store.write(decoded.save)
+      this.log(`[bitbot] dev: fixture ${name} ${r.ok ? 'written' : `not written (${r.problem})`}; relaunching`)
+    }
+    app.relaunch()
+    void this.quit(`dev panel: ${action}`)
+  }
+
   /**
    * Writes the save now (§16: the autosave, a suspend, quitting): everything that lasts, from the live modules. The
    * pet's place only while it stands (held or in the air, the last standing place is kept).
    */
   private saveNow(): void {
     const store = this.store
-    if (!store) return
+    if (!store || this.savesStopped) return
     const s = this.loco?.state
     const standing = s && s.surface !== null && s.behavior !== 'held'
     this.save = assembleSave(this.save, {
