@@ -825,7 +825,14 @@ export const tuning = {
        * walkTimeoutMs, to within arrivePt.
        */
       toss: { moves: 8, stepPt: { x: 40, y: -14 }, intervalMs: 16, minFlightPt: 150 },
-      directing: { comeHereDx: -320, walkTimeoutMs: 12_000, arrivePt: 2 },
+      directing: {
+        comeHereDx: -320,
+        walkTimeoutMs: 12_000,
+        arrivePt: 2,
+        /** M7: the made-up app window moves this far before Go home (pt), and the pet arrives this close to its spot. */
+        spotShiftPt: 120,
+        spotArrivePt: 12,
+      },
       /** While hidden, the simulation must not step for this long, ms. */
       hiddenHoldMs: 500,
       /** Wait before the last checks so the activation monitor's verdicts are in (after tuning.app.activationVerdictDelayMs), ms. */

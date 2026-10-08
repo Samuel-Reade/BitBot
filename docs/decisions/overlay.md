@@ -184,6 +184,15 @@ Also found while measuring: an animated outline moves under a still cursor, so a
 - **Dev check:** the drag patrols move sideways to keep clear of the user's resting mouse; the footprint limit is now §11's budget (290 MB for Electron, room for the helper) instead of M1's 210 MB guard.
 - **Not seen on the real desktop yet** by the builder (the user's Bitbot was running); restart Bitbot to see the brain.
 
+## M7: modes (2026-10-08)
+
+- **Built:** Roam / Stay / Hangout (src/main/sim/modes.ts keeps the mode and the spots; the brain gets the mode and the active spot). Screen spots are named after their place ("Dock, left side", "Top-right"); app spots sit at a fraction along the app's frontmost window top (WorldDriver.appSpot), follow it, and fall back to the default home while the app has no window. ⌥⌘S toggles Stay and the mode before it. Stay records where the pet comes to rest (a drop, a command, a fall) for M8 to save.
+- **Menus:** the tray's Mode ▸ (Roam, Stay, Hang out ▸ spots); the pet's menu: Pet, Stay here / Roam, Hang out here (on a window: "(this spot)"), Hang out on <App>, Go home, Hide.
+- **SPEC-DEVIATION:** §15.2's "Manage spots…" opens Settings (M8); until then the tray offers Forget "<active spot>". Hangout's radius is a straight-line distance, not one along connected surfaces (brain.ts).
+- **App names:** from the helper's app events, or asked of the helper once (the bundle ID's last part meanwhile). Never window titles.
+- **In memory only** until M8's save file.
+- **Dev check:** 7 new mode checks (a made-up app window: hang out on it, it moves, Go home finds it; it closes, Go home goes to the Dock; forget the spot; Stay stops a walk; ⌥⌘S back to Roam). 83/83 pass.
+
 ## Manual checks (the real app)
 
 Start it with `npm run build:helper` (once), then `npm start`. The pet stands on the Dock at the bottom centre, and a small monitor icon appears in the menu bar.

@@ -162,6 +162,8 @@ export interface BitbotInspection {
   refreshWorld(): void
   /** The helper's snapshot rate asked for now, Hz (null: none yet). */
   snapshotHz: number | null
+  /** §10.3 the mode and the hangout spots (read only: change them as the menus do, with BitbotApp's methods). */
+  modes: Pick<ModeState, 'mode' | 'active' | 'spots' | 'settings'>
   /** The newest reaction pet:state carries (petted, dizzy). */
   reaction: PetReaction | null
   /** The economy now (§7). */
@@ -664,6 +666,7 @@ export class BitbotApp {
       setDevOverrides: (set) => this.applyDevPanelSet(set),
       refreshWorld: () => this.refreshWorld(),
       snapshotHz: this.worldDriver.snapshotHz,
+      modes: this.modes,
       reaction: this.reaction ? { ...this.reaction } : null,
       economy: this.economy.snapshot(),
       inject: (i) => this.ingest.inject(i),
@@ -801,11 +804,11 @@ export class BitbotApp {
     this.modeChanged(`hang out on "${spot.name}" (${source})`)
   }
 
-  private selectSpot(id: string): void {
+  selectSpot(id: string): void {
     if (this.modes.selectSpot(id)) this.modeChanged(`hang out at "${this.modes.active?.name ?? id}" (tray menu)`)
   }
 
-  private forgetSpot(id: string): void {
+  forgetSpot(id: string): void {
     this.modes.forgetSpot(id)
     this.modeChanged(`forgot a spot (tray menu)`)
   }

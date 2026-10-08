@@ -373,6 +373,7 @@ class OverlayCheck {
     await this.interactionChecks(home)
     await this.directingChecks(home)
     await this.worldChecks(home)
+    await this.modeChecks(home)
     this.economyChecks()
     if (this.opts.measure) await this.measurements(home)
     await this.reloadCheck()
@@ -595,6 +596,76 @@ class OverlayCheck {
       'world: the window closes and the pet falls back onto the ground',
       () => loco().state.surface === 'ground' && standing(loco().state.behavior),
     )
+    await this.goTo(home)
+  }
+
+  /**
+   * M7 modes (§10.3), with the brain's wandering off: hang out on a made-up app window (the spot follows the window,
+   * and Go home goes to it; with the window gone, to the default home), forget the spot, and Stay stops a walk.
+   */
+  private async modeChecks(home: Point): Promise<void> {
+    const W = T.world
+    const D = T.directing
+    const loco = (): NonNullable<BitbotInspection['locomotion']> => {
+      const l = this.i().locomotion
+      if (!l) throw new Error('no pet')
+      return l
+    }
+    const bitbot = this.bitbot
+    if (!bitbot) return
+    const win: HelperWindow = { wid: 900_002, pid: 1, bundleId: 'com.bitbot.check', layer: 0, x: home.x + W.dx, y: home.y - W.up, w: W.width, h: W.up, onScreen: true, alpha: 1 }
+    const onTop = (): boolean => loco().state.surface?.startsWith(`top:${win.wid}:`) === true
+    const arrived = (): boolean => loco().goal === null && loco().state.behavior === 'idle'
+    this.windows = [{ ...win }]
+    this.i().refreshWorld()
+    if (!(await this.until(null, () => loco().world.segments.some((s) => s.windowId === win.wid)))) return
+    loco().goTo({ x: win.x + win.w / 2, y: win.y })
+    if (!(await this.until('modes: the pet gets onto the made-up app window', () => onTop() && arrived(), W.reachTimeoutMs))) return
+
+    bitbot.hangOutOnApp('dev check')
+    const spot = this.i().modes.active
+    this.check(
+      '"Hang out on <App>": an app spot, Hangout mode (§10.3)',
+      this.i().modes.mode === 'hangout' && spot?.kind === 'app' && spot.bundleId === win.bundleId,
+      spot ? `${spot.name} (${spot.kind})` : 'no spot',
+    )
+    const rel = spot?.kind === 'app' ? spot.relativeX : 0.5
+
+    // Back to the ground, the window moves (no rider), then Go home: onto its top at the same place along it.
+    loco().goTo(home)
+    await this.until(null, () => loco().state.surface === 'ground' && arrived(), W.reachTimeoutMs)
+    win.x += D.spotShiftPt
+    this.windows = [{ ...win }]
+    this.i().refreshWorld()
+    await this.until(null, () => loco().world.segments.some((s) => s.windowId === win.wid && s.x0 >= win.x))
+    bitbot.goHome('dev check')
+    const want = win.x + rel * win.w
+    await this.until(
+      'Go home in Hangout: onto the app window, where the spot is along its top (the window moved)',
+      () => onTop() && arrived() && Math.abs(loco().state.x - want) <= D.spotArrivePt,
+      W.reachTimeoutMs,
+    )
+
+    // The app's window goes away: Go home goes to the default home on the Dock (§10.3 fallback).
+    this.windows = []
+    this.i().refreshWorld()
+    await this.until(null, () => loco().state.surface === 'ground' && standing(loco().state.behavior))
+    bitbot.goHome('dev check')
+    await this.until(
+      'Go home with the app window gone: the default home',
+      () => arrived() && loco().state.surface === 'ground' && Math.abs(loco().state.x - home.x) <= D.arrivePt,
+      D.walkTimeoutMs,
+    )
+    if (spot) bitbot.forgetSpot(spot.id)
+    this.check('forgetting the active spot: back to Roam', this.i().modes.mode === 'roam' && this.i().modes.spots.length === 0)
+
+    // Stay stops a walk where it is; ⌥⌘S goes back to Roam.
+    loco().goTo({ x: home.x + D.comeHereDx, y: home.y })
+    await this.until(null, () => loco().state.behavior === 'walk')
+    bitbot.setMode('stay', 'dev check')
+    await this.until('Stay: it stops where it is (§10.3)', () => loco().goal === null && loco().state.behavior === 'idle', 1000)
+    bitbot.toggleStay('dev check')
+    this.check('toggle Stay again: back to Roam (§10.5)', this.i().modes.mode === 'roam', this.i().modes.mode)
     await this.goTo(home)
   }
 
