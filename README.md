@@ -2,14 +2,15 @@
 
 A macOS desktop pet that lives on your screen and is fed by how you use your computer. The spec is [`BITBOT_SPEC.md`](BITBOT_SPEC.md).
 
-**Status:** Milestone 7 (modes) is built. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
+**Status:** Milestone 8 (onboarding, settings, persistence) is built. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
 - Bitbot runs as a menu-bar app with no Dock icon.
 - The Mint pet is alive: it blinks, looks at the cursor, stirs now and then, swings when you drag it, and squashes when it lands.
 - It lives on your screen: it walks along the Dock, climbs the screen's edges and your windows' sides, jumps and drops between window tops, rides a window you move, and falls when you close or fling it.
 - It has needs (§9: hunger, energy, fullness, boredom, dust) and moods, and a brain (§10.2) that picks what to do from them: go eat on the front window, nap, explore, climb, sit, peek, come look at your cursor. Open an app and it runs over to eat. Leave the computer idle for 10 minutes and it goes home to sleep; come back and it stretches, yawns and greets you. Long sessions without a break make it stuffed (slower, earns half).
-- Modes (§10.3): Roam (the default), Stay (it stays put; ⌥⌘S toggles it), and Hang out at a spot: right-click the pet and choose Hang out here, or, on an app's window, Hang out on <App> (it follows that app's window, and waits on the Dock while the app has none). The menu-bar menu's Mode ▸ switches modes and spots. Modes and spots last until Bitbot quits (saving arrives with M8).
+- Modes (§10.3): Roam (the default), Stay (it stays put; ⌥⌘S toggles it), and Hang out at a spot: right-click the pet and choose Hang out here, or, on an app's window, Hang out on <App> (it follows that app's window, and waits on the Dock while the app has none). The menu-bar menu's Mode ▸ switches modes and spots. 
 - You can direct it: throw it, pet it, call it with Come here (⌥⌘C), send it home (⌥⌘H: its hangout spot, else the middle of the Dock), or ⌥⌘-click anywhere to send it there (needs Input Monitoring).
-- It is fed by how you use your Mac (§7): crumbs from keys, pellets from clicks and scrolls, treats from opening apps, mileage from moving the mouse, sparks from breaks and healthy habits. Only counts are kept, in memory until saving arrives (M8); never what you type or click. The menu-bar menu shows today's totals.
+- It is fed by how you use your Mac (§7): crumbs from keys, pellets from clicks and scrolls, treats from opening apps, mileage from moving the mouse, sparks from breaks and healthy habits. Only counts are kept, never what you type or click. The menu-bar menu shows today's totals.
+- First launch walks through a short welcome (privacy, the Input Monitoring permission, a name and a colour) and the egg hatches. Settings… (menu bar or right-click) changes the name, colour, size, how restless it is, the hangout spots, the hotkeys and more. Everything is saved and comes back after a restart. Once a day it tells you about yesterday in a little speech bubble. It fades out while a fullscreen app is in front and while the screen is locked.
 - Every §6.4 state and mood and every §6.3 face can be shown from the developer panel (dev builds), which also draws the world it sees.
 - The tray menu and ⌥⌘B hide and show it.
 
@@ -51,7 +52,7 @@ npm run dev      # the same with hot reload of the pet page
 - **What it sees.** Windows come from `bitbot-helper` (positions, sizes and owners only; never titles). Without the helper the pet stays on the Dock and the screen edges.
 - **Movement in the log** (dev builds): a line whenever the pet's behavior, surface or goal changes, e.g. `pet: climb on side:5729:left:0 → 776,280 at 471,920`.
 - **Focus check in the log.** After every click, drag or right-click, the terminal prints whether Bitbot took focus: `… -> Bitbot became the active app: NO (PASS)`.
-- **Profiles.** Dev runs use their own profile, `~/Library/Application Support/Bitbot-dev`, and their own single-instance lock, so a dev run and a packaged Bitbot don't block each other. The dev tools (`--snapshot`, `--spike`) use `Bitbot-dev-tools`.
+- **Profiles.** Dev runs use their own profile (and save file), `~/Library/Application Support/Bitbot-dev`, and their own single-instance lock, so a dev run and a packaged Bitbot don't block each other. The dev tools (`--snapshot`, `--spike`) use `Bitbot-dev-tools`.
 
 ## Tests
 
@@ -139,6 +140,6 @@ It never stores or logs keys, characters, window titles, URLs or screenshots.
 
 Files written outside the repo:
 
-- **`~/Library/Application Support/Bitbot`** (packaged app), **`Bitbot-dev`** (dev runs) **and `Bitbot-dev-tools`** (dev snapshot and spike runs): Electron's profile; no personal data.
+- **`~/Library/Application Support/Bitbot`** (packaged app), **`Bitbot-dev`** (dev runs) **and `Bitbot-dev-tools`** (dev snapshot and spike runs): Electron's profile, plus `save.json` and its backups `save.json.bak1..3` (§16: the pet's name, colour, settings, modes, needs and daily counts; the bundle IDs of apps opened, for treats; never what you type, window titles or URLs). Settings → Privacy → "Erase all Bitbot data" removes them.
 - **`~/Library/Application Support/Bitbot-check`:** the dev check's profile; no personal data, safe to delete.
 - **`~/Library/Logs/Bitbot`:** written by packaged spike runs. Those logs list bundle IDs and window positions of open apps, so delete them after testing.

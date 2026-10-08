@@ -1101,7 +1101,6 @@ export const tuning = {
     },
   },
 
-  /** Throwaway values for the §12 Spike A harness. Removed with the harness. */
   /** §15.1 first-launch onboarding (M8). */
   onboarding: {
     /** The window's content size, pt (§15.1 "~520×600"). Not resizable; the page is laid out for exactly this. */
@@ -1218,6 +1217,7 @@ export const tuning = {
       reducedHoldS: 1.8,
     },
   },
+  /** Throwaway values for the §12 Spike A harness. Removed with the harness. */
   spikeOverlay: {
     /** Cursor-follow max speed, pt/s (§12). */
     followSpeed: 600,

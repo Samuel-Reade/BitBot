@@ -129,7 +129,7 @@ Real but not fixed (unconfirmed trigger, or later work):
 - **A display rearrangement** can show the grab area for ≤100 ms at the old spot before the re-layout.
 - **A dev helper built before protocol 3** is used as current (no `spaceChanged`); the mismatch is logged. Packaged builds always rebuild it.
 - **`drawn: false` before `pet:ready`** is overridden by the ready. Clicks still fail closed.
-- **The 30 Hz loop runs while fullscreen or locked** (§11 "< 1% hidden"). Scheduled: event-driven idle (M2), fullscreen/lock hiding (M8).
+- ~~**The 30 Hz loop runs while fullscreen or locked**~~ Fixed in M8: fullscreen and the lock screen fade the pet out and park the loop (src/main/visibility.ts).
 - **`--spike` and `--check` run in packaged builds.** Spike B's tests need that; strip the spike code before any real distribution (Phase 4).
 
 ## M2 measurements: the idle style (2026-10-08)
@@ -192,6 +192,19 @@ Also found while measuring: an animated outline moves under a still cursor, so a
 - **App names:** from the helper's app events, or asked of the helper once (the bundle ID's last part meanwhile). Never window titles.
 - **In memory only** until M8's save file.
 - **Dev check:** 7 new mode checks (a made-up app window: hang out on it, it moves, Go home finds it; it closes, Go home goes to the Dock; forget the spot; Stay stops a walk; ⌥⌘S back to Roam). 83/83 pass.
+
+## M8: onboarding, settings, persistence (2026-10-08)
+
+- **Save file (§16):** src/main/persistence/. Atomic writes (tmp, fsync, rename), backups rotated at most hourly (bak1–3 ≈ 1–3 h old; rotating every autosave would leave them minutes old), corrupt file → the newest valid backup → fresh. A file from a newer schema is set aside (save.json.v<N>), never overwritten. Unknown fields are kept. Autosave every 60 s, after any mode/settings change (1 s debounce), on suspend and on quit. Additions to §16: `life` (the needs' bookkeeping beyond the five levels) and `meta.savedAt` (the time Bitbot was quit counts like the Mac sleeping, and the pet wakes with a stretch). SPEC-DEVIATION: `pet.position` may be null before the pet first stood. The dev check runs without a save.
+- **Onboarding (§15.1):** src/main/windows/onboardingWindow.ts + src/renderer/onboarding/. The pet stays hidden ("in its egg") until the hatch, then appears near the bottom centre and celebrates. Closing the window early: Nibs comes out anyway and onboarding shows again next launch. The one place Bitbot brings itself forward (app.focus) is opening onboarding on a first launch.
+- **Settings (§15.4):** src/main/windows/settingsWindow.ts + src/renderer/settings/. Opened from the tray and the pet's menu (the focus check skips its verdict: the user asked for a window). Palette and size reload the overlay page. Hotkeys are recorded in the page and rebound live; Bitbot's own hotkeys pause while one is recorded. Launch at login only in the packaged app. "Erase all Bitbot data" removes the save and backups and relaunches into onboarding. SPEC-DEVIATION: "default mode" is the mode itself (choosing it switches now; the saved mode is what Bitbot starts in).
+- **Hide in fullscreen / locked (§8.6):** reasons kept apart (the user, macOS, a fullscreen app, the lock screen; src/main/visibility.ts). Fullscreen and lock fade the whole overlay page over 300 ms, then nothing renders and the loop parks; the window itself is hidden only for the user's hide. "Show Bitbot" while a fullscreen app is in front clears the user's hide; the pet fades in when the app leaves.
+- **Daily summary bubble (§9.4):** src/main/summary.ts (words), summaryBubble.ts (timing), renderer/pet/bubble.ts. Shown once a day on the first launch, wake or unlock after the 4 AM rollover (SPEC-DEVIATION: launch counts too); 12 s or a click. The grab area covers the bubble while it is up (one shared layout function in main and the overlay). SPEC-DEVIATION: when Bitbot didn't run yesterday, the newest day within 14 days is summarized as "Last time…".
+- **Restlessness:** scales the brain's pauses, softmax temperature and movement weights; 0.5 is exactly the M6/M7 behaviour.
+- **Tray:** the header is "<name> — <mood>"; Settings… and Mode ▸ Manage spots….
+- **Dev panel:** Save section (reset, load the fresh or day-3 fixture, show the summary now).
+- **Dev check:** 89/89, including lock (grab area off, loop parked, no frames, back on unlock) and a size change (the overlay reloads with a pet ×1.33 taller).
+- **Not run on the real desktop by the builder:** the first-launch flow with the real permission prompt, a real lock/unlock fade, the bubble click's focus (it uses the same non-activating grab area as petting).
 
 ## Manual checks (the real app)
 
