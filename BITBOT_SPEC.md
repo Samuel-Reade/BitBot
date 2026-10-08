@@ -357,6 +357,8 @@ Also design `buildBitbot.ts` to take a `CharacterSpec` (form id, palette, parts 
 
 > **Decided 2026-10-07:** keys, clicks and scrolls come from `bitbot-helper`'s listen-only tap (Input Monitoring), not uiohook-napi. Without Input Monitoring, nothing is counted from keys, clicks or scrolls, and ⌥⌘-click send-to-point is unavailable (the Come here hotkey still works). Scroll-tick rules for trackpads are in [docs/decisions/input-and-helper.md](docs/decisions/input-and-helper.md) §6.
 
+> **Decided 2026-10-08:** scroll ticks: a notched wheel counts its lines; a trackpad counts every N pt of scrolling; momentum (the coast after lifting the fingers) and zero-delta gesture edges count nothing; capped per second. The bundle ID stays `com.bitbot.desktop`; dev builds are signed with a self-signed "Bitbot Dev" certificate so the Input Monitoring grant survives rebuilds. See [docs/decisions/input-and-helper.md](docs/decisions/input-and-helper.md) §6.
+
 ### 7.2 The five currencies
 
 | Currency | Earned from | Base value per unit | Notes |

@@ -145,7 +145,7 @@ The helper's `diag` reports its *responsible process* (`responsibility_get_pid_r
 1. **Input source: decided, done.** The helper's listen-only tap replaces `uiohook-napi`, which was removed from `package.json`, the lockfile, the Spike B harness and the electron-builder rules in Milestone 1. The spec has dated notes at §3, §5.1 and §7.1; §10.4's "observed via uiohook" now means the helper's tap.
 2. **Snapshot rate while the pet is on a window: decided, (d) adaptive** (built in M3). Poll at 4 Hz while attached, switch to 15 Hz on the first observed move of the attached window, and go back after about 1 s of stillness.
    - Rejected alternatives: (a) a constant 15 Hz costs 0.7–0.9%; (b) a private API; (c) 10 Hz is still over budget.
-3. **Scroll ticks: open, decide before M5.** Proposed rule, with its constants going in `tuning.ts`:
+3. **Scroll ticks: decided 2026-10-08 (the user took the proposal).** Built in M5, constants in `tuning.economy.scroll`:
    - notched wheel: |lines| ticks;
    - continuous (trackpad): accumulate |px| into ticks of N pt;
    - ignore momentum and zero-delta gesture edges;
@@ -153,7 +153,7 @@ The helper's `diag` reports its *responsible process* (`responsibility_get_pid_r
 4. **Degraded mode without Input Monitoring: decided as recommended.**
    - No clicks or scrolls are counted through any permission-free path.
    - ⌥⌘-click send-to-point is unavailable without the grant; the "Come here" hotkey still works.
-5. **Signing and bundle ID: partly decided.** Keep the placeholder `com.bitbot.desktop` for now; choose the real one before any Input Monitoring grant you mean to keep (M5). The self-signed "Bitbot Dev" certificate is not decided.
+5. **Signing and bundle ID: decided 2026-10-08.** Keep `com.bitbot.desktop` as the bundle ID. Sign dev builds with a self-signed "Bitbot Dev" certificate so an Input Monitoring grant survives rebuilds (the user creates it once; steps in README "Permissions in dev").
 
 ## 7. Manual tests
 
