@@ -72,4 +72,23 @@ export const IPC = {
   settingsView: 'settings:view',
   /** main → settings page: show this section (open(section) while it is already open). Payload: SettingsSection */
   settingsSection: 'settings:section',
+
+  // §15.1 onboarding (page src/renderer/onboarding/, window src/main/windows/onboardingWindow.ts; payloads and their
+  // validators in src/shared/onboarding.ts). Accepted only from the onboarding window's own page.
+  /** onboarding page → main (invoke): the current view. Returns OnboardingView. */
+  onboardingState: 'onboarding:state',
+  /** main → onboarding page: the view changed (step, grant, relaunch offer). Payload: OnboardingView */
+  onboardingView: 'onboarding:view',
+  /** onboarding page → main: Next / Back. Payload: OnboardingNav */
+  onboardingNav: 'onboarding:nav',
+  /** onboarding page → main: "Allow Input Monitoring" (ask macOS, open System Settings). No payload. */
+  onboardingRequestAccess: 'onboarding:request-access',
+  /** onboarding page → main: "Skip for now" on the permission step. No payload. */
+  onboardingSkipPermission: 'onboarding:skip-permission',
+  /** onboarding page → main: "Relaunch Bitbot" (honoured only while offered). No payload. */
+  onboardingRelaunch: 'onboarding:relaunch',
+  /** onboarding page → main: name and colour chosen, the egg hatches. Payload: OnboardingHatch */
+  onboardingHatch: 'onboarding:hatch',
+  /** onboarding page → main: the hatch animation is over. No payload. */
+  onboardingFinish: 'onboarding:finish',
 } as const
