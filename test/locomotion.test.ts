@@ -6,7 +6,8 @@ import { boxAt, isPetArea, rectContainsRect, type Box, type PetArea, type Point,
 import { tuning } from '../src/shared/tuning'
 import { isBehaviorState, type BehaviorState } from '../src/shared/types'
 
-// Locomotion's M1 subset (BITBOT_SPEC.md §5.1, §8.5 physics) and the pet's area on the primary display (§8.1, §8.7).
+// Locomotion's M1 subset and M2's land (BITBOT_SPEC.md §5.1, §8.5 physics, §10.1) and the pet's area on the primary
+// display (§8.1, §8.7).
 
 const DT = 1 / tuning.sim.hz
 /** The production params: tuning.move must satisfy LocomotionParams as is. */
@@ -23,6 +24,8 @@ const where = (loco: Locomotion): { x: number; y: number; behavior: LocomotionBe
   y: loco.state.y,
   behavior: loco.state.behavior,
 })
+/** Steps of a land: tuning.move.landS at the simulation's step (0.4 s at 30 Hz = 12). */
+const LAND_STEPS = Math.round(PARAMS.landS / DT)
 /** Steps until the pet stops falling (at most 10 s); returns the y after each step. */
 function fallToRest(loco: Locomotion): number[] {
   const ys: number[] = []
@@ -186,15 +189,76 @@ describe('Locomotion', () => {
     expect(where(idle)).toEqual({ x: 850, y: 1022, behavior: 'idle' })
   })
 
-  it('falls under gravity onto the ground and then stands there, still', () => {
+  it('falls under gravity onto the ground, lands, then stands there, still', () => {
     const loco = make({ x: 400, y: 522 })
     const ys = fallToRest(loco)
-    expect(loco.state).toEqual({ x: 400, y: 1022, vx: 0, vy: 0, facing: 1, behavior: 'idle', behaviorTimeS: 0 })
+    expect(loco.state).toEqual({ x: 400, y: 1022, vx: 0, vy: 0, facing: 1, behavior: 'land', behaviorTimeS: 0 })
     expect(ys.every((y, i) => i === 0 || y > (ys[i - 1] ?? Infinity))).toBe(true)
     expect(Math.abs(ys.length * DT - Math.sqrt((2 * 500) / PARAMS.gravity))).toBeLessThan(2 * DT)
+    for (let i = 0; i < LAND_STEPS; i++) loco.step(DT, null)
+    expect(loco.state).toEqual({ x: 400, y: 1022, vx: 0, vy: 0, facing: 1, behavior: 'idle', behaviorTimeS: 0 })
     loco.step(DT, null)
     expect(loco.state).toMatchObject({ y: 1022, behavior: 'idle' })
     expect(loco.state.behaviorTimeS).toBeCloseTo(DT)
+  })
+
+  describe('land (§10.1: a touchdown, the squash and settle)', () => {
+    /** A pet that just touched down at x 400. */
+    const landed = (params: LocomotionParams = PARAMS): Locomotion => {
+      const loco = new Locomotion(AREA, params, { x: 400, y: 900 })
+      fallToRest(loco)
+      return loco
+    }
+
+    it('lasts tuning.move.landS, still on the ground, then becomes idle', () => {
+      expect(LAND_STEPS).toBe(12)
+      const loco = landed()
+      for (let i = 1; i < LAND_STEPS; i++) {
+        loco.step(DT, { x: 100, y: 300 }) // a held point is ignored
+        expect(loco.state).toMatchObject({ x: 400, y: 1022, vx: 0, vy: 0, behavior: 'land' })
+      }
+      expect(loco.state.behaviorTimeS).toBeCloseTo((LAND_STEPS - 1) * DT)
+      loco.step(DT, null)
+      expect(loco.state).toMatchObject({ x: 400, y: 1022, behavior: 'idle', behaviorTimeS: 0 })
+    })
+
+    it('with landS 0 a touchdown goes straight to idle', () => {
+      expect(where(landed({ ...PARAMS, landS: 0 }))).toEqual({ x: 400, y: 1022, behavior: 'idle' })
+    })
+
+    it('is grabbed like idle', () => {
+      const loco = landed()
+      loco.step(DT, null)
+      loco.grab()
+      expect(loco.state).toMatchObject({ x: 400, y: 1022, vx: 0, vy: 0, behavior: 'held', behaviorTimeS: 0 })
+    })
+
+    it('a teleport ends it by the ground rule: idle on the ground, a fall in the air', () => {
+      const onGround = landed()
+      onGround.teleport({ x: 700, y: 1022 })
+      expect(where(onGround)).toEqual({ x: 700, y: 1022, behavior: 'idle' })
+      const inAir = landed()
+      inAir.teleport({ x: 700, y: 600 })
+      expect(where(inAir)).toEqual({ x: 700, y: 600, behavior: 'fall' })
+    })
+
+    it('a release never lands: on the ground it is idle at once', () => {
+      const loco = make()
+      loco.grab()
+      loco.release({ x: 600, y: 1022 })
+      expect(where(loco)).toEqual({ x: 600, y: 1022, behavior: 'idle' })
+    })
+
+    it('setArea: a ground that moved up carries it (still landing); one that moved down makes it fall', () => {
+      const up = landed()
+      up.step(DT, null)
+      up.setArea({ ...AREA, groundY: 950 })
+      expect(where(up)).toEqual({ x: 400, y: 950, behavior: 'land' })
+      expect(up.state.behaviorTimeS).toBeCloseTo(DT)
+      const down = landed()
+      down.setArea({ ...AREA, groundY: 1107 })
+      expect(where(down)).toEqual({ x: 400, y: 1022, behavior: 'fall' })
+    })
   })
 
   it('never falls faster than terminal velocity', () => {
@@ -236,7 +300,7 @@ describe('Locomotion', () => {
   })
 
   it('moves only in §10.1 behavior states and keeps facing right throughout (no turning until M3)', () => {
-    const behaviors: readonly LocomotionBehavior[] = ['idle', 'held', 'fall']
+    const behaviors: readonly LocomotionBehavior[] = ['idle', 'held', 'fall', 'land']
     const asStates: readonly BehaviorState[] = behaviors // compile-time: every LocomotionBehavior is a BehaviorState
     expect(asStates.every(isBehaviorState)).toBe(true)
     const loco = make()
@@ -254,6 +318,8 @@ describe('Locomotion', () => {
     expect(() => new Locomotion(AREA, { ...PARAMS, gravity: Number.NaN })).toThrow(RangeError)
     expect(() => new Locomotion(AREA, { ...PARAMS, terminalVelocity: -1 })).toThrow(RangeError)
     expect(() => new Locomotion(AREA, { ...PARAMS, groundSnapPt: -0.5 })).toThrow(RangeError)
+    expect(() => new Locomotion(AREA, { ...PARAMS, landS: -0.1 })).toThrow(RangeError)
+    expect(() => new Locomotion(AREA, { ...PARAMS, landS: Number.NaN })).toThrow(RangeError)
   })
 
   describe('setArea (display change)', () => {
@@ -263,7 +329,7 @@ describe('Locomotion', () => {
       expect(loco.state).toMatchObject({ x: 600, y: 1022, vx: 0, vy: 0, behavior: 'fall', behaviorTimeS: 0 })
       expect(loco.supportY).toBe(1107)
       fallToRest(loco)
-      expect(where(loco)).toEqual({ x: 600, y: 1107, behavior: 'idle' })
+      expect(where(loco)).toEqual({ x: 600, y: 1107, behavior: 'land' })
     })
 
     it('idle: a ground that moved up carries the pet up onto it, still the same idle', () => {
@@ -297,18 +363,18 @@ describe('Locomotion', () => {
       expect(where(loco)).toEqual({ x: 1200, y: 500, behavior: 'held' })
     })
 
-    it('fall: keeps falling with its speed, and lands when the new ground is at or above it', () => {
+    it('fall: keeps falling with its speed, and touches down (land) when the new ground is at or above it', () => {
       const loco = make({ x: 600, y: 300 })
       for (let i = 0; i < 5; i++) loco.step(DT, null)
       const { y, vy, behaviorTimeS } = loco.state
       loco.setArea({ ...AREA, groundY: 1107 })
       expect(loco.state).toMatchObject({ x: 600, y, vy, behavior: 'fall', behaviorTimeS })
       loco.setArea({ ...AREA, groundY: y })
-      expect(loco.state).toMatchObject({ x: 600, y, vx: 0, vy: 0, behavior: 'idle', behaviorTimeS: 0 })
+      expect(loco.state).toMatchObject({ x: 600, y, vx: 0, vy: 0, behavior: 'land', behaviorTimeS: 0 })
       const above = make({ x: 600, y: 300 })
       above.step(DT, null)
       above.setArea({ ...AREA, groundY: 250 })
-      expect(where(above)).toEqual({ x: 600, y: 250, behavior: 'idle' })
+      expect(where(above)).toEqual({ x: 600, y: 250, behavior: 'land' })
     })
 
     it('rejects an invalid area and keeps the old one', () => {

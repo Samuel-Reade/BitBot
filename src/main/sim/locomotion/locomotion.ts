@@ -1,10 +1,12 @@
 // Locomotion (BITBOT_SPEC.md §5.1): the pet's position, velocity, the surface under it and its physics, in global
 // screen points (y down; x, y is the pet's ground-contact point). Pure; stepped by the simulation loop.
 //
-// M1 subset, on the primary display's ground (§8.1, §8.7):
+// M1 subset (and M2's land), on the primary display's ground (§8.1, §8.7):
 //   idle  stands on the ground, still;
 //   held  follows the point where the user holds it, clamped to the area;
-//   fall  straight down under gravity (§8.5) until it lands on the ground, then idle.
+//   fall  straight down under gravity (§8.5) until it touches down on the ground, then land;
+//   land  stands on the ground, still, for landS (the renderer's squash and settle, §6.4), then idle. It is grabbed,
+//         teleported and moved by a display change exactly like idle.
 // Walking, turning and window surfaces (M3), tosses, bounces and petting (M4) come later; facing stays +1 until then.
 //
 // The ground rule (start, release, teleport, and the ground moving under a standing pet): a pet at most groundSnapPt
@@ -13,8 +15,8 @@
 import { clampToArea, isPetArea, isPoint, type PetArea, type Point } from '../../../shared/geometry'
 import { stepFall, type FallParams } from './physics'
 
-/** The behaviors M1 moves in; each is also a §10.1 BehaviorState, so it goes into pet:state as is. */
-export type LocomotionBehavior = 'idle' | 'held' | 'fall'
+/** The behaviors M1 and M2 move in; each is also a §10.1 BehaviorState, so it goes into pet:state as is. */
+export type LocomotionBehavior = 'idle' | 'held' | 'fall' | 'land'
 
 export interface LocomotionState {
   /** Ground-contact point, global pt. */
@@ -34,7 +36,12 @@ export interface LocomotionState {
 export interface LocomotionParams extends FallParams {
   /** A pet at most this far above the ground (pt) stands on it. */
   groundSnapPt: number
+  /** How long a touchdown stays in land before idle, s (0: straight to idle). */
+  landS: number
 }
+
+/** Float tolerance on landS (not a tunable): 12 steps of 1/30 s end a 0.4 s land, whatever the rounding. */
+const LAND_EPSILON_S = 1e-9
 
 /** Where a new pet appears: on the ground, at the bottom centre of its area. */
 export function spawnPoint(area: PetArea): Point {
@@ -73,10 +80,10 @@ export class Locomotion {
 
   /**
    * A new area (display change; throws if it is invalid). The pet is clamped into it, then:
-   * idle — the ground moved up: it stands on the new ground; moved down: it falls from where it stood (by at most
-   *   groundSnapPt: it stands on the new ground);
+   * idle, land — the ground moved up: it stands on the new ground; moved down: it falls from where it stood (by at
+   *   most groundSnapPt: it stands on the new ground);
    * held — it stays held, clamped;
-   * fall — it keeps falling, and lands if the new ground is at or above it.
+   * fall — it keeps falling, and touches down (land) if the new ground is at or above it.
    * behaviorTimeS carries on unless the behavior changes.
    */
   setArea(area: PetArea): void {
@@ -87,6 +94,7 @@ export class Locomotion {
     s.x = p.x
     switch (s.behavior) {
       case 'idle':
+      case 'land':
         if (this.onGround(p.y)) {
           s.y = next.groundY
         } else {
@@ -104,7 +112,7 @@ export class Locomotion {
     }
   }
 
-  /** The user took hold of the pet (also mid-fall): → held, velocity 0. Ignored while already held. */
+  /** The user took hold of the pet (also mid-fall or landing): → held, velocity 0. Ignored while already held. */
   grab(): void {
     if (this.s.behavior === 'held') return
     this.s.vx = 0
@@ -133,7 +141,8 @@ export class Locomotion {
 
   /**
    * Advances by dtS seconds (ignored unless finite and > 0). held: moves to `held` (clamped) with the velocity of that
-   * move, or stays put when `held` is null; fall: one stepFall, landing → idle; idle: stays on the ground, still.
+   * move, or stays put when `held` is null; fall: one stepFall, touching down → land; land: stays on the ground, still,
+   * and becomes idle once it has lasted landS; idle: stays on the ground, still.
    */
   step(dtS: number, held: Point | null): void {
     if (!(Number.isFinite(dtS) && dtS > 0)) return
@@ -167,6 +176,12 @@ export class Locomotion {
         s.vy = next.vy
         return
       }
+      case 'land':
+        s.y = this.current.groundY
+        s.vx = 0
+        s.vy = 0
+        if (s.behaviorTimeS >= this.params.landS - LAND_EPSILON_S) this.begin('idle')
+        return
       case 'idle':
         s.y = this.current.groundY
         s.vx = 0
@@ -191,11 +206,12 @@ export class Locomotion {
     }
   }
 
+  /** A fall touched down: land (idle at once when landS is 0). */
   private land(): void {
     this.s.y = this.current.groundY
     this.s.vx = 0
     this.s.vy = 0
-    this.begin('idle')
+    this.begin(this.params.landS > 0 ? 'land' : 'idle')
   }
 
   private onGround(y: number): boolean {
@@ -214,14 +230,18 @@ function checkedArea(area: PetArea): PetArea {
 }
 
 function checkedParams(params: LocomotionParams): LocomotionParams {
-  const { gravity, terminalVelocity, groundSnapPt } = params
+  const { gravity, terminalVelocity, groundSnapPt, landS } = params
   const valid =
     Number.isFinite(gravity) &&
     gravity > 0 &&
     Number.isFinite(terminalVelocity) &&
     terminalVelocity > 0 &&
     Number.isFinite(groundSnapPt) &&
-    groundSnapPt >= 0
-  if (!valid) throw new RangeError(`Locomotion: invalid params ${JSON.stringify({ gravity, terminalVelocity, groundSnapPt })}`)
-  return { gravity, terminalVelocity, groundSnapPt }
+    groundSnapPt >= 0 &&
+    Number.isFinite(landS) &&
+    landS >= 0
+  if (!valid) {
+    throw new RangeError(`Locomotion: invalid params ${JSON.stringify({ gravity, terminalVelocity, groundSnapPt, landS })}`)
+  }
+  return { gravity, terminalVelocity, groundSnapPt, landS }
 }
