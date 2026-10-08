@@ -719,7 +719,36 @@ export const tuning = {
   /** bitbot-helper process management (§5.3). */
   /** §16 the save file (M8). */
   persistence: {
-    // (M8: filled in by the persistence work.)
+    /** §16 autosave every 60 s. Lower = less lost on a crash, more disk writes (each is a few tens of KB). */
+    autosaveEveryMs: 60_000,
+    /**
+     * §16 "autosave on mode/settings change": a burst of changes (a restlessness slider drag, renaming spots) is
+     * written once, this long after the last of them. Lower = sooner on disk, more writes during a burst.
+     */
+    changeDebounceMs: 1000,
+    /** §16 "keep the last 3 saves as save.json.bak1..3". */
+    backups: 3,
+    /**
+     * The backups rotate at most this often (a write in between replaces save.json only), so bak1..3 are about 1, 2
+     * and 3 hours old rather than 1–3 minutes: a bug that writes bad data for a few minutes doesn't push every good
+     * copy out. Lower = fresher backups, a shorter window to notice bad data.
+     */
+    backupEveryMs: 3_600_000,
+    /** A save file larger than this is corrupt (a real one is tens of KB), bytes. */
+    maxFileBytes: 4_000_000,
+    /**
+     * Caps on what a loaded save may hold (over: the least recently opened apps, the last spots and items are dropped;
+     * longer strings are cut): hangout spots, known app bundle IDs (§16 knownBundleIds; ~70 bytes each), owned items
+     * (Phase 3). dailyHistory is capped by economy.historyDays (oldest days dropped).
+     */
+    maxHangouts: 50,
+    maxKnownBundleIds: 1000,
+    maxOwnedItems: 500,
+    /** String lengths, characters: spot and app names, spot and item IDs, bundle IDs, hotkey accelerators. */
+    maxNameLength: 80,
+    maxIdLength: 64,
+    maxBundleIdLength: 255,
+    maxHotkeyLength: 64,
   },
   helper: {
     /** Wait for a reply before a request rejects. Lower = faster failure detection, more spurious timeouts on a busy Mac. */
