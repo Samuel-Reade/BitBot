@@ -758,7 +758,11 @@ export class BitbotApp {
     powerMonitor.on('lock-screen', () => this.cancel('the screen locked'))
     powerMonitor.on('suspend', () => this.cancel('the Mac is going to sleep'))
     powerMonitor.on('user-did-resign-active', () => this.cancel('the user session became inactive'))
-    powerMonitor.on('resume', () => this.redraw('woke from sleep'))
+    powerMonitor.on('resume', () => {
+      // Timers and the overlay's renderer both paused during the sleep: the pings missed meanwhile don't count.
+      this.petWindow.resetWatchdog()
+      this.redraw('woke from sleep')
+    })
     powerMonitor.on('unlock-screen', () => this.redraw('the screen unlocked'))
     powerMonitor.on('user-did-become-active', () => this.redraw('the user session became active'))
     app.on('child-process-gone', (_event, details) => {

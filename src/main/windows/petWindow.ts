@@ -8,11 +8,12 @@
 // - a cross-document main-frame navigation after the first load (a reload), a renderer crash, a hang, the window
 //   closing, or no pet:ready within tuning.overlay.readyTimeoutMs: the page is gone (pageLost) until its next
 //   pet:ready, and its grab area is destroyed (after a crash it is crashed but not destroyed);
-// - a crash, a reported hang, a closed window or a missing ready also recreates the window after
+// - a crash, a hang, a closed window or a missing ready also recreates the window after
 //   tuning.overlay.recreateDelayMs, backing off up to recreateMaxDelayMs while it keeps failing (recreateDelayMs()).
-//   A hang is only caught if Chromium reports it ('unresponsive'), and Chromium's hang monitor runs on input acks: the
-//   overlay never takes input, so after its first pet:ready a silent hang is not detected (docs/decisions/overlay.md
-//   "M1 code review").
+// A hang is caught two ways. Chromium reports one ('unresponsive') only from input acks, and the overlay takes no
+// input, so after each pet:ready a watchdog (pageWatchdog.ts) also pings the page (pet:ping) every
+// tuning.overlay.watchdog.pingMs; maxMissed pings in a row without a pet:pong count as a hang (renderer killed). The
+// app resets the watchdog after a system sleep (resetWatchdog()).
 //
 // IPC is registered once for the app's lifetime: ipcMain.handle('pet:config') must exist before the page loads.
 
@@ -33,19 +34,23 @@ import {
   isPetHoverMsg,
   isPetLogMsg,
   isPetPointerMsg,
+  isPetPongMsg,
   isPetReadyMsg,
   type OverlayStatsMsg,
   type PetConfig,
   type PetHoverMsg,
+  type PetPingMsg,
   type PetPointerMsg,
   type PetReadyMsg,
 } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
 import type { PaletteId, PetSize } from '../../shared/types'
 import { loadPage, preloadPath } from '../pages'
+import { globalScheduler } from '../sim/loop'
 import { grabAreaOpenAllowed, HIT_WINDOW_OPTIONS, toNativeMouseEvent, type ElectronHitWindow } from './hitWindow'
 import { DrawnGate, recreateDelayMs } from './overlaySession'
 import { createOverlayWindow } from './overlayWindow'
+import { PageWatchdog } from './pageWatchdog'
 import type { NativeMouseEvent } from './petInteraction'
 
 export interface PetWindowEvents {
@@ -113,8 +118,21 @@ export class PetWindow {
   private config: PetConfig | null = null
   private seq = 0
   private readonly drawnGate = new DrawnGate()
+  /** Pings the current page from its pet:ready until it goes away (a silent hang recreates it). */
+  private readonly watchdog: PageWatchdog
 
   constructor(private readonly opts: PetWindowOptions) {
+    this.watchdog = new PageWatchdog({
+      scheduler: globalScheduler,
+      pingMs: tuning.overlay.watchdog.pingMs,
+      maxMissed: tuning.overlay.watchdog.maxMissed,
+      send: (id) => {
+        this.send(IPC.petPing, { id } satisfies PetPingMsg)
+      },
+      onDead: () => {
+        if (this.window) this.recreate('it stopped answering pings', { killRenderer: true })
+      },
+    })
     this.installIpc()
   }
 
@@ -226,9 +244,18 @@ export class PetWindow {
     return this.window?.getMediaSourceId() ?? null
   }
 
+  /**
+   * After a system sleep: the watchdog forgets the pings missed meanwhile (timers and the renderer both paused) and
+   * starts its period again.
+   */
+  resetWatchdog(): void {
+    this.watchdog.reset()
+  }
+
   /** Quit: destroys the grab area and the overlay; nothing is recreated afterwards. */
   destroy(): void {
     this.closed = true
+    this.watchdog.stop()
     this.clearReadyTimer()
     this.clearRecreateTimer()
     this.hitName = null
@@ -302,6 +329,7 @@ export class PetWindow {
 
   /** The current page is gone: its grab area too; nothing from it counts until the next pet:config. */
   private lost(reason: string): void {
+    this.watchdog.stop()
     this.configured = false
     this.hitName = null
     this.drawnGate.reset()
@@ -368,6 +396,7 @@ export class PetWindow {
       const name = hitWindowName(this.loads)
       this.hitName = name
       this.configured = true
+      this.watchdog.stop() // until this load's pet:ready
       this.drawnGate.reset()
       this.opts.events.newLoad()
       return this.nextConfig(name)
@@ -377,8 +406,10 @@ export class PetWindow {
       this.failures = 0
       // There is no pet:drawn for the configuration a page starts with: its ready says it is drawn.
       this.drawnGate.ready(msg.configSeq)
+      this.watchdog.start()
       this.opts.events.ready(msg)
     })
+    this.listen(IPC.petPong, isPetPongMsg, (msg) => this.watchdog.pong(msg.id))
     this.listen(IPC.petDrawn, isPetDrawnMsg, (msg) => this.drawnGate.drawn(msg))
     this.listen(IPC.petHover, isPetHoverMsg, (msg) => this.opts.events.hover(msg))
     this.listen(IPC.petPointer, isPetPointerMsg, (msg) => this.opts.events.pointer(msg))
