@@ -297,7 +297,11 @@ export const tuning = {
 
   /** Character animation (§6.4). */
   anim: {
-    /** The default idle style (types.ts IdleMode; the dev panel switches it). */
+    /**
+     * The default idle style (types.ts IdleMode; the dev panel switches it). SPEC-DEVIATION (pending the user's choice,
+     * docs/decisions/overlay.md "M2 measurements"): §6.4's idle bobs and sways all the time; 'event' holds still
+     * between short events, about a third of the CPU.
+     */
     idleMode: 'event' as IdleMode,
     /**
      * Eyes follow the cursor (§6.3: within ~300 pt, while idle). Main turns the cursor into a direction (look-left /
@@ -321,7 +325,8 @@ export const tuning = {
     /**
      * Event-driven idle (IdleMode 'event'): still between short events, one every gapS (random in the range): a glance
      * (eyes aside, glanceS), a breath (one bob cycle, breathS) or an antenna wiggle (wiggleS). Animated face overlays
-     * (zzz asleep, the stuffed spinner) and the hungry light run in bursts of burstS every burstS + burstGapS.
+     * (zzz asleep, the stuffed spinner) and the hungry light run in bursts of burstS every burstS + burstGapS; asleep,
+     * only the zzz bursts run.
      * Shorter gaps = livelier, more renders.
      */
     event: { gapS: [3, 8], glanceS: [0.7, 1.3], breathS: 2.6, wiggleS: 1.2, burstS: 2, burstGapS: 6 },
@@ -502,7 +507,19 @@ export const tuning = {
       /** Before each measured phase the new motion runs this long unmeasured, ms. */
       phaseSettleMs: 1500,
       /** Measured length of each phase, s. Longer = steadier CPU means and more latency samples, a longer check. */
-      phaseS: { idle: 10, hidden: 10, nearStill: 10, walkParked: 24, walkCursor: 15, chase: 15, drag120: 12, drag600: 12 },
+      phaseS: {
+        idle: 20,
+        idleContinuous: 10,
+        sleepEvent: 24,
+        sleepContinuous: 10,
+        hidden: 10,
+        nearStill: 10,
+        walkParked: 24,
+        walkCursor: 15,
+        chase: 15,
+        drag120: 12,
+        drag600: 12,
+      },
       /**
        * Walk under a parked cursor: the pet walks ±this many pt around its home at tuning.move.walkSpeed, the cursor parked
        * at its home x. More than the silhouette's half-width (so the cursor is clear of it at the turns) and less than
@@ -545,8 +562,8 @@ export const tuning = {
       a2MaxAgeMin: 30,
       /** The verdict's thresholds. CPU vs A2 is report-only (it depends on the machine); the others gate the exit code. */
       thresholds: {
-        /** Renderer frames while idle (cursor far, pet still) and while hidden. */
-        idleFrames: 0,
+        /** Renderer frames while hidden. (Idle and asleep animate: their renders are reported, not judged.) */
+        hiddenFrames: 0,
         /** Drag input→frame p95 may exceed one display frame by this much, ms. */
         dragFrameSlackMs: 2,
         /** Share of wakes with the pet's box outside the grab area while it is shown, %. */

@@ -56,7 +56,7 @@ export interface PetConfig {
   hitWindowName: string
   /** Current epoch (see the header). */
   epoch: number
-  /** Dev check: keep renderer counters and answer debug:overlay-stats-request. */
+  /** Dev check: also keep the sample lists in debug:overlay-stats (the counters are always kept). */
   debug: boolean
 }
 
@@ -164,7 +164,7 @@ export interface PetLogMsg {
 }
 
 /**
- * debug:overlay-stats — overlay → main, dev check only. Counters since the page loaded (or the last reset) and capped
+ * debug:overlay-stats — overlay → main (the dev check, the dev panel). Counters since the page loaded (or the last reset) and capped
  * sample lists (ms).
  */
 export interface OverlayStatsMsg {

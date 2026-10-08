@@ -1,5 +1,5 @@
 // The menu-bar icon (BITBOT_SPEC.md §15.2): the procedural template image of the CRT silhouette (trayIcon.ts, so no
-// image asset ships), the tooltip "Bitbot", and the M1 menu (trayMenu.ts), rebuilt whenever the pet is shown or hidden
+// image asset ships), the tooltip "Bitbot", and the menu (trayMenu.ts), rebuilt whenever the pet is shown or hidden
 // so it offers the right one of "Hide Bitbot" / "Show Bitbot". The menu works with another app frontmost: opening a
 // status item's menu doesn't activate Bitbot.
 

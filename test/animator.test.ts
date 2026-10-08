@@ -379,3 +379,23 @@ describe('Animator: determinism', () => {
     expect(trace()).toEqual(trace())
   })
 })
+
+describe('Animator: the still style', () => {
+  it('never moves the outline: only the face changes, and no animated cues run', () => {
+    for (const state of ['idle', 'sit', 'sleep'] as const) {
+      const { rig, anim } = setup(5)
+      const inp = input({ state, idleMode: 'still', mood: state === 'idle' ? 'happy' : 'hungry' })
+      anim.update(0, inp)
+      anim.update(1000, inp)
+      const figure = rig.figure.matrix.clone()
+      const bodyY = rig.body.position.y
+      for (let t = 1; t < 40; t += 1 / 30) {
+        const r = anim.update(t * 1000, inp)
+        expect(rig.body.position.y, state).toBe(bodyY)
+        expect(rig.figure.matrix.equals(figure), state).toBe(true)
+        expect(r.wakeAt === null || r.wakeAt > t * 1000, state).toBe(true)
+        expect(anim.face?.overlays.some((o) => o === 'zzz' || o === 'loading'), state).toBe(false)
+      }
+    }
+  })
+})

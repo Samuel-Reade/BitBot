@@ -11,6 +11,7 @@
     "build": "electron-vite build",
     "start": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
     "electron": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "face-sheet": "node scripts/face-sheet.mts",
     "snapshot": "electron-vite build && env -u ELECTRON_RUN_AS_NODE electron . --snapshot=build/snapshots/pet.png",
     "build:helper": "bash helper/build-helper.sh",
     "typecheck": "tsc --noEmit --composite false -p tsconfig.node.json && tsc --noEmit --composite false -p tsconfig.web.json",

@@ -131,6 +131,8 @@ export interface BitbotInspection {
   displayedPoint: Point
   /** Shows or hides the pet as the tray / ⌥⌘B would. */
   setVisible(visible: boolean): void
+  /** Changes the dev panel's overrides as the panel would (dev builds; the check measures each idle style with it). */
+  setDevOverrides(set: DevPanelSet): void
   /**
    * Resolves with the pet:ready of the current page load once it came (at once if it already has), from a load
    * numbered minLoad or later (default 1; pass `loads + 1` to wait for the next one); rejects after timeoutMs.
@@ -502,6 +504,7 @@ export class BitbotApp {
       statesSent: this.states.sent,
       displayedPoint: drawnPoint(this.presented, clock.now(), this.heldPoint()),
       setVisible: (visible) => (visible ? this.showPet('dev check') : this.hidePet('dev check')),
+      setDevOverrides: (set) => this.applyDevPanelSet(set),
       waitForReady: (timeoutMs, minLoad = 1) => this.waitForReady(timeoutMs, minLoad),
       requestOverlayStats: (timeoutMs) => this.requestOverlayStats(timeoutMs),
     }

@@ -1143,3 +1143,43 @@ describe('OverlayModel: animation', () => {
     expect(d.take(IPC.petHover)).toEqual([{ over: false, epoch: 3 }])
   })
 })
+
+describe('OverlayModel: hover follows an animated outline', () => {
+  it('tests hover again at the last cursor after a render that changed the pose', () => {
+    const fake = new FakeAnimator()
+    fake.result = { changed: false, wakeIn: null, fps: 60 }
+    let over = true
+    const d = new Driver({ animate: fake.animate })
+    // The fake silhouette answers `over` at ON_PET (the box elsewhere as usual).
+    const hitTest = (d.model as unknown as { deps: OverlayModelDeps }).deps
+    const original = hitTest.hitTest
+    hitTest.hitTest = (x, y) => (Math.abs(x - 120) < 1 && Math.abs(y - 130) < 1 ? over : original(x, y))
+    d.state(0, 800, GROUND, { snap: true })
+    d.run(Driver.at(0))
+    d.cursor(ON_PET, T)
+    expect(d.take(IPC.petHover)).toEqual([{ over: true, epoch: 3 }])
+    // The arm moves away from the still cursor: the next render that changed the pose turns hover off.
+    over = false
+    fake.result = { changed: true, wakeIn: null, fps: 60 }
+    d.model.onRedraw()
+    d.run(T + 100)
+    expect(d.take(IPC.petHover)).toEqual([{ over: false, epoch: 3 }])
+    // …and back on when it returns.
+    over = true
+    d.model.onRedraw()
+    d.run(T + 200)
+    expect(d.take(IPC.petHover)).toEqual([{ over: true, epoch: 3 }])
+  })
+
+  it('forgets the cursor after a hover-reset (main sends a fresh one)', () => {
+    const fake = new FakeAnimator()
+    const d = placed({ animate: fake.animate })
+    d.cursor(ON_PET, T)
+    d.take(IPC.petHover)
+    d.model.onHoverReset({ epoch: 4 })
+    fake.result = { changed: true, wakeIn: null, fps: 60 }
+    d.model.onRedraw()
+    d.run(T + 100)
+    expect(d.take(IPC.petHover)).toEqual([])
+  })
+})

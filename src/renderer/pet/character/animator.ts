@@ -22,7 +22,8 @@ import { armShoulder, SPEC_ORIGIN_HEIGHT } from './construction'
 //   and yawns, stuffed burps and shows the digest spinner, happy hops now and then, dust shows specks.
 // - Idle, Sit and Sleep follow the idle style (IdleMode, docs/decisions/overlay.md decided (c)): 'continuous' bobs
 //   and sways all the time; 'event' holds still between short events (a blink, a glance, a breath, an antenna wiggle),
-//   so nothing is rendered in between. Every other state moves all the time while it lasts.
+//   so nothing is rendered in between; 'still' only blinks and looks (its outline never changes). Every other state
+//   moves all the time while it lasts.
 // - Held: the pet swings about the grab point like a damped pendulum driven by the drag.
 // - update() reports whether anything visible changed (render only then) and when the pose next changes on its own,
 //   so the overlay can sleep until then (§11 render on demand).
@@ -240,14 +241,15 @@ export class Animator {
     if (input.state !== this.state) this.enterState(input.state, t)
     const tau = t - this.stateStart
     const idleLike = IDLE_LIKE.has(input.state)
-    const eventMode = input.idleMode === 'event' && idleLike
-    this.updateSchedules(t, input, eventMode)
+    // The idle style applies to the idle-like states; every other state moves all the time.
+    const style: IdleMode = idleLike ? input.idleMode : 'continuous'
+    this.updateSchedules(t, input, style)
 
     // The pose: the state's own, blended in from the pose shown when the state changed, then the mood layers.
-    let pose = this.statePose(input, tau, t, dt, eventMode)
+    let pose = this.statePose(input, tau, t, dt, style)
     const blendS = blendFor(input.state, T)
     if (tau < blendS) pose = mix(this.from, pose, smoothstep(tau / blendS))
-    pose = this.moodLayers(pose, input, t, eventMode)
+    pose = this.moodLayers(pose, input, t, style)
     this.last = pose
 
     // Facing (§6.1): ease toward the walking direction (the first update starts there); a climbing pet faces the viewer.
@@ -256,11 +258,11 @@ export class Animator {
     else if (dt > 0) this.yaw = lerp(this.yaw, yawTarget, 1 - Math.exp(-T.yawEaseRate * dt))
     if (Math.abs(yawTarget - this.yaw) < 1e-4) this.yaw = yawTarget
 
-    const face = this.faceFor(input, tau, t, eventMode)
+    const face = this.faceFor(input, tau, t, style)
     const dustCount = input.dust >= T.dust.visibleFrom ? Math.round(Math.min(1, input.dust) * T.dust.maxSpecks) : 0
 
     const changed = this.apply(pose, face, dustCount, input)
-    const wakeAt = this.wakeAt(nowMs, t, input, eventMode, face)
+    const wakeAt = this.wakeAt(nowMs, t, input, style, face)
     return {
       changed,
       wakeAt,
@@ -285,13 +287,13 @@ export class Animator {
     }
   }
 
-  private statePose(input: AnimInput, tau: number, t: number, dt: number, eventMode: boolean): Pose {
+  private statePose(input: AnimInput, tau: number, t: number, dt: number, style: IdleMode): Pose {
     const T = this.T
     const p: Pose = { ...REST }
     const f = input.facing
     switch (input.state) {
       case 'idle': {
-        if (eventMode) return this.eventIdle(p, t)
+        if (style !== 'continuous') return this.eventIdle(p, t)
         const rate = input.mood === 'sleepy' ? T.mood.sleepyRate : 1
         const i = T.idle
         const bob = Math.sin(i.bobRate * rate * t)
@@ -342,15 +344,15 @@ export class Animator {
         p.armLRaise = s.armsIn
         p.armRRaise = s.armsIn
         p.antZ = s.antenna
-        const swingOn = !eventMode || this.event !== null
+        const swingOn = style === 'continuous' || this.event !== null
         const swing = swingOn ? Math.sin(TAU * s.feetSwingHz * t) * s.feetSwing : 0
         p.footLY = swing
         p.footRY = -swing
-        return eventMode ? this.eventIdle(p, t) : p
+        return style !== 'continuous' ? this.eventIdle(p, t) : p
       }
       case 'sleep': {
         const s = T.sleep
-        const bob = !eventMode || this.event !== null ? Math.sin(s.bobRate * t) * s.bobAmp : 0
+        const bob = style === 'continuous' || this.event !== null ? Math.sin(s.bobRate * t) * s.bobAmp : 0
         p.bodyY = -s.lower + bob
         p.lean = s.slump
         p.armLRaise = -s.armsLimp
@@ -490,12 +492,12 @@ export class Animator {
     return p
   }
 
-  private moodLayers(pose: Pose, input: AnimInput, t: number, eventMode: boolean): Pose {
+  private moodLayers(pose: Pose, input: AnimInput, t: number, style: IdleMode): Pose {
     const T = this.T
     const p = pose
     if (input.mood === 'hungry' && input.state !== 'eat' && input.state !== 'sleep') {
       p.antZ = lerp(p.antZ, T.mood.hungryAntenna, 0.85)
-      const on = !eventMode || this.burstOn(t)
+      const on = this.cueOn(style, t)
       p.glowAmber = on && Math.sin(TAU * T.mood.amberBlinkHz * t) < 0 ? 0.15 : 1
     }
     const m = this.moodEvent
@@ -514,7 +516,7 @@ export class Animator {
 
   // ───────────────────────────── face ─────────────────────────────
 
-  private faceFor(input: AnimInput, tau: number, t: number, eventMode: boolean): FaceState {
+  private faceFor(input: AnimInput, tau: number, t: number, style: IdleMode): FaceState {
     const T = this.T
     let eyes: EyesState = 'open'
     let mouth: MouthState = 'smile'
@@ -542,7 +544,7 @@ export class Animator {
         eyes = 'closed'
         mouth = 'flat'
         blinks = false
-        if (!eventMode || this.burstOn(t)) overlays.add('zzz')
+        if (this.cueOn(style, t)) overlays.add('zzz')
         break
       case 'eat':
         eyes = 'happy'
@@ -600,7 +602,7 @@ export class Animator {
       }
     }
     if (input.mood === 'happy') overlays.add('blush')
-    if (input.mood === 'stuffed' && input.state !== 'sleep' && (!eventMode || this.burstOn(t))) overlays.add('loading')
+    if (input.mood === 'stuffed' && input.state !== 'sleep' && this.cueOn(style, t)) overlays.add('loading')
     if (input.dust >= T.dust.visibleFrom) overlays.add('dust')
 
     // Eyes follow the cursor (§6.3) or glance aside (event idle, bored).
@@ -642,7 +644,7 @@ export class Animator {
 
   // ───────────────────────────── scheduling ─────────────────────────────
 
-  private updateSchedules(t: number, input: AnimInput, eventMode: boolean): void {
+  private updateSchedules(t: number, input: AnimInput, style: IdleMode): void {
     const T = this.T
     // Blinks (§6.3), sleepier when sleepy.
     const sleepy = input.mood === 'sleepy'
@@ -657,7 +659,8 @@ export class Animator {
     }
 
     // Idle events (event mode only).
-    if (!eventMode) {
+    // Asleep, the event style only runs the zzz bursts: a sleeping pet holds still.
+    if (style !== 'event' || input.state === 'sleep') {
       this.event = null
       this.nextEvent = 0
     } else {
@@ -665,14 +668,20 @@ export class Animator {
       if (this.nextEvent === 0) this.nextEvent = t + this.between(T.event.gapS)
       if (!this.event && t >= this.nextEvent) {
         const r = this.random()
-        const kind = input.state === 'sleep' ? 'breath' : r < 0.4 ? 'glance' : r < 0.75 ? 'breath' : 'wiggle'
+        const kind = r < 0.4 ? 'glance' : r < 0.75 ? 'breath' : 'wiggle'
         const length = kind === 'glance' ? this.between(T.event.glanceS) : kind === 'breath' ? T.event.breathS : T.event.wiggleS
         this.event = { kind, start: t, end: t + length, pick: this.random() }
         this.nextEvent = this.event.end + this.between(T.event.gapS)
       }
     }
 
-    // Mood moments.
+    // Mood moments (none in the still style: nothing moves there but the eyes).
+    if (style === 'still') {
+      this.moodEvent = null
+      this.nextMoodEvent = 0
+      this.moodFor = null
+      return
+    }
     if (input.mood !== this.moodFor) {
       this.moodFor = input.mood
       this.moodEvent = null
@@ -691,6 +700,11 @@ export class Animator {
       this.moodEvent = { kind, start: t, end: t + length, pick: this.random() }
       this.nextMoodEvent = this.moodEvent.end + this.between(gap)
     }
+  }
+
+  /** Animated cues (zzz, the spinner, the hungry light) run: always in the continuous style, in bursts in the event style, never in the still one. */
+  private cueOn(style: IdleMode, t: number): boolean {
+    return style === 'continuous' || (style === 'event' && this.burstOn(t))
   }
 
   /** In event mode, the periodic bursts of animated cues (zzz, spinner, hungry light), counted from the state's start. */
@@ -712,11 +726,11 @@ export class Animator {
   }
 
   /** When the pose next changes on its own: now (it moves every frame), the next scheduled change, or never (null). */
-  private wakeAt(nowMs: number, t: number, input: AnimInput, eventMode: boolean, face: FaceState): number | null {
-    if (this.inMotion(input, t, eventMode)) return nowMs
+  private wakeAt(nowMs: number, t: number, input: AnimInput, style: IdleMode, face: FaceState): number | null {
+    if (this.inMotion(input, t, style)) return nowMs
     const next: number[] = []
     if (this.blinking) next.push(t < this.blinkUntil ? this.blinkUntil : this.nextBlink)
-    if (eventMode) {
+    if (style === 'event') {
       next.push(this.event ? this.event.end : this.nextEvent)
       if (input.state === 'sleep' || input.mood === 'stuffed' || input.mood === 'hungry') next.push(this.nextBurstEdge(t))
     }
@@ -729,15 +743,15 @@ export class Animator {
   }
 
   /** The pose changes every frame: a moving state, a continuous idle, a blend, a turn, or a moving event or cue. */
-  private inMotion(input: AnimInput, t: number, eventMode: boolean): boolean {
+  private inMotion(input: AnimInput, t: number, style: IdleMode): boolean {
     const active = (e: Timed | null): boolean => e !== null && t >= e.start && t < e.end
     if (CONTINUOUS.has(input.state)) return true
-    if (IDLE_LIKE.has(input.state) && !eventMode) return true
+    if (IDLE_LIKE.has(input.state) && style === 'continuous') return true
     if (t - this.stateStart < blendFor(input.state, this.T)) return true
     if (this.yaw !== yawFor(input)) return true
     if (active(this.event) && this.event?.kind !== 'glance') return true
     if (active(this.moodEvent) && (this.moodEvent?.kind === 'hop' || this.moodEvent?.kind === 'wiggle')) return true
-    if (input.mood === 'hungry' && input.state !== 'sleep' && (!eventMode || this.burstOn(t))) return true
+    if (input.mood === 'hungry' && input.state !== 'sleep' && this.cueOn(style, t)) return true
     return false
   }
 
@@ -844,6 +858,8 @@ function mix(a: Pose, b: Pose, u: number): Pose {
 }
 
 /** How long a change into `state` blends (§6.4: 150–250 ms; a landing hits at once). */
+// SPEC-DEVIATION: §6.4 blends every state over 150–250 ms. Land blends over tuning.anim.land.blendS (40 ms): a 200 ms
+// blend from the fall pose swallowed the landing squash (measured: 0.99 of full height instead of 0.75).
 function blendFor(state: BehaviorState, T: AnimTuning): number {
   return state === 'land' ? T.land.blendS : T.blendS
 }

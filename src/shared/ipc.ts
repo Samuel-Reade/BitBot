@@ -38,9 +38,9 @@ export const IPC = {
   petHover: 'pet:hover',
   /** overlay → main: pointer interaction on the pet. Payload: PetPointerMsg */
   petPointer: 'pet:pointer',
-  /** main → overlay (dev check only, PetConfig.debug): send the renderer's counters. No payload. */
+  /** main → overlay (the dev check, the dev panel): send the renderer's counters. No payload. */
   debugOverlayStatsRequest: 'debug:overlay-stats-request',
-  /** overlay → main (dev check only): the renderer's counters. Payload: OverlayStatsMsg */
+  /** overlay → main: the renderer's counters (sample lists only with PetConfig.debug). Payload: OverlayStatsMsg */
   debugOverlayStats: 'debug:overlay-stats',
   /** main → overlay (dev builds): the dev panel's renderer-side overrides. Payload: DevPetMsg */
   debugPet: 'debug:pet',

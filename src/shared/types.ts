@@ -112,9 +112,11 @@ export function isLookDirection(value: unknown): value is LookDirection {
 /**
  * How the pet idles (docs/decisions/overlay.md, decided (c): prototype both in M2, decide with numbers).
  * 'continuous': §6.4's idle bob and sway all the time, rendered at tuning.render.fps.idle. 'event': mostly still,
- * animating in short bursts (blinks, glances, a breath, an antenna wiggle) and rendering only during them.
+ * animating in short bursts (blinks, glances, a breath, an antenna wiggle) and rendering only during them. 'still':
+ * only the face moves (blinks, looks), so the outline never changes: the cheapest, and what the dev check uses to time
+ * the grab area.
  */
-export const IDLE_MODES = ['continuous', 'event'] as const
+export const IDLE_MODES = ['continuous', 'event', 'still'] as const
 export type IdleMode = (typeof IDLE_MODES)[number]
 
 export function isIdleMode(value: unknown): value is IdleMode {

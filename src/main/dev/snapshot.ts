@@ -9,7 +9,8 @@ import { loadPage, preloadPath } from '../pages'
 
 // Dev tool: renders the pet once in a hidden window and writes a PNG.
 //   electron . --snapshot=out.png [--palette=mint] [--size=S|M|L] [--yaw=<radians>] [--bg=transparent|checker|<css color>]
-//     [--eyes=open|blink] [--mouth=smile] [--overlays=blush,...] [--shadow=0..1]
+//     [--eyes=<eyes>] [--mouth=<mouth>] [--overlays=blush,zzz,...] [--frame=<n>] [--shadow=0..1]
+//     [--state=<behavior state> [--t=<s>] [--mood=<mood>] [--dust=0..1] [--facing=1|-1]]  (src/shared/faceStates.ts, types.ts)
 //     [--show=hit,attach,anchor,measure,hitmask]   (measure logs numbers; run with --enable-logging to see them)
 // Any extra --key=value args are forwarded to the renderer as query params (see src/renderer/pet/main.ts).
 // Never pass --debug=...: Electron treats it as its own (removed) flag and exits with code 9.

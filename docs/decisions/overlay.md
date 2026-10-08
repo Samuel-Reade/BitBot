@@ -132,6 +132,33 @@ Real but not fixed (unconfirmed trigger, or later work):
 - **The 30 Hz loop runs while fullscreen or locked** (§11 "< 1% hidden"). Scheduled: event-driven idle (M2), fullscreen/lock hiding (M8).
 - **`--spike` and `--check` run in packaged builds.** Spike B's tests need that; strip the spike code before any real distribution (Phase 4).
 
+## M2 measurements: the idle style (2026-10-08)
+
+Decided (c) asked M2 to prototype a cheaper idle and decide with numbers. M2 built both, plus a third:
+
+- **Continuous:** §6.4's idle, bobbing and swaying all the time, rendered at 30 fps (asleep: 10 fps).
+- **Event:** still between short events every 3–8 s (a blink, a glance, a breath, an antenna wiggle), rendering only during them. Asleep, only the zzz runs, in 2 s bursts every 8 s.
+- **Still:** only blinks and looks; the outline never changes. The dev check uses it to time the grab area.
+
+Measured by the dev check on the same M4 as above (battery, load average ≈4, one run; CPU as % of one core, all Bitbot processes):
+
+| Pet | Event | Continuous |
+|---|---|---|
+| Idle, cursor far | 6.1 (renders 5/s) | 20.6 (renders 30/s) |
+| Asleep | 4.2 (renders 2/s) | 10.4 (renders 10/s) |
+| Hidden | 0.3 | 0.3 |
+
+- About 1.5–1.9 points of every row is main's 30 Hz simulation loop, which runs while the pet is shown (the M9 performance pass).
+- A drag now renders every frame (the pet swings): 36–40% while dragging, against M1's 20–23% for a static pet. §11 allows 60 fps while dragged.
+- Memory: 195 MB (Electron processes).
+- **Neither style meets §11's 3% idle / 1% asleep yet.** Event is about a third of continuous awake and under half asleep.
+
+**Pending the user's choice:** the default is `tuning.anim.idleMode = 'event'` (a SPEC-DEVIATION until decided); the developer panel switches styles to compare them by eye.
+
+For M3: climbing is only previewed in place (rolled a quarter turn about the body's centre). On a real wall the pet turns about its contact point and reaches up to ≈175 pt sideways, past the 240 pt canvas's 120 pt half-width: the canvas anchor has to move with the surface.
+
+Also found while measuring: an animated outline moves under a still cursor, so after every render that changed the pose the overlay tests hover again at the last cursor it saw (a click must never be caught where the pet no longer is). Parts an animation draws outside the measured pet box are never grabbable (SPEC-DEVIATION in placement.ts).
+
 ## Manual checks (the real app)
 
 Start it with `npm run build:helper` (once), then `npm start`. The pet stands on the Dock at the bottom centre, and a small monitor icon appears in the menu bar.

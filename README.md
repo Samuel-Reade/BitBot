@@ -2,9 +2,10 @@
 
 A macOS desktop pet that lives on your screen and is fed by how you use your computer. The spec is [`BITBOT_SPEC.md`](BITBOT_SPEC.md).
 
-**Status:** Milestone 1 (skeleton) is built and reviewed. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
+**Status:** Milestone 2 (character alive) is built. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
 - Bitbot runs as a menu-bar app with no Dock icon.
-- The static Mint pet stands on the Dock. You can drag it, and it drops back down.
+- The Mint pet stands on the Dock and is alive: it blinks, looks at the cursor, stirs now and then, swings when you drag it, and squashes when it lands.
+- Every §6.4 state and mood and every §6.3 face can be shown from the developer panel (dev builds); the pet doesn't walk or choose states by itself yet (M3, M6).
 - The tray menu and ⌥⌘B hide and show it.
 
 Decisions so far, with what is measured and what is still to check by hand, are in [`docs/decisions/`](docs/decisions/). The overlay approach is B, hardened.
@@ -34,7 +35,7 @@ npm run dev      # the same with hot reload of the pet page
 - **What you see.** The pet stands on the Dock at the bottom centre of the main display, and a small monitor icon appears in the menu bar.
   - If the menu bar is too full (a notch hides items), use ⌥⌘B instead of the icon.
 - **Using it.**
-  - Drag the pet to move it; let go and it falls back down. A click without dragging leaves it where it is.
+  - Drag the pet to move it: it dangles and swings, and gets dizzy if shaken. Let go and it falls back down and lands. A click without dragging leaves it where it is.
   - Right-click it for **Hide**.
   - ⌥⌘B or the menu-bar icon hides and shows it.
   - **Quit Bitbot** is in the menu-bar icon's menu; Ctrl+C in the terminal also quits.
@@ -54,14 +55,14 @@ On macOS, `npm test` fails if `build/helper/bitbot-helper` is missing or older t
 ## Dev tools
 
 - **Developer panel** (dev builds only: `npm run dev` or `npm start`, not a packaged app): tray icon → **Developer…**. It forces the pet's state, mood, dust, facing, face (eyes, mouth, overlays) and idle style (continuous or event-driven), and shows live what `pet:state` says, the simulation's own state, where the eyes look, and the overlay's renders and frames per second. Closing it puts nothing back; **Reset everything** does. It is the one Bitbot window that takes focus, because you opened it.
-- **Dev check of the overlay and its grab area** (Milestone 1; the pet appears and moves at the bottom of the screen while it runs, and your mouse is never touched):
+- **Dev check of the overlay and its grab area** (the pet appears and moves at the bottom of the screen while it runs, and your mouse is never touched):
 
   ```sh
   npm run build && env -u ELECTRON_RUN_AS_NODE node_modules/.bin/electron . --check=overlay
   ```
 
-  - It prints PASS/FAIL for each functional check, then the measurement phases (CPU per process, latencies, frames), and exits 0 only if everything passes.
-  - Leave the mouse alone while it runs. If the real cursor rests where the pet patrols, macOS sends the grab area buttonless mouse moves, which end the check's synthetic drags (a drag phase then reads "not measured").
+  - It prints PASS/FAIL for each functional check, then the measurement phases (CPU per process, latencies, frames; the idle and asleep cost of each idle style), and exits 0 only if everything passes.
+  - Leave the mouse alone while it runs. If the real cursor rests where the pet patrols, macOS sends the grab area buttonless mouse moves, which end the check's synthetic drags (a drag phase then reads "not measured"). The check says so at the end ("WARNING your mouse was over the pet's grab area during …").
   - `--no-measure` skips the measurements. The other options are in the header of [`src/main/dev/overlayCheck.ts`](src/main/dev/overlayCheck.ts).
   - Results go to `spike-results/` (gitignored).
 - **Render the pet to a PNG** (no permissions needed):
@@ -70,7 +71,8 @@ On macOS, `npm test` fails if `build/helper/bitbot-helper` is missing or older t
   env -u ELECTRON_RUN_AS_NODE node_modules/.bin/electron . --snapshot=out.png --palette=mint --bg=checker
   ```
 
-  See [`src/main/dev/snapshot.ts`](src/main/dev/snapshot.ts) for the options.
+  See [`src/main/dev/snapshot.ts`](src/main/dev/snapshot.ts) for the options; `--state=…` poses the pet, e.g. `--state=sleep --mood=sleepy` or `--state=greet --t=0.6`.
+- **Face contact sheet:** `npm run face-sheet` draws every §6.3 face state into [`docs/images/face-sheet.png`](docs/images/face-sheet.png) (layout in [`scripts/face-sheet.mts`](scripts/face-sheet.mts)).
 - **Spike harnesses:**
   - Spike A (overlay window): [`spikes/README-overlay.md`](spikes/README-overlay.md).
   - Spike B (input capture, helper): [`spikes/README-input-helper.md`](spikes/README-input-helper.md), including the permission tests on the packaged app (`npm run package:dir`).

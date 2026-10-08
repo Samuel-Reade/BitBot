@@ -29,6 +29,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { app, BrowserWindow, ipcMain, powerMonitor, screen, type MouseInputEvent } from 'electron'
 import { boxAt, clampToArea, distance, rectContainsRect, type Box, type Point, type Rect } from '../../shared/geometry'
 import { sampleBuffer, type TimedPoint } from '../../shared/interpolation'
+import type { DevPanelSet } from '../../shared/devPanel'
 import { IPC } from '../../shared/ipc'
 import type { OverlayStatsMsg, PetReadyMsg } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
@@ -119,7 +120,8 @@ export interface OverlayCheckOptions {
 
 export const OVERLAY_CHECK_USAGE =
   'usage: electron . --check=overlay [--results=DIR (default <repo>/spike-results)] [--label=TEXT] [--no-measure]\n' +
-  '         [--phases=idle,hidden,nearStill,walkParked,walkCursor,chase,drag120,drag600 (default: all)]\n' +
+  '         [--phases=idle,idleContinuous,sleepEvent,sleepContinuous,hidden,nearStill,walkParked,walkCursor,chase,drag120,\n' +
+  '                   drag600 (default: all)]\n' +
   '         [--a2-walk=FILE --a2-synthetic=FILE (Spike A results to compare with; default: the newest of this session)]'
 
 export function parseOverlayCheckOptions(args: CliArgs, ctx: { appPath: string; cwd: string }): OverlayCheckOptions {
@@ -159,10 +161,24 @@ export async function runOverlayCheck(args: CliArgs): Promise<void> {
   app.exit(code)
 }
 
-type PhaseName = 'idle' | 'hidden' | 'nearStill' | 'walkParked' | 'walkCursor' | 'chase' | 'drag120' | 'drag600'
+type PhaseName =
+  | 'idle'
+  | 'idleContinuous'
+  | 'sleepEvent'
+  | 'sleepContinuous'
+  | 'hidden'
+  | 'nearStill'
+  | 'walkParked'
+  | 'walkCursor'
+  | 'chase'
+  | 'drag120'
+  | 'drag600'
 
 const PHASE_TITLES: Record<PhaseName, string> = {
-  idle: 'idle (cursor far, pet still)',
+  idle: 'idle, event style (cursor far)',
+  idleContinuous: 'idle, continuous style (cursor far)',
+  sleepEvent: 'asleep, event style',
+  sleepContinuous: 'asleep, continuous style',
   hidden: 'hidden',
   nearStill: 'near, still (cursor beside the pet)',
   walkParked: 'walk under a parked cursor',
@@ -177,6 +193,11 @@ interface Coverage {
   shownWakes: number
   outsideWakes: number
   maxOvershootPt: number
+  /**
+   * Wakes with YOUR (real) mouse inside the shown grab area. macOS then sends it real, buttonless mouse moves that end
+   * the check's synthetic drags and flip its hover: that phase's numbers are not the pipeline's.
+   */
+  realMouseWakes: number
 }
 
 interface PhaseResult {
@@ -336,6 +357,9 @@ class OverlayCheck {
       () => this.i().petDrawn && this.i().configSeq >= 2,
     )
     this.watchConsole()
+    // The grab area's checks and timings assume an outline that only moves with the pet: the still idle style (blinks
+    // and looks only). The idle styles' own cost is measured in their phases.
+    this.i().setDevOverrides({ idleMode: 'still' })
     this.loco = this.i().locomotion
     const home = this.groundPoint()
     this.log(`[check] the pet stands at ${fmtPoint(home)} (work area ${fmtRect(wa)})`)
@@ -559,7 +583,17 @@ class OverlayCheck {
     const want = (name: PhaseName): boolean => this.opts.phases === null || this.opts.phases.includes(name)
     this.cursorPoint = this.farPoint()
     await this.goTo(home)
+    // The two idle styles (docs/decisions/overlay.md, decided (c)), awake and asleep, set as the dev panel would.
+    const style = (set: DevPanelSet): void => this.i().setDevOverrides(set)
+    style({ state: null, idleMode: 'event' })
     if (want('idle')) await this.phase('idle', T.phaseS.idle)
+    style({ idleMode: 'continuous' })
+    if (want('idleContinuous')) await this.phase('idleContinuous', T.phaseS.idleContinuous)
+    style({ state: 'sleep', idleMode: 'event' })
+    if (want('sleepEvent')) await this.phase('sleepEvent', T.phaseS.sleepEvent)
+    style({ idleMode: 'continuous' })
+    if (want('sleepContinuous')) await this.phase('sleepContinuous', T.phaseS.sleepContinuous)
+    style({ state: null, idleMode: 'still' })
 
     if (want('hidden')) {
       this.i().setVisible(false)
@@ -725,7 +759,7 @@ class OverlayCheck {
     const wakesA = loop.wakeCount
     const stepsA = loop.stepCount
     this.hookMs = 0
-    this.coverage = opts.coverage ? { shownWakes: 0, outsideWakes: 0, maxOvershootPt: 0 } : null
+    this.coverage = opts.coverage ? { shownWakes: 0, outsideWakes: 0, maxOvershootPt: 0, realMouseWakes: 0 } : null
     const samples: CpuSample[] = [this.sampleCpu()]
     const timer = setInterval(() => samples.push(this.sampleCpu()), T.metricsIntervalMs)
     await sleep(seconds * 1000)
@@ -907,6 +941,9 @@ class OverlayCheck {
     const drawn = ix.held && offset && area ? clampToArea({ x: c.x - offset.x, y: c.y - offset.y }, area) : this.drawnAt(now())
     if (!drawn) return
     const out = overshoot(placement.bounds, boxAt(drawn, ready.petBox))
+    const real = screen.getCursorScreenPoint()
+    const b = placement.bounds
+    if (real.x >= b.x && real.x < b.x + b.width && real.y >= b.y && real.y < b.y + b.height) cov.realMouseWakes++
     cov.shownWakes++
     if (out > 0) {
       cov.outsideWakes++
@@ -1246,6 +1283,7 @@ class OverlayCheck {
     if (cov) {
       const worst = `max ${fmt(cov.maxOvershootPt, 1)} pt`
       parts.push(`box outside the grab area ${fmt(cov.outsidePct, 2)}% of ${cov.shownWakes} wakes (${worst})`)
+      if (cov.realMouseWakes > 0) parts.push(`YOUR MOUSE was over the grab area in ${cov.realMouseWakes} wakes`)
     }
     parts.push(`check hooks ${fmt(r.checkHooksMsPerS, 3)} ms/s`)
     return parts.join(' | ')
@@ -1265,10 +1303,7 @@ class OverlayCheck {
     const p = this.phases
     if (!this.opts.measure) return v
     const ran = (name: PhaseName): boolean => this.opts.phases === null || this.opts.phases.includes(name)
-    for (const name of ['idle', 'hidden'] as const) {
-      if (!ran(name)) continue
-      v.push(judge(`renderer frames while ${PHASE_TITLES[name]}`, p[name]?.renderer?.frames ?? null, th.idleFrames, 'frames'))
-    }
+    if (ran('hidden')) v.push(judge(`renderer frames while ${PHASE_TITLES.hidden}`, p.hidden?.renderer?.frames ?? null, th.hiddenFrames, 'frames'))
     const frameMs = 1000 / (screen.getPrimaryDisplay().displayFrequency || 60)
     for (const name of ['drag120', 'drag600'] as const) {
       if (!ran(name)) continue
@@ -1363,6 +1398,13 @@ class OverlayCheck {
     const lines = [`\n[check] ${code === 0 ? 'ALL PASS' : 'FAILED'}: ${passed}/${this.functional.length} functional checks passed`]
     if (this.verdicts.length > 0) lines[0] += `, ${gateFails.length} gating threshold(s) failed`
     for (const r of failed) lines.push(`FAIL ${r.name}${r.detail ? ` (${r.detail})` : ''}`)
+    const disturbed = Object.values(this.phases).filter((r) => (r?.coverage?.realMouseWakes ?? 0) > 0)
+    if (disturbed.length > 0) {
+      lines.push(
+        `[check] WARNING your mouse was over the pet's grab area during: ${disturbed.map((r) => r?.title).join('; ')}. ` +
+          'Its real moves end the check\'s drags and flip hover, so those numbers are not the app\'s: move the mouse away and rerun.',
+      )
+    }
     if (file) lines.push(`[check] results: ${file}`)
     console.log(lines.join('\n'))
     return code

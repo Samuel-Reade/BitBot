@@ -321,6 +321,10 @@ export class OverlayModel {
   private animFps: number = tuning.render.fps.moving
   private shadowScale = 1
   private lastLook: StateLook | null = null
+  /** The animator changed the pose: after its render, hover is tested again (the outline may have moved). */
+  private poseChanged = false
+  /** The newest cursor position this page knows (a grab-area event or main's sample); null after a hover-reset. */
+  private lastPointer: Point | null = null
 
   private readonly counters = {
     frames: 0,
@@ -433,6 +437,7 @@ export class OverlayModel {
       this.counters.cursorMsgsIgnored++
       return
     }
+    this.lastPointer = { x: raw.x, y: raw.y }
     this.setHover(this.hitTestGlobal(raw))
   }
 
@@ -444,6 +449,7 @@ export class OverlayModel {
     }
     this.adoptEpoch(raw.epoch)
     this.hover = false
+    this.lastPointer = null
     // Main's next cursor sample is the authority now: the grab area's older events must not make it ignored (main sends
     // just one while the cursor and the pet stay still, so an ignored one would leave a dropped pet unclickable).
     this.lastGrabEventAt = null
@@ -467,6 +473,7 @@ export class OverlayModel {
       this.dropHold = null
       this.pendingInputAt = null
       this.lastFrameTs = null
+      this.lastPointer = null
       return
     }
     this.shown = true
@@ -543,7 +550,8 @@ export class OverlayModel {
     this.lastGrabEventAt = now
     const press = this.press
     if (!press) {
-      this.setHover(this.hitTestGlobal({ x: e.screenX, y: e.screenY }))
+      this.lastPointer = { x: e.screenX, y: e.screenY }
+      this.setHover(this.hitTestGlobal(this.lastPointer))
       return
     }
     if (!press.raw) this.pressMove(press, e, now)
@@ -706,6 +714,12 @@ export class OverlayModel {
     const configSeq = this.drawnReport
     this.drawnReport = null
     if (configSeq !== null && !this.contextLost) this.deps.send(IPC.petDrawn, { drawn: true, configSeq } satisfies PetDrawnMsg)
+    // An animated outline moves under a still cursor too: test hover again where the cursor was last seen, so the grab
+    // area never stays clickable where the pet no longer is (and becomes clickable where it now is).
+    if (this.poseChanged) {
+      this.poseChanged = false
+      if (!this.press && this.lastPointer) this.setHover(this.hitTestGlobal(this.lastPointer))
+    }
   }
 
   /**
@@ -767,7 +781,10 @@ export class OverlayModel {
     this.animWakeAt = result.wakeAt
     this.animFps = result.fps
     this.shadowScale = result.shadowScale
-    if (result.changed) this.renderPending = true
+    if (result.changed) {
+      this.renderPending = true
+      this.poseChanged = true
+    }
   }
 
   /** What the pet is doing at render time `renderT`: the newest state at or before it (else the oldest); null: none yet. */
@@ -834,8 +851,9 @@ export class OverlayModel {
     if (!config || !placement || !this.revealed || !this.shown || this.contextLost || this.renderBroken) return false
     const local = canvasLocalPoint(p, config.overlay, placement.origin)
     if (!insideCanvas(local, this.edge)) return false
-    // An animation may draw the pet beyond the box main sizes the grab area and the safety net with (a jump, a
-    // tumble): those parts are not grabbable, so the two never disagree about where the pet is.
+    // SPEC-DEVIATION: §5.2 makes the whole drawn pet clickable. An animation may draw it beyond the box main sizes the
+    // grab area and the safety net with (a jump, a tumble): those parts are not grabbable, so the two never disagree
+    // about where the pet is (they would fight: hover on, safety net off, every wake).
     if (this.petBox && !insideBox(local, this.anchor, this.petBox)) return false
     return this.deps.hitTest(local.x, local.y)
   }
