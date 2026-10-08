@@ -15,7 +15,7 @@ import {
   type HelperWatchdogOptions,
 } from '../src/main/helper/helperClient'
 import { resolveHelperPath } from '../src/main/helper/paths'
-import { HELPER_PROTOCOL_VERSION, type HelperMessage } from '../src/main/helper/protocol'
+import { HELPER_PROTOCOL_VERSION, type HelperMessage, type SpaceChangedMsg } from '../src/main/helper/protocol'
 import { tuning } from '../src/shared/tuning'
 
 const T = tuning.helper
@@ -246,6 +246,26 @@ describe('HelperClient requests', () => {
     expect(eventsOf('hello')).toEqual([{ type: 'hello', version: HELPER_PROTOCOL_VERSION, pid: 99 }])
     expect(client.helloMessage).toEqual({ type: 'hello', version: HELPER_PROTOCOL_VERSION, pid: 99 })
     expect(eventsOf('error')).toEqual([{ type: 'error', id: null, message: 'malformed command' }])
+  })
+
+  it('delivers spaceChanged pushes to their listeners, never to a pending request, and drops malformed ones', async () => {
+    const { client, child, eventsOf } = setup()
+    client.start()
+    const seen: SpaceChangedMsg[] = []
+    const off = client.on('spaceChanged', (event) => seen.push(event))
+    const ping = client.ping() // id 1 waits for its reply
+    child().send({ type: 'spaceChanged', ts: 1791336000.5 })
+    child().send({ type: 'spaceChanged', id: 1, ts: 1791336001 }) // a stray id: still a push, not the ping's reply
+    child().send({ type: 'spaceChanged', ts: 'now' })
+    off()
+    child().send({ type: 'spaceChanged', ts: 1791336002 })
+    expect(seen).toEqual([
+      { type: 'spaceChanged', ts: 1791336000.5 },
+      { type: 'spaceChanged', ts: 1791336001 },
+    ])
+    expect(eventsOf('protocolError')).toEqual([{ reason: 'unparseable', length: expect.any(Number) }])
+    child().reply('pong')
+    await expect(ping).resolves.toEqual({ type: 'pong', id: 1 })
   })
 
   it('does not deliver replies to listeners, but onMessage sees everything', async () => {

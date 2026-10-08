@@ -6,11 +6,12 @@
 //
 // Version 2: inputTap.reason, frontmostFullscreen.displayIds, scroll.linesX/pxX, and
 // startInputTap with keys and mouse both false means stop.
+// Version 3: the unsolicited spaceChanged message.
 //
 // Privacy: `input` key messages carry a virtual key code for the in-memory anti-gaming checks
 // (§7.3) only. Never log, persist or translate them to characters.
 
-export const HELPER_PROTOCOL_VERSION = 2
+export const HELPER_PROTOCOL_VERSION = 3
 
 // ───────────────────────────── helper → main ─────────────────────────────
 
@@ -116,7 +117,7 @@ export interface InputTapMsg {
 // SPEC-DEVIATION: the `input` messages and the inputAccess / requestInputAccess / startInputTap /
 // stopInputTap commands move global input capture from uiohook-napi (§3, §7.1, §10.4) into the
 // helper, as a listen-only tap needing only Input Monitoring (docs/decisions/input-and-helper.md).
-// Pending the user's approval.
+// Decided by the user on 2026-10-07 (uiohook-napi is removed); M5's activity ingest uses this tap.
 export interface KeyInputMsg {
   type: 'input'
   kind: 'key'
@@ -195,6 +196,18 @@ export interface FrontmostFullscreenMsg {
   displayIds: number[]
 }
 
+/**
+ * Unsolicited, on every change of the active Space (Mission Control, ⌃←/→, a fullscreen app or Split
+ * View coming or going), sent before the fullscreen re-check that the change triggers. It names no
+ * Space or display, and no public API says whether the new Space is fullscreen (§5.3): until a fresh
+ * snapshot shows the overlay on screen, assume it is not and keep the grab area hidden (§2).
+ */
+export interface SpaceChangedMsg {
+  type: 'spaceChanged'
+  /** Unix time in seconds (fractional) when the helper saw the change. */
+  ts: number
+}
+
 export const APP_EVENT_TYPES = ['appLaunched', 'appActivated', 'appTerminated'] as const
 export type AppEventType = (typeof APP_EVENT_TYPES)[number]
 
@@ -228,6 +241,7 @@ export type HelperMessage =
   | InputMsg
   | DiagMsg
   | FrontmostFullscreenMsg
+  | SpaceChangedMsg
   | AppLaunchedMsg
   | AppActivatedMsg
   | AppTerminatedMsg
@@ -482,6 +496,10 @@ function parseRecord(m: Fields): HelperMessage | null {
       return id !== undefined && isBool(value) && isStrOrNull(bundleId) && isIntArray(displayIds)
         ? { type: 'frontmostFullscreen', id, value, bundleId, displayIds: [...displayIds] }
         : null
+    }
+    case 'spaceChanged': {
+      const { ts } = m
+      return isNum(ts) ? { type: 'spaceChanged', ts } : null
     }
     case 'appLaunched':
     case 'appActivated':
