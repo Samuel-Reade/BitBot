@@ -45,6 +45,7 @@ import { PetVisibility, type VisibilityChange } from './visibility'
 import type { AppSettings, PetIdentity } from '../shared/settings'
 import { Autosaver } from './persistence/autosave'
 import { SettingsWindow } from './windows/settingsWindow'
+import { SummaryBubble } from './summaryBubble'
 import { knownAppsView, modesView, type SettingsAppView, type SettingsChange, type SettingsNotice } from '../shared/settingsProtocol'
 import { nodeSaveFs } from './persistence/nodeFs'
 import { freshSave, type SaveFile } from './persistence/saveFile'
@@ -217,6 +218,8 @@ export class BitbotApp {
   private readonly hotkeys: Hotkeys
   /** §15.4 the settings window (opened from the tray or the pet's menu). */
   private readonly settingsWindow: SettingsWindow
+  /** §9.4 the daily summary bubble (made after the economy; PetInteraction asks it through `this.summary?`). */
+  private summary: SummaryBubble | null = null
   private readonly tray: BitbotTray
   private readonly relayout: Debouncer
   /** The cursor, global pt (options.cursor or the real one). */
@@ -420,6 +423,9 @@ export class BitbotApp {
       petDrawn: () => this.petWindow.petDrawn,
       frontmostFullscreen: () => this.fullscreen,
       checkOverlayOnScreen: () => windowOnScreen(this.helper, this.overlayWid()),
+      // §9.4 the grab area also covers the summary bubble while it is up; a click on it dismisses it.
+      bubbleBox: (ground, box) => this.summary?.boxAt(ground, box) ?? null,
+      bubbleClicked: () => this.summary?.clicked(),
       popupMenu: (onClose) => {
         const closed = (): void => {
           onClose()
@@ -474,7 +480,11 @@ export class BitbotApp {
       warn: (key, line) => this.throttled.log(key, line),
       events: {
         // A new page load: no state goes out until its pet:ready.
-        newLoad: () => this.states.setReady(false),
+        newLoad: () => {
+          this.states.setReady(false)
+          this.summary?.hide('the overlay page reloads') // the bubble goes with the page
+        },
+        bubbleShown: (msg) => this.summary?.onShown(msg),
         ready: (msg) => this.onReady(msg),
         hover: (msg) => {
           this.interaction.handleHover(msg)
@@ -558,6 +568,22 @@ export class BitbotApp {
         activeSpotId: this.modes.active?.id ?? null,
       }),
     })
+    this.summary = new SummaryBubble({
+      ledger: () => this.economy.state.economy,
+      today: () => this.economy.snapshot().day,
+      lastShownDay: () => this.save.meta.lastSummaryShownDay,
+      markShown: (day) => {
+        this.save.meta.lastSummaryShownDay = day
+        this.autosaver?.changed()
+      },
+      canShow: () => this.visibility.shown && !app.isHidden() && this.petWindow.petDrawn,
+      send: (msg) => void this.petWindow.send(IPC.petBubble, msg),
+      overlayBounds: () => this.petWindow.lastConfig?.overlay ?? null,
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+      random: Math.random,
+      log: (line) => this.log(line),
+    })
     this.relayout = new Debouncer(tuning.overlay.displayChangeDebounceMs, () => this.guarded('display re-layout', () => this.layOut()))
   }
 
@@ -596,6 +622,7 @@ export class BitbotApp {
     const savedAt = this.save.meta.savedAt
     if (savedAt !== null) this.life.restoredAfter(Date.parse(savedAt))
     this.autosaver?.start()
+    this.summary?.trigger('launch') // §9.4 yesterday's summary, once a day (it waits until the pet is drawn)
     this.registerHotkeys()
     this.tray.create(this.isPetVisible())
     this.log('[bitbot] tray icon created')
@@ -670,7 +697,9 @@ export class BitbotApp {
       this.interaction.invalidateOnScreen()
       this.observe()
       this.petWindow.send(IPC.petVisible, { visible: true, epoch: this.interaction.epoch, fade: change.fade } satisfies PetVisibleMsg)
+      this.summary?.retry() // a summary waiting to be seen
     } else {
+      this.summary?.hide(`hidden: ${why}`)
       this.cancel(`hidden: ${why}`)
       // overlayShown() is false now: this decides again at once (the loop is about to park) and hides the grab area.
       this.interaction.invalidateOnScreen()
@@ -718,6 +747,7 @@ export class BitbotApp {
     await this.stopHelper()
     this.guarded('quit: dev panel', () => this.devPanel?.destroy())
     this.guarded('quit: settings', () => this.settingsWindow.destroy())
+    this.guarded('quit: summary', () => this.summary?.dispose())
     this.guarded('quit: windows', () => this.petWindow.destroy())
     this.cleanedUp = true
     this.log('[bitbot] bye')
@@ -1167,6 +1197,7 @@ export class BitbotApp {
     this.snap()
     this.interaction.invalidateOnScreen()
     this.observe()
+    this.summary?.retry()
     const box = msg.petBox
     this.log(
       `[bitbot] overlay ready (page load ${this.readyLoad}, window ${this.overlayWid() ?? 'not shown'}): pet box ` +
@@ -1178,6 +1209,7 @@ export class BitbotApp {
   }
 
   private onPageLost(reason: string): void {
+    this.summary?.hide('the overlay page is gone')
     this.states.setReady(false)
     this.cancel(`the overlay page went away: ${reason}`)
     this.interaction.invalidateOnScreen()
@@ -1450,6 +1482,7 @@ export class BitbotApp {
     powerMonitor.on('suspend', () => {
       this.cancel('the Mac is going to sleep')
       this.life.suspend()
+      this.summary?.hide('the Mac is going to sleep')
       this.autosaver?.flush()
     })
     powerMonitor.on('user-did-resign-active', () => this.cancel('the user session became inactive'))
@@ -1459,9 +1492,11 @@ export class BitbotApp {
       this.redraw('woke from sleep')
       this.life.resume()
       this.ingest.wake()
+      this.summary?.trigger('wake')
     })
     powerMonitor.on('unlock-screen', () => {
       this.applyVisibility(this.visibility.set('locked', false), 'the screen unlocked')
+      this.summary?.trigger('unlock')
       this.redraw('the screen unlocked')
       this.ingest.wake()
     })
