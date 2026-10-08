@@ -1,0 +1,333 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-06T08:12:00.000Z",
+  "pet": {
+    "name": "Pixel",
+    "paletteId": "lilac",
+    "size": "M",
+    "stage": "base",
+    "formId": "base",
+    "cosmetics": {
+      "equipped": {},
+      "owned": []
+    },
+    "position": {
+      "displayId": 1,
+      "x": 640,
+      "y": 1022,
+      "facing": -1
+    }
+  },
+  "needs": {
+    "hunger": 34.5,
+    "energy": 61.2,
+    "fullness": 38,
+    "boredom": 27.5,
+    "dust": 0
+  },
+  "life": {
+    "continuousActiveMs": 1200000,
+    "sinceInteractionS": 300,
+    "idleRunS": 0,
+    "unusedS": 0,
+    "dayKey": "2026-10-08",
+    "dayActive": true,
+    "nutritionWindow": [
+      {
+        "ageS": 600,
+        "amount": 3.2
+      },
+      {
+        "ageS": 30,
+        "amount": 1.1
+      }
+    ]
+  },
+  "rhythm": {
+    "continuousActiveMs": 1260000,
+    "lastActiveAt": "2026-10-08T18:41:05.000Z",
+    "lastBreakAt": "2026-10-08T17:20:00.000Z",
+    "streakDays": 3,
+    "lastStreakDay": "2026-10-08",
+    "sparksToday": {
+      "morningWake": 3,
+      "welcomeBack": 1,
+      "healthySession": 0,
+      "streak": 0,
+      "neglect": 0
+    },
+    "sessionBeforeBreakMs": 0
+  },
+  "economy": {
+    "perCurrency": {
+      "crumbs": {
+        "lifetimeEarned": 464.4,
+        "today": 40.25,
+        "todayHourly": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          12.5,
+          18.25,
+          9.5,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "dailyHistory": [
+          {
+            "day": "2026-10-06",
+            "earned": 182.4
+          },
+          {
+            "day": "2026-10-07",
+            "earned": 241.75
+          }
+        ],
+        "wallet": 0,
+        "todayRaw": 2120,
+        "todayCredited": 2036.5
+      },
+      "pellets": {
+        "lifetimeEarned": 146.85,
+        "today": 10.75,
+        "todayHourly": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          3.4,
+          5.1,
+          2.25,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "dailyHistory": [
+          {
+            "day": "2026-10-06",
+            "earned": 61.2
+          },
+          {
+            "day": "2026-10-07",
+            "earned": 74.9
+          }
+        ],
+        "wallet": 0,
+        "todayRaw": 108,
+        "todayCredited": 107.5
+      },
+      "treats": {
+        "lifetimeEarned": 41.0,
+        "today": 7.25,
+        "todayHourly": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          6,
+          1.25,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "dailyHistory": [
+          {
+            "day": "2026-10-06",
+            "earned": 19.5
+          },
+          {
+            "day": "2026-10-07",
+            "earned": 14.25
+          }
+        ],
+        "wallet": 0,
+        "todayRaw": 9,
+        "todayCredited": 9
+      },
+      "mileage": {
+        "lifetimeEarned": 59.9,
+        "today": 7.2,
+        "todayHourly": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          2.2,
+          3.6,
+          1.4,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "dailyHistory": [
+          {
+            "day": "2026-10-06",
+            "earned": 22.6
+          },
+          {
+            "day": "2026-10-07",
+            "earned": 30.1
+          }
+        ],
+        "wallet": 0,
+        "todayRaw": 36000,
+        "todayCredited": 31000
+      },
+      "sparks": {
+        "lifetimeEarned": 16,
+        "today": 4,
+        "todayHourly": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          3,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "dailyHistory": [
+          {
+            "day": "2026-10-06",
+            "earned": 5
+          },
+          {
+            "day": "2026-10-07",
+            "earned": 7
+          }
+        ],
+        "wallet": 0,
+        "todayRaw": 4,
+        "todayCredited": 4
+      }
+    },
+    "nutritionLifetime": 776.15,
+    "evolutionProgress": 0,
+    "knownBundleIds": {
+      "com.apple.Safari": "2026-10-08T16:02:11.000Z",
+      "com.apple.Terminal": "2026-10-07T21:15:40.000Z",
+      "com.microsoft.VSCode": "2026-10-08T15:58:03.000Z"
+    },
+    "currentDay": "2026-10-08"
+  },
+  "behavior": {
+    "mode": "stay",
+    "stayPoint": {
+      "x": 640,
+      "y": 1022
+    },
+    "activeHangoutId": null,
+    "defaultHomeId": "spot-1",
+    "hangouts": [
+      {
+        "id": "spot-1",
+        "name": "Dock, left side",
+        "kind": "screen",
+        "displayId": 1,
+        "x": 420,
+        "y": 1022
+      },
+      {
+        "id": "spot-2",
+        "name": "Terminal",
+        "kind": "app",
+        "bundleId": "com.apple.Terminal",
+        "appName": "Terminal",
+        "relativeX": 0.25,
+        "fallbackId": "spot-1"
+      }
+    ]
+  },
+  "settings": {
+    "hotkeys": {
+      "toggleVisible": "Alt+Command+B",
+      "comeHere": "Alt+Command+C",
+      "goHome": "Alt+Command+H",
+      "toggleStay": "Alt+Command+S"
+    },
+    "altCmdClickSend": true,
+    "hideInFullscreen": true,
+    "restlessness": 0.6,
+    "launchAtLogin": false,
+    "sound": false
+  },
+  "meta": {
+    "lastSummaryShownDay": "2026-10-08",
+    "onboardingComplete": true
+  }
+}
