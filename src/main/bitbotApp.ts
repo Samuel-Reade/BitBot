@@ -42,6 +42,8 @@ import type { FrontmostFullscreenMsg, HelperWindow } from './helper/protocol'
 import { Hotkeys } from './hotkeys'
 import { petContextMenuTemplate } from './menus/petContextMenu'
 import { ModeState, type SpotLookup } from './sim/modes'
+import { PetVisibility, type VisibilityChange } from './visibility'
+import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings'
 import { BitbotTray } from './menus/tray'
 import { SignalGate } from './signals'
 import { systemClock } from './sim/clock'
@@ -234,7 +236,10 @@ export class BitbotApp {
   /** The newest pet:ready (its petBox outlives the page that sent it). */
   private ready: PetReadyMsg | null = null
   private readyLoad = 0
-  private hiddenByUser = false
+  /** The user's settings (§15.4; M8 loads and saves them). */
+  private settings: AppSettings = structuredClone(DEFAULT_SETTINGS)
+  /** Why the pet is not shown (the user, macOS, a fullscreen app, the lock screen; §8.6). */
+  private readonly visibility = new PetVisibility({ hideInFullscreen: DEFAULT_SETTINGS.hideInFullscreen })
   /** app.isHidden() as last seen on a simulation wake. */
   private appHidden = false
   private fullscreenMsg: FrontmostFullscreenMsg | null = null
@@ -361,7 +366,7 @@ export class BitbotApp {
       displayedPoint: (nowMs) => drawnPoint(this.presented, nowMs, this.heldPoint()),
       // Turned with the pet while it climbs (boxFor), so the grab area and the safety net follow it onto a wall.
       petBox: () => (this.ready ? boxFor(this.ready.petBox, this.loco?.state.attach ?? 'floor') : null),
-      overlayShown: () => !this.hiddenByUser && !app.isHidden(),
+      overlayShown: () => this.visibility.shown && !app.isHidden(),
       petDrawn: () => this.petWindow.petDrawn,
       frontmostFullscreen: () => this.fullscreen,
       checkOverlayOnScreen: () => windowOnScreen(this.helper, this.overlayWid()),
@@ -556,12 +561,10 @@ export class BitbotApp {
   showPet(source: string): void {
     if (this.quitting || !this.started) return
     const hiddenByMacOS = app.isHidden()
-    if (!this.hiddenByUser && !hiddenByMacOS) {
+    if (this.visibility.userShown && !hiddenByMacOS) {
       this.log(`[bitbot] ${source}: the pet is already shown`)
       return
     }
-    this.hiddenByUser = false
-    this.cancel(`shown by the user: ${source}`)
     // Hidden by macOS (another app's Hide Others, or anything that runs NSApp hide:), measured on Electron 44.6 /
     // macOS 15.6 with this overlay's window settings: showInactive() on the overlay unhides Bitbot and restores all its
     // windows WITHOUT activating it (no did-become-active, the frontmost app unchanged). app.show() ([NSApp unhide:])
@@ -571,41 +574,63 @@ export class BitbotApp {
     // "Show Bitbot".
     this.petWindow.showInactive()
     if (app.isHidden()) this.log('[bitbot] WARNING macOS still hides Bitbot after showInactive(): the pet stays hidden')
-    if (this.loco) this.loop.start()
-    this.worldDriver.setHidden(false, clock.now(), this.loco)
-    this.refreshWorld()
-    this.snap()
-    this.interaction.invalidateOnScreen()
-    this.observe()
-    this.petWindow.send(IPC.petVisible, { visible: true, epoch: this.interaction.epoch } satisfies PetVisibleMsg)
     this.appHidden = app.isHidden()
-    this.tray.update(this.isPetVisible())
-    this.devPanel?.refresh()
+    // A fullscreen app or the lock screen may still hide it: it fades in when they go.
+    this.applyVisibility(this.visibility.set('user', false), `shown by the user: ${source}`)
+    this.applyVisibility(this.visibility.set('macHidden', this.appHidden), `shown by the user: ${source}`)
+    this.tray.update(this.visibility.userShown)
     this.log(`[bitbot] pet shown (${source})${hiddenByMacOS ? '; macOS had hidden Bitbot' : ''}`)
   }
 
   /** Hides the pet (the tray, ⌥⌘B, the pet's menu): the grab area at once, then the overlay; the simulation parks. */
   hidePet(source: string): void {
-    if (this.quitting || !this.started || this.hiddenByUser) return
-    this.hiddenByUser = true
-    this.cancel(`hidden by the user: ${source}`)
-    // overlayShown() is false now: this decides again at once (the loop is about to park) and hides the grab area.
-    this.interaction.invalidateOnScreen()
-    this.observe()
-    this.petWindow.send(IPC.petVisible, { visible: false, epoch: this.interaction.epoch } satisfies PetVisibleMsg)
+    if (this.quitting || !this.started || this.visibility.has('user')) return
+    const change = this.visibility.set('user', true)
+    if (!change) this.cancel(`hidden by the user: ${source}`) // already hidden by something else
+    this.applyVisibility(change, `hidden by the user: ${source}`)
     this.petWindow.hide()
-    // §8.6 "while hidden, the simulation continues at low rate": the 30 Hz loop parks; the needs keep ticking on their own
-    // timer (tuning.needs.hiddenTickHz) and the economy on its activity sources.
-    this.loop.stop()
-    this.worldDriver.setHidden(true, clock.now(), this.loco)
     this.tray.update(false)
-    this.devPanel?.refresh()
     this.log(`[bitbot] pet hidden (${source})`)
   }
 
   toggleVisible(source: string): void {
-    if (this.isPetVisible()) this.hidePet(source)
+    if (this.visibility.userShown) this.hidePet(source)
     else this.showPet(source)
+  }
+
+  /**
+   * The pet became shown or hidden for any reason (§8.6): the grab area and the overlay's drawing follow, and the 30 Hz
+   * simulation parks while hidden (the needs and the economy keep ticking on their own timer). Fullscreen and the lock
+   * screen fade; the overlay window itself is hidden only for the user's hide (hidePet).
+   */
+  private applyVisibility(change: VisibilityChange | null, why: string): void {
+    if (!change || this.quitting || !this.started) return
+    if (change.shown) {
+      if (this.loco) this.loop.start()
+      this.worldDriver.setHidden(false, clock.now(), this.loco)
+      this.refreshWorld()
+      this.snap()
+      this.interaction.invalidateOnScreen()
+      this.observe()
+      this.petWindow.send(IPC.petVisible, { visible: true, epoch: this.interaction.epoch, fade: change.fade } satisfies PetVisibleMsg)
+    } else {
+      this.cancel(`hidden: ${why}`)
+      // overlayShown() is false now: this decides again at once (the loop is about to park) and hides the grab area.
+      this.interaction.invalidateOnScreen()
+      this.observe()
+      this.petWindow.send(IPC.petVisible, { visible: false, epoch: this.interaction.epoch, fade: change.fade } satisfies PetVisibleMsg)
+      this.loop.stop()
+      this.worldDriver.setHidden(true, clock.now(), this.loco)
+    }
+    this.tray.update(this.visibility.userShown)
+    this.devPanel?.refresh()
+    const reasons = this.visibility.reasons()
+    this.log(`[bitbot] pet ${change.shown ? 'shown' : 'hidden'} (${why})${reasons.length > 0 ? `; hidden by: ${reasons.join(', ')}` : ''}`)
+  }
+
+  /** §15.4 "Hide during fullscreen apps" changed. */
+  private setHideInFullscreen(on: boolean): void {
+    this.applyVisibility(this.visibility.setHideInFullscreen(on), `hide in fullscreen ${on ? 'on' : 'off'}`)
   }
 
   /** Quits cleanly: loop, interaction, hotkeys, tray, helper (bounded wait), windows; then app.quit(). Idempotent. */
@@ -657,7 +682,7 @@ export class BitbotApp {
       readyLoad: this.readyLoad,
       helper: this.helper,
       activation: this.activation.counters,
-      hiddenByUser: this.hiddenByUser,
+      hiddenByUser: this.visibility.has('user'),
       appHidden: app.isHidden(),
       frontmostFullscreen: this.fullscreen,
       statesSent: this.states.sent,
@@ -759,7 +784,7 @@ export class BitbotApp {
   /** §10.4 Come here: walks or climbs to the reachable point nearest the cursor. */
   comeHere(source: string): void {
     const loco = this.loco
-    if (!loco || !this.isPetVisible()) return
+    if (!loco || !this.visibility.shown) return
     const cursor = this.opts.cursor ? this.opts.cursor() : screen.getCursorScreenPoint()
     this.sendTo(cursor, `come here (${source})`)
   }
@@ -767,7 +792,7 @@ export class BitbotApp {
   /** §10.4 Go home: to the active hangout spot, else the default home on the ground. */
   goHome(source: string): void {
     const loco = this.loco
-    if (!loco || !this.isPetVisible()) return
+    if (!loco || !this.visibility.shown) return
     this.sendTo(this.modes.home(this.spotLookup(loco.area)), `go home (${source})`)
   }
 
@@ -927,13 +952,12 @@ export class BitbotApp {
     this.states.setReady(true)
     // A fresh page starts with the overlay's defaults.
     this.sendDevPet()
-    if (this.hiddenByUser) {
-      this.petWindow.send(IPC.petVisible, { visible: false, epoch: this.interaction.epoch } satisfies PetVisibleMsg)
-    } else {
-      // Not while macOS hides Bitbot: showInactive() would unhide it (see showPet()).
-      if (!app.isHidden()) this.petWindow.showInactive()
-      this.loop.start()
+    if (!this.visibility.shown) {
+      this.petWindow.send(IPC.petVisible, { visible: false, epoch: this.interaction.epoch, fade: false } satisfies PetVisibleMsg)
     }
+    // Not while macOS hides Bitbot: showInactive() would unhide it (see showPet()).
+    if (!this.visibility.has('user') && !app.isHidden()) this.petWindow.showInactive()
+    if (this.visibility.shown) this.loop.start()
     this.refreshWorld()
     this.snap()
     this.interaction.invalidateOnScreen()
@@ -1057,7 +1081,7 @@ export class BitbotApp {
 
   /** Shown as far as the user can see: not hidden by them, and macOS isn't hiding Bitbot. */
   private isPetVisible(): boolean {
-    return !this.hiddenByUser && !app.isHidden()
+    return this.visibility.userShown
   }
 
   /** Every simulation wake: did macOS hide (or show) Bitbot? There is no event for it. */
@@ -1073,6 +1097,7 @@ export class BitbotApp {
     }
     this.interaction.invalidateOnScreen()
     this.observe()
+    this.applyVisibility(this.visibility.set('macHidden', hidden), hidden ? 'macOS hid Bitbot' : 'macOS showed Bitbot')
     this.tray.update(this.isPetVisible())
   }
 
@@ -1171,6 +1196,7 @@ export class BitbotApp {
     if (value) this.cancel('a fullscreen app is in front')
     this.interaction.invalidateOnScreen()
     this.observe()
+    this.applyVisibility(this.visibility.set('fullscreen', value), value ? 'a fullscreen app covers the pet\'s display' : 'the fullscreen app is gone')
   }
 
   private async stopHelper(): Promise<void> {
@@ -1207,7 +1233,10 @@ export class BitbotApp {
   }
 
   private watchSystem(): void {
-    powerMonitor.on('lock-screen', () => this.cancel('the screen locked'))
+    powerMonitor.on('lock-screen', () => {
+      this.cancel('the screen locked')
+      this.applyVisibility(this.visibility.set('locked', true), 'the screen locked')
+    })
     powerMonitor.on('suspend', () => {
       this.cancel('the Mac is going to sleep')
       this.life.suspend()
@@ -1221,6 +1250,7 @@ export class BitbotApp {
       this.ingest.wake()
     })
     powerMonitor.on('unlock-screen', () => {
+      this.applyVisibility(this.visibility.set('locked', false), 'the screen unlocked')
       this.redraw('the screen unlocked')
       this.ingest.wake()
     })
@@ -1392,6 +1422,7 @@ export class BitbotApp {
       enabled: o.wander && o.state === null && this.pendingSend === null,
       mode,
       hangout: centre ? { centre, radiusPt: tuning.brain.hangoutRadiusPt } : null,
+      restlessness: this.settings.restlessness,
     })
     // §10.4 Stay: wherever it comes to rest (a drop, a command, a fall) is where it stays.
     const s = loco.state
@@ -1400,6 +1431,7 @@ export class BitbotApp {
 
   /** The life tick (tuning.needs.hiddenTickHz, shown or hidden): needs, sleep, economy events, the asleep snapshot rate. */
   private tickLife(): void {
+    this.watchAppHidden() // the loop parks while hidden: notice macOS showing Bitbot again here
     this.life.advance()
     for (const e of this.economy.drainEvents()) this.life.economyEvent(e)
     this.worldDriver.setAsleep(this.life.asleep, clock.now(), this.loco)
