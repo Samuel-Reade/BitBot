@@ -550,3 +550,42 @@ describe('Brain: interrupt, greet, celebrate, modes', () => {
     expect(a.seen).toEqual(b.seen)
   })
 })
+
+describe('Brain: Hangout mode (§10.3)', () => {
+  const SPOT: Point = { x: 1450, y: GROUND_Y }
+  const hangout = { centre: SPOT, radiusPt: B.hangoutRadiusPt }
+
+  it('a bored pet’s outings stay within the radius of its spot', () => {
+    const s = sim({ start: SPOT, needs: { boredom: 95 }, seed: 5, input: { mode: 'hangout', hangout, home: SPOT } })
+    let farthest = 0
+    run(s, 300, () => {
+      farthest = Math.max(farthest, distance(at(s), SPOT))
+      return false
+    })
+    expect(s.behaviors.has('walk') || s.behaviors.has('run') || s.behaviors.has('climb')).toBe(true)
+    // Within the radius, plus a pet's step of slack (routes may swing a little past their ends).
+    expect(farthest).toBeLessThanOrEqual(B.hangoutRadiusPt + 60)
+  })
+
+  it('found far from its spot (after eating elsewhere, a toss…), it walks back and sits there', () => {
+    const s = sim({ start: { x: 300, y: GROUND_Y }, input: { mode: 'hangout', hangout, home: SPOT } })
+    expect(run(s, 60, () => s.brain.activity === 'sit')).toBe(true)
+    expect(distance(at(s), SPOT)).toBeLessThanOrEqual(B.hangoutSitPt + 1)
+  })
+
+  it('sleeps at its spot when the computer is idle', () => {
+    const s = sim({ start: { x: 900, y: GROUND_Y }, input: { mode: 'hangout', hangout, home: SPOT, asleep: true } })
+    expect(run(s, 60, () => s.brain.activity === 'sleep')).toBe(true)
+    expect(distance(at(s), SPOT)).toBeLessThan(5)
+  })
+
+  it('Roam ignores the spot', () => {
+    const s = sim({ start: SPOT, needs: { boredom: 95 }, seed: 5, input: { mode: 'roam', hangout } })
+    let farthest = 0
+    run(s, 300, () => {
+      farthest = Math.max(farthest, distance(at(s), SPOT))
+      return false
+    })
+    expect(farthest).toBeGreaterThan(B.hangoutRadiusPt + 60)
+  })
+})

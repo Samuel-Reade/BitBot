@@ -644,6 +644,13 @@ export const tuning = {
     /** Approach cursor stops this far from it, pt. */
     approachCursorGapPt: 90,
     /**
+     * Hangout mode (§10.3 "wanders only within ~300 pt along connected surfaces of the spot"): its outings stay within
+     * hangoutRadiusPt of the spot (straight-line distance standing in for the distance along surfaces), and it sits at
+     * the spot when it is farther than hangoutSitPt from it. Bigger = a roomier home range.
+     */
+    hangoutRadiusPt: 300,
+    hangoutSitPt: 40,
+    /**
      * Shaping the §10.2 scores (each then × its weight): eat and nap rise with hunger / tiredness to needExponent (a
      * need matters once it presses: a rested pet rarely naps); hunger ≥ needs.hunger.seeksFoodAt adds seeksFoodBoost to
      * eat (§9.1 "seeks food"); boredom ≥ needs.boredom.boredAt adds boredBoost to explore, climb, peek and approachCursor;

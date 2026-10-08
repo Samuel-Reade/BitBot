@@ -72,6 +72,12 @@ export interface BrainInput {
   foodSpot: Point | null
   /** §10.3 mode (M7); default 'roam'. Stay refuses movement goals (stateMachine.ts goalAllowed). */
   mode?: PetMode
+  /**
+   * Hangout mode (§10.3): the spot it lives at and how far it wanders from it (tuning.brain.hangoutRadiusPt). Its
+   * outings stay within the radius, it sits and sleeps at the spot (pass the spot as `home` too), and it walks back when
+   * it finds itself farther away (after eating at a launched app's window, say). Null / absent: no spot.
+   */
+  hangout?: { centre: Point; radiusPt: number } | null
 }
 
 type BrainParams = typeof tuning.brain
@@ -284,6 +290,12 @@ export class Brain {
 
   private decide(input: BrainInput, loco: BrainLocomotion): void {
     const mode = input.mode ?? 'roam'
+    // Hangout: away from the spot (an errand, a toss, the spot moved with its app's window): back to it first, to sit.
+    const h = mode === 'hangout' ? input.hangout : null
+    if (h && distance(here(loco), h.centre) > h.radiusPt) {
+      this.lastGoal = 'sit'
+      if (this.goThen(loco, input, 'sit', h.centre, 'sit', null)) return
+    }
     const { scores, available } = this.score(input, loco, mode)
     this.lastScores = scores
     const goal = this.pick(scores, available)
@@ -352,10 +364,15 @@ export class Brain {
   private act(goal: GoalKind, input: BrainInput, loco: BrainLocomotion, mode: PetMode): void {
     const now = input.nowS
     const move = mayMove(mode)
+    const h = mode === 'hangout' ? (input.hangout ?? null) : null
+    /** In Hangout, a target farther than the radius from the spot becomes one within it (null: none there). */
+    const near = (target: Point | null): Point | null => (h ? keepNear(target, h, loco.world, this.random) : target)
     switch (goal) {
       case 'idle':
         return
       case 'sit':
+        // Hangout: it sits at its spot (§10.3 "returns there to sit/sleep").
+        if (h && distance(here(loco), h.centre) > this.params.hangoutSitPt && this.goThen(loco, input, 'sit', h.centre, 'sit', null)) return
         this.startDoing(now, 'sit', null)
         return
       case 'eat':
@@ -366,16 +383,16 @@ export class Brain {
         this.goSleep('nap', input, loco)
         return
       case 'explore':
-        this.goThen(loco, input, 'explore', this.exploreTarget(now, loco), null, null)
+        this.goThen(loco, input, 'explore', near(this.exploreTarget(now, loco)), null, null)
         return
       case 'climb':
-        this.goThen(loco, input, 'climb', pickTarget('wall', loco.world, here(loco), this.random), null, null)
+        this.goThen(loco, input, 'climb', near(pickTarget('wall', loco.world, here(loco), this.random)), null, null)
         return
       case 'peek':
-        this.goThen(loco, input, 'peek', peekTarget(loco.world, input.cursor), 'peek', null)
+        this.goThen(loco, input, 'peek', near(peekTarget(loco.world, input.cursor)), 'peek', null)
         return
       case 'approachCursor':
-        this.goThen(loco, input, 'approachCursor', this.approachTarget(loco, input.cursor), null, null)
+        this.goThen(loco, input, 'approachCursor', near(this.approachTarget(loco, input.cursor)), null, null)
         return
     }
   }
@@ -586,6 +603,29 @@ export class Brain {
   private inRange(r: readonly [number, number]): number {
     return r[0] + clamp(this.random(), 0, 1) * (r[1] - r[0])
   }
+}
+
+// SPEC-DEVIATION: §10.3 measures the hangout range "along connected surfaces"; this uses the straight-line distance
+// from the spot, which is close enough for a ~300 pt range and needs no route search per candidate. A target across a
+// gap still has to be reachable (Locomotion goes to the nearest reachable place).
+/**
+ * `target` if it is within the hangout radius of the spot, else a random point on the surfaces within it (the parts of
+ * segments inside the radius box around the spot); null when there are none.
+ */
+function keepNear(target: Point | null, h: { centre: Point; radiusPt: number }, world: World, random: () => number): Point | null {
+  if (target && distance(target, h.centre) <= h.radiusPt) return target
+  const c = h.centre
+  const r = h.radiusPt
+  const pieces: Segment[] = []
+  for (const seg of world.segments) {
+    if (Math.abs(seg.y - c.y) > r) continue
+    const x0 = Math.max(seg.x0, c.x - r)
+    const x1 = Math.min(seg.x1, c.x + r)
+    if (x1 > x0) pieces.push({ ...seg, x0, x1 })
+  }
+  if (pieces.length === 0) return null
+  const p = pickOnSegments(pieces, c, random, 0, world.params.occlusionTolerance)
+  return p && distance(p, c) <= r ? p : null
 }
 
 function here(loco: BrainLocomotion): Point {

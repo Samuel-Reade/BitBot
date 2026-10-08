@@ -15,14 +15,14 @@
 //   roam     every goal (M6);
 //   stay     no movement goals: explore, climb, peek and approachCursor are refused; eat and nap happen in place, and
 //            so does sleeping when the computer is idle (§10.3 "eats in place when food arrives, sleeps in place");
-//   hangout  (M7) every goal, but movement targets kept within ~300 pt along connected surfaces of the spot, and sit /
-//            nap / sleep at the spot; still runs to eat on an app launch, then returns. Until M7 it behaves as roam.
+//   hangout  every goal, but movement targets kept within tuning.brain.hangoutRadiusPt of the spot, and sit / nap /
+//            sleep at the spot; still runs to eat on an app launch, then returns (brain.ts BrainInput.hangout).
 
 import type { BrainActivity, GoalKind } from '../../../shared/life'
 import type { BehaviorState } from '../../../shared/types'
 import type { LocomotionBehavior } from '../locomotion/locomotion'
 
-/** §10.3 modes. M6 has only Roam; Stay's goal constraint is in place (goalAllowed), Hangout comes with M7. */
+/** §10.3 modes. */
 export const PET_MODES = ['roam', 'stay', 'hangout'] as const
 export type PetMode = (typeof PET_MODES)[number]
 
