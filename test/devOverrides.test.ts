@@ -40,8 +40,8 @@ describe('overriddenFields', () => {
     expect(overriddenFields(forced(null), { behavior: 'idle', facing: 1 }).state).toBe('idle')
   })
 
-  it('held, fall and land always win over a forced state', () => {
-    for (const behavior of ['held', 'fall', 'land'] as const) {
+  it('a forced state replaces only standing still: whatever the simulation does wins', () => {
+    for (const behavior of ['held', 'fall', 'land', 'walk', 'run', 'climb', 'jump'] as const) {
       expect(overriddenFields(forced('sleep'), { behavior, facing: 1 }).state).toBe(behavior)
     }
   })

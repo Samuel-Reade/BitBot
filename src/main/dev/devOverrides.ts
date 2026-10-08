@@ -2,9 +2,9 @@
 // src/shared/devPanel.ts), and how it changes what the overlay is told. Pure (unit-tested in test/devOverrides.test.ts).
 // - DevOverrideState holds the overrides (defaults: nothing forced, mood 'content', no dust, the tuned idle style) and
 //   applies a validated DevPanelSet.
-// - overriddenFields: pet:state's state, facing, mood and dust. The simulation's held, fall and land always win (§10.1
-//   interruption priorities: the user has the pet, or it is in the air or touching down); otherwise a forced state
-//   wins. Mood and dust come from the overrides until the needs model computes them (M6).
+// - overriddenFields: pet:state's state, facing, mood and dust. A forced state replaces only standing still: anything
+//   the simulation is doing wins (held, falling, landing, and since M3 walking, running, climbing, jumping: the pet's
+//   drawing must match its movement). Mood and dust come from the overrides until the needs model computes them (M6).
 // - devPetMsg: debug:pet, the overrides the overlay applies itself (face, idle style).
 //
 // Packaged builds have no panel, so the defaults always apply: the simulation's own state and facing, mood 'content',
@@ -16,8 +16,6 @@ import type { DevPetMsg } from '../../shared/petProtocol'
 import { tuning } from '../../shared/tuning'
 import type { BehaviorState, IdleMode, Mood } from '../../shared/types'
 
-/** Simulation behaviors a forced state never replaces. */
-const SIMULATION_WINS: readonly BehaviorState[] = ['held', 'fall', 'land']
 
 export function defaultDevOverrides(idleMode: IdleMode = tuning.anim.idleMode): DevOverrides {
   return { state: null, mood: 'content', dust: 0, facing: null, face: null, idleMode, showWorld: false, wander: true }
@@ -81,7 +79,7 @@ export interface OverriddenFields {
 }
 
 export function overriddenFields(o: DevOverrides, sim: SimulationFields): OverriddenFields {
-  const state = SIMULATION_WINS.includes(sim.behavior) ? sim.behavior : (o.state ?? sim.behavior)
+  const state = sim.behavior === 'idle' ? (o.state ?? 'idle') : sim.behavior
   return { state, facing: o.facing ?? sim.facing, mood: o.mood, dust: o.dust }
 }
 
