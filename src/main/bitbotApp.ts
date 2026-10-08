@@ -24,7 +24,7 @@ import { app, globalShortcut, Menu, powerMonitor, screen, shell, type BrowserWin
 import type { DevPanelSet } from '../shared/devPanel'
 import type { DevInject, EconomySnapshot } from '../shared/economy'
 import type { Box, PetArea, Point } from '../shared/geometry'
-import { DEFAULT_HOTKEYS } from '../shared/hotkeys'
+import { DEFAULT_HOTKEYS, type HotkeyAction } from '../shared/hotkeys'
 import { IPC } from '../shared/ipc'
 import type { OverlayStatsMsg, PetCursorMsg, PetHoverResetMsg, PetReadyMsg, PetVisibleMsg } from '../shared/petProtocol'
 import { tuning } from '../shared/tuning'
@@ -38,12 +38,14 @@ import type { DevPanelAppStatus } from './dev/devPanelModel'
 import { HelperClient, type HelperExitInfo } from './helper/helperClient'
 import { resolveHelperPath } from './helper/paths'
 import type { FrontmostFullscreenMsg, HelperWindow } from './helper/protocol'
-import { Hotkeys } from './hotkeys'
+import { Hotkeys, rebindNotice } from './hotkeys'
 import { petContextMenuTemplate } from './menus/petContextMenu'
 import { ModeState, type SpotLookup } from './sim/modes'
 import { PetVisibility, type VisibilityChange } from './visibility'
 import type { AppSettings, PetIdentity } from '../shared/settings'
 import { Autosaver } from './persistence/autosave'
+import { SettingsWindow } from './windows/settingsWindow'
+import { knownAppsView, modesView, type SettingsAppView, type SettingsChange, type SettingsNotice } from '../shared/settingsProtocol'
 import { nodeSaveFs } from './persistence/nodeFs'
 import { freshSave, type SaveFile } from './persistence/saveFile'
 import { SaveStore } from './persistence/saveStore'
@@ -212,7 +214,9 @@ export class BitbotApp {
   private readonly states: PetStateSender
   private readonly presented: PresentedPoint
   private readonly activation: ActivationMonitor
-  private readonly hotkeys = new Hotkeys(globalShortcut)
+  private readonly hotkeys: Hotkeys
+  /** §15.4 the settings window (opened from the tray or the pet's menu). */
+  private readonly settingsWindow: SettingsWindow
   private readonly tray: BitbotTray
   private readonly relayout: Debouncer
   /** The cursor, global pt (options.cursor or the real one). */
@@ -324,6 +328,13 @@ export class BitbotApp {
     this.identity = identityOf(this.save)
     this.settings = settingsOf(this.save)
     this.modes = new ModeState(behaviorOf(this.save))
+    this.hotkeys = new Hotkeys(globalShortcut, this.settings.hotkeys)
+    this.settingsWindow = new SettingsWindow({
+      view: () => this.settingsView(),
+      apply: (change) => this.applySetting(change),
+      log: (line) => this.log(line),
+      warn: (key, line) => this.throttled.log(key, line),
+    })
     this.visibility = new PetVisibility({ hideInFullscreen: this.settings.hideInFullscreen })
     this.needs = new Needs(tuning.needs, tuning.economy.activity.activeIdleS, needsStateOf(this.save), this.lifeClock.now())
     this.brain = new Brain(tuning.brain, tuning.needs, Math.random)
@@ -527,6 +538,8 @@ export class BitbotApp {
         setMode: (mode) => this.setMode(mode, 'tray menu'),
         selectSpot: (id) => this.selectSpot(id),
         forgetSpot: (id) => this.forgetSpot(id),
+        manageSpots: () => this.guarded('settings', () => this.settingsWindow.open('behavior')),
+        settings: () => this.guarded('settings', () => this.settingsWindow.open()),
         turnOnInputMonitoring: () => void this.turnOnInputMonitoring(),
         // Dev builds only: the menu has no "Developer…" without it.
         ...(devPanel ? { developer: () => this.guarded('dev panel', () => devPanel.open()) } : {}),
@@ -538,6 +551,7 @@ export class BitbotApp {
         return { crumbs: c.crumbs.earned, pellets: c.pellets.earned, treats: c.treats.earned, mileage: c.mileage.earned, sparks: c.sparks.earned }
       },
       inputMonitoringOff: () => this.helper !== null && !this.inputTap.isCounting,
+      header: () => `${this.identity.name} — ${this.life.mood()}`,
       mode: () => ({
         current: this.modes.mode,
         spots: this.modes.spots.map((s) => ({ id: s.id, name: s.name })),
@@ -703,6 +717,7 @@ export class BitbotApp {
     })
     await this.stopHelper()
     this.guarded('quit: dev panel', () => this.devPanel?.destroy())
+    this.guarded('quit: settings', () => this.settingsWindow.destroy())
     this.guarded('quit: windows', () => this.petWindow.destroy())
     this.cleanedUp = true
     this.log('[bitbot] bye')
@@ -896,6 +911,118 @@ export class BitbotApp {
     this.autosaver?.changed()
     this.tray.refresh()
     if (this.dev) this.log(`[bitbot] mode: ${why}`)
+  }
+
+  // ───────────────────────────── settings (§15.4) ─────────────────────────────
+
+  private settingsView(): SettingsAppView {
+    return {
+      identity: { ...this.identity },
+      settings: structuredClone(this.settings),
+      modes: modesView(this.modes.settings),
+      hotkeys: this.hotkeys.statuses(),
+      inputMonitoring: this.helper === null ? 'unknown' : this.inputTap.isCounting ? 'granted' : 'off',
+      launchAtLoginAvailable: app.isPackaged,
+      ...knownAppsView(this.economy.state.economy.knownBundleIds, (id) => this.appNames.get(id) ?? null),
+      version: app.getVersion(),
+    }
+  }
+
+  /** A validated change from the settings window; a notice for its page, or null. */
+  private applySetting(change: SettingsChange): SettingsNotice | null {
+    let notice: SettingsNotice | null = null
+    switch (change.kind) {
+      case 'name':
+        this.identity = { ...this.identity, name: change.name }
+        this.tray.refresh()
+        break
+      case 'palette':
+      case 'size': {
+        this.identity = change.kind === 'palette' ? { ...this.identity, paletteId: change.paletteId } : { ...this.identity, size: change.size }
+        this.worldDriver.setParams(worldParamsFor(tuning.render.bodyHeightPt[this.identity.size], process.pid))
+        this.petWindow.setLook(this.identity.size, this.identity.paletteId)
+        break
+      }
+      case 'resetPosition': {
+        const loco = this.loco
+        if (loco) {
+          this.pendingSend = null
+          loco.teleport(this.modes.defaultHomePoint(this.spotLookup(loco.area)))
+          this.life.interaction('command')
+        }
+        break
+      }
+      case 'defaultMode':
+        if (change.mode === 'hangout') this.selectSpot(change.spotId)
+        else this.setMode(change.mode, 'settings')
+        break
+      case 'restlessness':
+        this.settings.restlessness = change.value
+        break
+      case 'renameSpot':
+        if (this.modes.renameSpot(change.id, change.name)) this.modeChanged('renamed a spot (settings)')
+        break
+      case 'deleteSpot':
+        this.forgetSpot(change.id)
+        break
+      case 'setDefaultHome':
+        if (this.modes.setDefaultHome(change.id)) this.modeChanged('default home (settings)')
+        break
+      case 'hideInFullscreen':
+        this.settings.hideInFullscreen = change.on
+        this.setHideInFullscreen(change.on)
+        break
+      case 'altCmdClickSend':
+        this.settings.altCmdClickSend = change.on
+        break
+      case 'hotkey':
+      case 'resetHotkey': {
+        const accelerator = change.kind === 'hotkey' ? change.accelerator : DEFAULT_HOTKEYS[change.action]
+        notice = this.rebindHotkey(change.action, accelerator)
+        break
+      }
+      case 'requestInputAccess':
+        void this.turnOnInputMonitoring()
+        break
+      case 'launchAtLogin':
+        if (!app.isPackaged) break
+        try {
+          app.setLoginItemSettings({ openAtLogin: change.on })
+          this.settings.launchAtLogin = change.on
+        } catch (err) {
+          notice = { action: null, text: `Could not change Launch at login: ${errorText(err)}` }
+        }
+        break
+      case 'eraseAllData':
+        this.eraseAllData()
+        return null
+    }
+    this.autosaver?.changed()
+    this.settingsWindow.refresh()
+    return notice
+  }
+
+  private rebindHotkey(action: HotkeyAction, accelerator: string): SettingsNotice | null {
+    const result = this.hotkeys.rebind(action, accelerator)
+    this.settings.hotkeys = this.hotkeys.bindings()
+    this.tray.refresh()
+    const text = rebindNotice(action, result, this.hotkeys.statuses()[action])
+    this.log(`[bitbot] hotkey ${action}: ${result.ok ? `now ${this.hotkeys.statuses()[action].accelerator}` : `not changed (${result.reason})`}`)
+    return text ? { action, text } : null
+  }
+
+  /**
+   * §15.4 "Erase all Bitbot data": the save and its backups go (writes stay off, so quitting can't bring them back),
+   * then Bitbot starts again as a new install (onboarding).
+   */
+  private eraseAllData(): void {
+    this.log('[bitbot] erase all Bitbot data: removing the save and its backups, then relaunching')
+    this.autosaver?.stop()
+    const result = this.store?.erase()
+    if (result && !result.ok) this.log(`[bitbot] erase: ${result.problems.join('; ')}`)
+    this.settingsWindow.destroy()
+    app.relaunch()
+    void this.quit('erase all data')
   }
 
   /**
@@ -1131,6 +1258,10 @@ export class BitbotApp {
           this.activation.menuChoice('Hide')
           this.hidePet('pet menu')
         },
+        settings: () => {
+          this.activation.menuChoice('Settings…', true)
+          this.guarded('settings', () => this.settingsWindow.open())
+        },
       }),
     )
     let open = true
@@ -1304,9 +1435,10 @@ export class BitbotApp {
       goHome: () => this.goHome('⌥⌘H'),
       toggleStay: () => this.toggleStay('⌥⌘S'),
     })
-    for (const action of result.registered) this.log(`[bitbot] hotkey registered: ${DEFAULT_HOTKEYS[action]} (${action})`)
+    const bound = this.hotkeys.statuses()
+    for (const action of result.registered) this.log(`[bitbot] hotkey registered: ${bound[action].accelerator} (${action})`)
     for (const action of result.failed) {
-      this.log(`[bitbot] hotkey NOT registered: ${DEFAULT_HOTKEYS[action]} (${action}); another app may own it`)
+      this.log(`[bitbot] hotkey NOT registered: ${bound[action].accelerator} (${action}); another app may own it`)
     }
   }
 
@@ -1511,6 +1643,7 @@ export class BitbotApp {
   /** The life tick (tuning.needs.hiddenTickHz, shown or hidden): needs, sleep, economy events, the asleep snapshot rate. */
   private tickLife(): void {
     this.watchAppHidden() // the loop parks while hidden: notice macOS showing Bitbot again here
+    this.settingsWindow.refresh() // e.g. Input Monitoring granted meanwhile (no-op while closed or unchanged)
     this.life.advance()
     for (const e of this.economy.drainEvents()) this.life.economyEvent(e)
     this.worldDriver.setAsleep(this.life.asleep, clock.now(), this.loco)

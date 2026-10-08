@@ -12,6 +12,8 @@ import type { PetMode } from '../../shared/modes'
 import type { Currency } from '../../shared/types'
 
 export interface TrayMenuState {
+  /** The disabled header (§15.2 "<Pet name> — <mood word>"); absent: "Bitbot". */
+  header?: string
   /** The pet is shown (not hidden by the user). */
   visible: boolean
   /**
@@ -111,7 +113,7 @@ function modeSubmenu(state: TrayMenuState, mode: TrayModeState, actions: TrayMen
 }
 
 export function trayMenuTemplate(state: TrayMenuState, actions: TrayMenuActions): MenuItemConstructorOptions[] {
-  const items: MenuItemConstructorOptions[] = [{ label: 'Bitbot', enabled: false }]
+  const items: MenuItemConstructorOptions[] = [{ label: state.header ?? 'Bitbot', enabled: false }]
   if (state.today) items.push({ label: formatToday(state.today), enabled: false })
   items.push({ type: 'separator' })
   const { comeHere, goHome, turnOnInputMonitoring } = actions

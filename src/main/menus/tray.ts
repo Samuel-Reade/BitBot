@@ -28,6 +28,8 @@ export interface BitbotTrayOptions {
   today(): Record<Currency, number> | null
   /** Input Monitoring is not granted: the gentle reminder line (§7.1). */
   inputMonitoringOff(): boolean
+  /** The header line (§15.2 "<Pet name> — <mood word>"); absent: "Bitbot". */
+  header?(): string
   /** Mode ▸ (M7): the mode and saved spots; absent: no Mode ▸. */
   mode?(): TrayModeState
 }
@@ -70,7 +72,8 @@ export class BitbotTray {
     const today = this.opts.today()
     const inputMonitoringOff = this.opts.inputMonitoringOff()
     const mode = this.opts.mode?.()
-    const key = `${this.visible}|${inputMonitoringOff}|${today ? formatToday(today) : ''}|${mode ? JSON.stringify(mode) : ''}`
+    const header = this.opts.header?.()
+    const key = `${this.visible}|${inputMonitoringOff}|${today ? formatToday(today) : ''}|${mode ? JSON.stringify(mode) : ''}|${header ?? ''}`
     if (!force && key === this.shownKey) return
     this.shownKey = key
     const a = (action: HotkeyAction): string | null => this.opts.accelerator(action)
@@ -82,6 +85,7 @@ export class BitbotTray {
         goHomeAccelerator: a('goHome'),
         toggleStayAccelerator: a('toggleStay'),
         ...(mode ? { mode } : {}),
+        ...(header !== undefined ? { header } : {}),
         today,
         inputMonitoringOff,
       },

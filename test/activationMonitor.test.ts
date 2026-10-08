@@ -194,6 +194,19 @@ describe('ActivationMonitor', () => {
     expect(verdicts(lines)).toEqual(['[bitbot] right-click menu (chose Hide) -> Bitbot became the active app: NO (PASS)'])
   })
 
+  it('a menu choice that opens a window the user asked for (Settings…) is no failure, and no verdict', () => {
+    const { mon, app, timers, lines } = setup()
+    mon.observe('menu')
+    mon.observe('none')
+    timers.advance(10)
+    mon.menuChoice('Settings…', true)
+    app.emit('did-become-active')
+    timers.advance(400)
+    expect(verdicts(lines)).toEqual([])
+    expect(lines.some((l) => l.includes('opens a Bitbot window: activating is expected'))).toBe(true)
+    expect(mon.counters.fails).toBe(0)
+  })
+
   it('a menu dismissed without a choice', () => {
     const { mon, timers, lines } = setup()
     mon.observe('menu')

@@ -322,6 +322,14 @@ describe('trayMenuTemplate', () => {
   })
 })
 
+describe('trayMenuTemplate header (§15.2)', () => {
+  it('shows the pet’s name and mood word when given, else "Bitbot"', () => {
+    const a = { toggleVisible: () => {}, quit: () => {} }
+    expect(trayMenuTemplate({ visible: true, toggleAccelerator: null, header: 'Nibs — happy' }, a)[0]).toEqual({ label: 'Nibs — happy', enabled: false })
+    expect(trayMenuTemplate({ visible: true, toggleAccelerator: null }, a)[0]).toEqual({ label: 'Bitbot', enabled: false })
+  })
+})
+
 describe('trayMenuTemplate Mode ▸ (§15.2, M7)', () => {
   type Item = { label?: string; type?: string; checked?: boolean; enabled?: boolean; accelerator?: string; submenu?: unknown; click?: unknown }
   const press = (item: Item | undefined): void => (item?.click as (...args: unknown[]) => void)({}, undefined, {})

@@ -118,10 +118,13 @@ export class PetWindow {
   private config: PetConfig | null = null
   private seq = 0
   private readonly drawnGate = new DrawnGate()
+  /** The pet's size and palette the page is loaded with (opts at first; setLook changes them). */
+  private look: { size: PetSize; paletteId: PaletteId }
   /** Pings the current page from its pet:ready until it goes away (a silent hang recreates it). */
   private readonly watchdog: PageWatchdog
 
   constructor(private readonly opts: PetWindowOptions) {
+    this.look = { size: opts.size, paletteId: opts.paletteId }
     this.watchdog = new PageWatchdog({
       scheduler: globalScheduler,
       pingMs: tuning.overlay.watchdog.pingMs,
@@ -194,8 +197,22 @@ export class PetWindow {
     this.watch(win)
     this.opts.events.created()
     this.armReadyTimer()
-    loadPage(win, 'pet', { size: this.opts.size, palette: this.opts.paletteId }).catch((err: unknown) => {
+    loadPage(win, 'pet', { size: this.look.size, palette: this.look.paletteId }).catch((err: unknown) => {
       // A reload or a recreation aborts a load in progress; only the current window's failure matters.
+      if (win === this.win) this.opts.log(`[bitbot] overlay: the pet page did not load (${errorText(err)})`)
+    })
+  }
+
+  /**
+   * The user chose another size or palette (§15.4): the page loads again with them (a reload: the page is lost until
+   * its next pet:ready, as for any reload). No-op if nothing changed.
+   */
+  setLook(size: PetSize, paletteId: PaletteId): void {
+    if (size === this.look.size && paletteId === this.look.paletteId) return
+    this.look = { size, paletteId }
+    const win = this.window
+    if (!win) return // the next window loads with it
+    loadPage(win, 'pet', { size, palette: paletteId }).catch((err: unknown) => {
       if (win === this.win) this.opts.log(`[bitbot] overlay: the pet page did not load (${errorText(err)})`)
     })
   }
@@ -447,8 +464,8 @@ export class PetWindow {
       overlay: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
       area: fields.area ? { ...fields.area } : null,
       stepMs: this.opts.stepMs,
-      size: this.opts.size,
-      paletteId: this.opts.paletteId,
+      size: this.look.size,
+      paletteId: this.look.paletteId,
       hitWindowName,
       epoch: fields.epoch,
       debug: this.opts.debug,

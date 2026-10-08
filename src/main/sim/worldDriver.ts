@@ -41,7 +41,15 @@ export class WorldDriver {
   private asleep = false
   private showWorld = false
   private debugKey: string | null = null
-  constructor(private readonly deps: WorldDriverDeps) {}
+  private params: WorldParams
+  constructor(private readonly deps: WorldDriverDeps) {
+    this.params = deps.params
+  }
+
+  /** The pet's size changed (§15.4): the next scene (the reloaded page's pet:ready → setScene) uses these. */
+  setParams(params: WorldParams): void {
+    this.params = params
+  }
 
   /** The newest world; null until the scene is known. */
   get world(): World | null {
@@ -60,7 +68,7 @@ export class WorldDriver {
   setScene(display: DisplayGeometry, petBox: Box, loco: Locomotion | null, tMs: number): World {
     this.display = display
     this.petBox = petBox
-    const world = buildWorld(display, petBox, this.windows, this.deps.params)
+    const world = buildWorld(display, petBox, this.windows, this.params)
     this.current = world
     loco?.setWorld(world, tMs)
     return world
@@ -70,7 +78,7 @@ export class WorldDriver {
   onSnapshot(windows: readonly HelperWindow[], tMs: number, loco: Locomotion | null): void {
     this.windows = windows
     if (!this.display || !this.petBox) return
-    const world = buildWorld(this.display, this.petBox, windows, this.deps.params)
+    const world = buildWorld(this.display, this.petBox, windows, this.params)
     this.current = world
     if (loco && loco.setWorld(world, tMs).ridingMoved) this.rideMovedAtMs = tMs
     this.updateRate(tMs, loco)

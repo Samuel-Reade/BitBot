@@ -99,6 +99,8 @@ interface Ongoing {
   startedAt: number
   dragged: boolean
   choice: string | null
+  /** The choice opens a Bitbot window the user asked for (Settings…): activating Bitbot is expected. */
+  opensWindow?: boolean
 }
 
 interface Pending {
@@ -164,15 +166,22 @@ export class ActivationMonitor {
     }
   }
 
-  /** A pet menu item was chosen (its click arrives after the menu closed): named in that menu's verdict. */
-  menuChoice(item: string): void {
+  /**
+   * A pet menu item was chosen (its click arrives after the menu closed): named in that menu's verdict. `opensWindow`:
+   * it opens a window the user asked for (Settings…), which takes focus by design (§15.3), so activating is no failure.
+   */
+  menuChoice(item: string, opensWindow = false): void {
     if (this.ongoing?.kind === 'menu') {
       this.ongoing.choice = item
+      this.ongoing.opensWindow = opensWindow
       return
     }
     let latest: Pending | null = null
     for (const p of this.pending) if (p.ended.kind === 'menu' && (!latest || p.ended.startedAt >= latest.ended.startedAt)) latest = p
-    if (latest) latest.ended.choice = item
+    if (latest) {
+      latest.ended.choice = item
+      latest.ended.opensWindow = opensWindow
+    }
   }
 
   get counters(): ActivationCounters {
@@ -208,6 +217,11 @@ export class ActivationMonitor {
     const what = ended.kind === 'menu' ? `right-click menu (${chosen})` : ended.dragged ? 'drag' : 'click'
     const events = activationsSince(this.entries, ended.startedAt - this.opts.lookBackMs)
     const becameActive = events.length > 0
+    if (ended.opensWindow === true) {
+      // Not a verdict: the user asked for a window, and showing it activates Bitbot.
+      this.log(`[bitbot] ${what} -> opens a Bitbot window: activating is expected${becameActive ? ` (${events.join(', ')})` : ''}`)
+      return
+    }
     this.counts.verdicts++
     if (becameActive) this.counts.fails++
     else this.counts.passes++
