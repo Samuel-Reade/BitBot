@@ -10,8 +10,14 @@ export const tuning = {
     bodyHeightPt: { S: 64, M: 96, L: 128 } satisfies Record<PetSize, number>,
     /** Device pixel ratio cap for the WebGL canvas. Higher = crisper but more GPU fill cost. */
     pixelRatioCap: 2,
-    /** Frame-rate targets (§11). Lower = cheaper but choppier. */
-    fps: { moving: 60, idle: 30, asleep: 10 },
+    /**
+     * Frame-rate targets (§11). Lower = cheaper but choppier. display: the display's own rate, used while dragged, thrown
+     * or landing (held, fall, land: direct manipulation feels tight). SPEC-DEVIATION (M9, decided "Balanced" 2026-10-08):
+     * moving on its own (walk, run, climb, jump…) at 30, not §11's 60: each Electron frame costs ~0.3–0.5 % of a core,
+     * so 60 fps walking (~23 % while walking) can't meet §11's < 3 % roaming. Idle animations (a breath, a wiggle, a
+     * happy hop) at 20 rather than 30 for the same reason: they are slow and small.
+     */
+    fps: { display: 60, moving: 30, idle: 20, asleep: 10 },
     /** Pet viewport (approach A window / approach B canvas) edge, as a multiple of bodyHeightPt (§5.2: ~2.5×). */
     viewportScale: 2.5,
     /** Where the pet's ground-contact point sits inside the viewport, as fractions of width/height (0 = left/top). */
@@ -95,7 +101,7 @@ export const tuning = {
     /** Simulation rate, Hz. Higher = smoother physics and tighter dragging, more main-process wake-ups. */
     hz: 30,
     /** A wake that owes more steps than this drops the excess time instead of replaying it in a burst (after a stall or sleep). */
-    maxStepsPerWake: 10,
+    maxStepsPerWake: 15,
     /**
      * Steps are computed up to this many ms before their nominal time, so main-process timer lateness below it never
      * starves the overlay, which renders one step behind real time. SPEC-DEVIATION (§5.1 computes a step once its
@@ -108,12 +114,12 @@ export const tuning = {
      * the loop at once anyway). ≤ maxStepsPerWake.
      */
     wake: {
-      /** Awake and idle: 30 Hz / 3 = 10 wakes a second. */
-      idleStride: 3,
-      /** Asleep: 30 Hz / 10 = 3 wakes a second. */
-      asleepStride: 10,
+      /** Awake and idle: 30 Hz / 10 = 3 wakes a second (the eyes follow the cursor a beat later). */
+      idleStride: 10,
+      /** Asleep: 30 Hz / 15 = 2 wakes a second. */
+      asleepStride: 15,
       /** The full rate starts once the cursor is this close to the pet's box, pt (≫ hitArea.nearMarginPt). */
-      approachPt: 160,
+      approachPt: 240,
     },
   },
 
@@ -138,7 +144,7 @@ export const tuning = {
     /** Contact shadow (§6.1 "fades with height"): full strength on the ground, gone at this height, pt. Higher = it lingers as the pet lifts off. */
     shadowFadePt: 24,
     /**
-     * A WebGL render may start this many ms before 1000 / render.fps.moving has passed since the previous one.
+     * A WebGL render may start this many ms before 1000 / render.fps.display has passed since the previous one.
      * Animation-frame timestamps sit on the display's vsync, and a "60 Hz" display refreshes slightly faster than
      * 60 Hz (16.666 ms), so a strict cap would skip every other frame there. Higher = closer to the display's own
      * rate on 75–100 Hz displays (more renders while the shadow changes); lower = a stricter cap.
@@ -537,9 +543,12 @@ export const tuning = {
      * (eyes aside, glanceS), a breath (one bob cycle, breathS) or an antenna wiggle (wiggleS). Animated face overlays
      * (zzz asleep, the stuffed spinner) and the hungry light run in bursts of burstS every burstS + burstGapS; asleep,
      * only the zzz bursts run.
-     * Shorter gaps = livelier, more renders.
+     * Shorter gaps = livelier, more renders. M9 ("Balanced", 2026-10-08): gapS was [3, 8] and burstGapS 6; every frame
+     * costs ~0.3–0.5 % of a core (§11 budgets). Asleep the zzz bursts every burstS + sleepBurstGapS (§11 < 1 % asleep).
      */
-    event: { gapS: [3, 8], glanceS: [0.7, 1.3], breathS: 2.6, wiggleS: 1.2, burstS: 2, burstGapS: 6 },
+    event: { gapS: [6, 14], glanceS: [0.7, 1.3], breathS: 2.6, wiggleS: 1.2, burstS: 2, burstGapS: 14, sleepBurstGapS: 38,
+      /** How often each event is picked (the rest: wiggle). A glance redraws twice; a breath every frame for breathS. */
+      mix: { glance: 0.55, breath: 0.25 } },
     /** Walk (§6.4): steps per second per foot, bob (units), forward lean (rad), foot lift and stride (units), arm swing (rad), antenna lag (rad, negative = back). */
     walk: { stepHz: 2, bobAmp: 0.04, lean: 0.08, footLift: 0.08, stride: 0.1, armSwing: 0.35, antennaBack: -0.15 },
     /** Run (§6.4): as walk, faster and bigger, plus little hops (units). */
@@ -644,8 +653,11 @@ export const tuning = {
       wiggle: 0.12,
       boredGlanceGapS: [2, 4],
     },
-    /** Animated face overlays (zzz, loading, static, heart-pop) step this many frames per second (§6.3). */
-    face: { frameHz: 8 },
+    /**
+     * Animated face overlays (zzz, loading, static, heart-pop) step this many frames per second (§6.3); the zzz asleep
+     * at sleepFrameHz (slow drifting z's; each step is a render, M9 §11 < 1 % asleep).
+     */
+    face: { frameHz: 8, sleepFrameHz: 3 },
     /**
      * Dust (§6.4 "dusty"): grey specks on the body, as many as level × maxSpecks, shown from visibleFrom (§9.1: dust
      * ≥ 30 → visible). radius in scene units. More specks = reads dustier.
@@ -788,10 +800,12 @@ export const tuning = {
      * picked by softmax with this temperature (higher = more random, lower = always the top score). Weights scale each
      * goal's score: eat ∝ hunger, nap ∝ 1 − energy, explore / climb / peek ∝ boredom, approachCursor ∝ boredom + lonely,
      * sit and idle are base weights (sit higher when content). Stuffed or sleepy scale the movement goals by calmScale.
+     * M9 ("Balanced", 2026-10-08: a calmer pet that walks a bit less often, §11 budgets): decisionS was [2, 6], explore
+     * 0.8, climb 0.3, sit 0.35, idle 0.45.
      */
-    decisionS: [2, 6] as readonly [number, number],
+    decisionS: [4, 10] as readonly [number, number],
     temperature: 0.35,
-    weights: { eat: 1, nap: 1, explore: 0.8, climb: 0.3, sit: 0.35, peek: 0.15, approachCursor: 0.4, idle: 0.45 },
+    weights: { eat: 1, nap: 1, explore: 0.6, climb: 0.2, sit: 0.45, peek: 0.15, approachCursor: 0.4, idle: 0.6 },
     calmScale: 0.15,
     /** §10.2 run to eat: an app launch makes eating the goal at once; the pet waits up to windowWaitS for the new app's window, else eats where it is. */
     appLaunch: { windowWaitS: 4 },
@@ -1122,8 +1136,12 @@ export const tuning = {
          * (M1's 210 was a regression guard set from its 185 MB; the GPU process alone swings 40–105 MB between runs.)
          */
         footprintMB: 290,
-        /** §11 CPU, all Bitbot processes, % of one core: while roaming (the roam phase), asleep (event style), hidden. */
-        roamCpuPct: 3,
+        /**
+         * §11 CPU, all Bitbot processes, % of one core: while roaming (the roam phase), asleep (event style), hidden.
+         * SPEC-DEVIATION (M9, decided "Balanced" 2026-10-08): roaming's target is 4, not §11's 3; roaming and asleep are
+         * reported, not gated (see overlayCheck.ts judgeAll).
+         */
+        roamCpuPct: 4,
         asleepCpuPct: 1,
         hiddenCpuPct: 1,
       },

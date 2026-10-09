@@ -84,13 +84,25 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
   let rafId: number | null = null
   let wakeTimer: ReturnType<typeof setTimeout> | null = null
   let grabArea: GrabArea | null = null
+  /** When the pending wake timer asks for its frame (renderer ms); null: none pending. */
+  let wakeDue: number | null = null
   const clearWake = (): void => {
     if (wakeTimer !== null) clearTimeout(wakeTimer)
     wakeTimer = null
+    wakeDue = null
   }
   const requestFrame = (): void => {
     clearWake()
     if (rafId === null) rafId = requestAnimationFrame(onFrame)
+  }
+  /**
+   * What the model asks for (a new state, a cursor sample, a press…): a frame now, unless the wake timer brings one
+   * within a moving frame anyway. While the pet moves on its own main's states arrive 30 times a second, and asking for
+   * a frame on each ran every display frame, past the moving rate (M9, tuning.render.fps).
+   */
+  const modelRequestFrame = (): void => {
+    if (wakeDue !== null && wakeDue - performance.now() <= 1000 / tuning.render.fps.moving) return
+    requestFrame()
   }
   /**
    * No frames until `at` (renderer ms): a timer asks for the frame then. That frame runs at once but is stamped with
@@ -101,9 +113,11 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
   let timerFrame = false
   const wakeAt = (at: number): void => {
     clearWake()
+    wakeDue = at
     wakeTimer = setTimeout(
       () => {
         wakeTimer = null
+        wakeDue = null
         timerFrame = true
         requestFrame()
       },
@@ -117,7 +131,7 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
       hitTest: (x, y) => pet.hitTest(x, y),
       animate: (input, ts) => animator.update(ts, input),
       send: (channel, payload) => bridge.send(channel, payload),
-      requestFrame,
+      requestFrame: modelRequestFrame,
       log: reportToMain,
     },
   )

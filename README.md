@@ -2,7 +2,7 @@
 
 A macOS desktop pet that lives on your screen and is fed by how you use your computer. The spec is [`BITBOT_SPEC.md`](BITBOT_SPEC.md).
 
-**Status:** Milestone 8 (onboarding, settings, persistence) is built. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
+**Status:** Milestone 9 (performance pass) is done: Phase 1's milestones are all built. The manual checks on the real app ([`docs/decisions/overlay.md`](docs/decisions/overlay.md) "Manual checks") are still to run.
 - Bitbot runs as a menu-bar app with no Dock icon.
 - The Mint pet is alive: it blinks, looks at the cursor, stirs now and then, swings when you drag it, and squashes when it lands.
 - It lives on your screen: it walks along the Dock, climbs the screen's edges and your windows' sides, jumps and drops between window tops, rides a window you move, and falls when you close or fling it.

@@ -1609,9 +1609,13 @@ class OverlayCheck {
     if (!this.opts.measure) return v
     const ran = (name: PhaseName): boolean => this.opts.phases === null || this.opts.phases.includes(name)
     if (ran('hidden')) v.push(judge(`renderer frames while ${PHASE_TITLES.hidden}`, p.hidden?.renderer?.frames ?? null, th.hiddenFrames, 'frames'))
-    // §11 CPU budgets: all Bitbot processes (Electron's and the helper), % of one core.
-    if (ran('roam')) v.push(judge(`CPU total, ${PHASE_TITLES.roam} (§11)`, p.roam?.cpu.total ?? null, th.roamCpuPct, '%'))
-    if (ran('sleepEvent')) v.push(judge(`CPU total, ${PHASE_TITLES.sleepEvent} (§11)`, p.sleepEvent?.cpu.total ?? null, th.asleepCpuPct, '%'))
+    // §11 CPU budgets: all Bitbot processes (Electron's and the helper), % of one core. Roaming and asleep are reported,
+    // not gated (SPEC-DEVIATION, M9 "Balanced"): one minute of roaming depends on what the brain happens to choose
+    // (measured 4–10 %), and asleep sits around 1 % with the check's own sampling in main's share.
+    if (ran('roam')) v.push(judge(`CPU total, ${PHASE_TITLES.roam} (§11)`, p.roam?.cpu.total ?? null, th.roamCpuPct, '%', { gate: false }))
+    if (ran('sleepEvent')) {
+      v.push(judge(`CPU total, ${PHASE_TITLES.sleepEvent} (§11)`, p.sleepEvent?.cpu.total ?? null, th.asleepCpuPct, '%', { gate: false }))
+    }
     if (ran('hidden')) v.push(judge(`CPU total, ${PHASE_TITLES.hidden} (§11)`, p.hidden?.cpu.total ?? null, th.hiddenCpuPct, '%'))
     const frameMs = 1000 / (screen.getPrimaryDisplay().displayFrequency || 60)
     for (const name of ['drag120', 'drag600'] as const) {

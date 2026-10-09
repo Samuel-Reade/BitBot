@@ -505,7 +505,7 @@ export class BitbotApp {
       },
       onStep: (dtS, t) => this.step(dtS, t),
       afterSteps: (wakeMs) => {
-        this.watchAppHidden()
+        // (macOS hiding Bitbot is noticed by the 1 Hz life tick: a native call per wake costs more than it's worth, M9.)
         this.worldDriver.tick(wakeMs, this.loco)
         this.tickBrain()
         if (this.dev) this.logMovement()
@@ -1408,6 +1408,7 @@ export class BitbotApp {
     if (this.dev) this.logNativeMouse(e)
     this.interaction.handleNativeMouse(e)
     this.observe()
+    this.loop.hurry() // a press or a move on the grab area: the full wake rate at once, not later in the stride
   }
 
   /**
@@ -1496,7 +1497,7 @@ export class BitbotApp {
     return this.visibility.userShown
   }
 
-  /** Every simulation wake: did macOS hide (or show) Bitbot? There is no event for it. */
+  /** Every life tick (1 Hz, shown or hidden): did macOS hide (or show) Bitbot? There is no event for it. */
   private watchAppHidden(): void {
     const hidden = app.isHidden()
     if (hidden === this.appHidden) return

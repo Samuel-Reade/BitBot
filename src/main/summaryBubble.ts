@@ -134,8 +134,9 @@ export class SummaryBubble {
    */
   boxAt(ground: Point, petBox: Box): Box | null {
     const size = this.shown?.size
+    if (!size) return null // no bubble: nothing else to ask (it runs every simulation wake)
     const overlay = this.deps.overlayBounds()
-    if (!size || !overlay) return null
+    if (!overlay) return null
     const layout = layoutBubble(ground, petBox, size, overlay)
     return layout ? bubbleBoxRelative(layout, ground) : null
   }

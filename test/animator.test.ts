@@ -211,13 +211,28 @@ describe('Animator: face', () => {
   })
 })
 
+describe('Animator: asleep is calm (M9)', () => {
+  it('a happy pet asleep in the event style holds still but for the slow zzz bursts: few changes a minute', () => {
+    const { anim } = setup()
+    const frames = run(anim, input({ state: 'sleep', mood: 'happy', idleMode: 'event' }), 0, 60)
+    const changes = frames.filter((f) => f.changed).length
+    // The zzz: burstS × sleepFrameHz steps every burstS + sleepBurstGapS, plus the blend into sleep.
+    const e = tuning.anim.event
+    const perMinute = (60 / (e.burstS + e.sleepBurstGapS)) * e.burstS * tuning.anim.face.sleepFrameHz
+    expect(changes).toBeLessThanOrEqual(perMinute + 40)
+    expect(changes).toBeGreaterThan(0)
+  })
+})
+
 describe('Animator: states', () => {
   it('every state poses without errors and picks its frame rate (§11)', () => {
     for (const state of BEHAVIOR_STATES) {
       const { anim } = setup()
       for (let t = 0; t < 2; t += 1 / 30) {
         const r = anim.update(t * 1000, input({ state }))
-        const expected = state === 'sleep' ? tuning.render.fps.asleep : ['idle', 'sit', 'peek', 'greet'].includes(state) ? tuning.render.fps.idle : tuning.render.fps.moving
+        const f = tuning.render.fps
+        const expected =
+          state === 'sleep' ? f.asleep : ['idle', 'sit', 'peek', 'greet'].includes(state) ? f.idle : ['held', 'fall', 'land'].includes(state) ? f.display : f.moving
         expect(r.fps, state).toBe(expected)
       }
     }

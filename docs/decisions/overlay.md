@@ -206,6 +206,34 @@ Also found while measuring: an animated outline moves under a still cursor, so a
 - **Dev check:** 89/89, including lock (grab area off, loop parked, no frames, back on unlock) and a size change (the overlay reloads with a pet ×1.33 taller).
 - **Not run on the real desktop by the builder:** the first-launch flow with the real permission prompt, a real lock/unlock fade, the bubble click's focus (it uses the same non-activating grab area as petting).
 
+## M9: performance pass (2026-10-08)
+
+**Finding:** every frame the overlay shows costs about 0.3–0.5 % of a core (Chromium's frame pipeline in the renderer and the GPU process; the scene is ~0.1 ms, a bare WebGL clear costs the same, and the window's size makes no difference: measured in throwaway harnesses). Lone frames cost more (the GPU process wakes for each). So §11's "60 fps while moving" and "< 3 % while roaming" can't both hold.
+
+**Decided "Balanced" (the user, 2026-10-08):** walking, running, climbing and jumping on its own at 30 fps; dragging, throws and landings at the display's 60; a calmer brain (decisions every 4–10 s, lighter explore and climb weights); quieter idle (events every 6–14 s, mostly glances, at 20 fps) and sleep (the zzz drifts at 3 steps a second, a burst every 40 s; no mood moments asleep). SPEC-DEVIATIONs marked in tuning.ts (render.fps, anim.event, brain).
+
+**What changed in the code:**
+- Main wakes less while nothing moves (sim/wakeRate.ts, SimLoop stride; every step still runs): 30 Hz when anything moves, the cursor is near or approaching (240 pt), a press, the bubble or a ridden window moves; 3 Hz idle; 2 Hz asleep. Events between wakes (presses, commands, snapshots that move the pet) wake it at once (hurry).
+- The cursor poll for mileage drops from 20 Hz to 2 Hz once the cursor has been still for 0.5 s, and to 1 Hz on battery while the pet sleeps (§11's battery rule).
+- One frame per render: a frame the animation's timer asks for runs at once but is stamped with the start of the display interval (measured), so it is judged at the time it runs (placement.ts timerFrameTs); the animator is asked no faster than its frame rate even when it answers "again, nothing changed"; model frame requests wait for a timer frame due within a moving frame.
+- The dev check: a roaming phase (the brain on, a minute), a real sleep (it tells Bitbot the computer is idle), §11 CPU lines (hidden gated at 1 %; roaming (target 4 %) and asleep (1 %) reported, not gated: SPEC-DEVIATION, roaming depends on what the brain happens to do in one minute).
+
+**Measured (final dev check, M1-class Mac, % of one core, all processes):**
+
+| Phase | Before M9 | After |
+|---|---|---|
+| Idle (event style, cursor far) | 8.0 | 2.8 |
+| Asleep (event style) | 5.4 | 0.85 |
+| Hidden | 1.2 | 0.34 |
+| Walking on its own | 18 | 13 |
+| Roaming, one minute | ~15–19 | 3.9–5.4 (depends on how much it walks) |
+| Dragging | 36 | 36 (unchanged: 60 fps) |
+| Memory | 214 MB | 218 MB |
+
+Over two simulated hours the brain keeps the pet moving about 8 % of the time, so the long-run roaming average is about 3.5–4 %. Hover latency p95 improved (enter 58 ms, leave 54 ms); drag input→frame p95 15 ms.
+
+**Not measured:** battery life; Activity Monitor's energy impact on the real desktop.
+
 ## Manual checks (the real app)
 
 Start it with `npm run build:helper` (once), then `npm start`. The pet stands on the Dock at the bottom centre, and a small monitor icon appears in the menu bar.

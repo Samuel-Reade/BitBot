@@ -151,6 +151,11 @@ export function nextAnimationAt(wakeAt: number | null, lastRenderTs: number | nu
   return Math.max(wakeAt, lastRenderTs + 1000 / fps - slackMs)
 }
 
+/** States the user caused (dragged, thrown, landing): drawn at the display's rate even between main's states. */
+export function directState(state: string | undefined): boolean {
+  return state === 'held' || state === 'fall' || state === 'land'
+}
+
 /**
  * The time a frame is judged at (renderer ms): its rAF stamp, except for a frame the animation's wake timer asked for,
  * which runs at once stamped with the start of the display interval it was asked in (up to a frame earlier; measured
@@ -384,7 +389,9 @@ export class OverlayModel {
   private animInput: AnimInput | null = null
   private animDirty = true
   private animWakeAt: number | null = null
-  private animFps: number = tuning.render.fps.moving
+  private animFps: number = tuning.render.fps.display
+  /** When the animator was last asked to pose (renderer ms); null: not yet. */
+  private lastAnimTs: number | null = null
   private shadowScale = 1
   private lastLook: StateLook | null = null
   /** The animator changed the pose: after its render, hover is tested again (the outline may have moved). */
@@ -814,7 +821,7 @@ export class OverlayModel {
     const ground = this.groundAt(ts, renderT)
     const look = this.stateLookAt(renderT)
     const slackMs = tuning.overlay.renderIntervalSlackMs
-    const allowed = renderAllowed(this.lastRenderTs, ts, tuning.render.fps.moving, slackMs)
+    const allowed = renderAllowed(this.lastRenderTs, ts, tuning.render.fps.display, slackMs)
     // A new attach moves the anchor and turns the pet: only in a frame that renders too, or the canvas would show the
     // old drawing at the new place.
     const wantAttach = this.attachFor(look)
@@ -870,16 +877,28 @@ export class OverlayModel {
       newestStateT: newest?.t ?? null,
     }
     let again = frameNeeded(needs, tuning.overlay.starveToleranceMs)
+    // Moving on its own (interpolating main's states; no press, no drop hold, nothing waiting to render): a frame every
+    // 1000 / fps.moving on the wake timer instead of every display frame (SPEC-DEVIATION, see tuning.render.fps).
+    // Dragged, thrown or landing keeps every display frame.
+    let nextMove: number | null = null
+    if (again && !needs.pressed && !needs.dropHold && !needs.renderDue && !directState(look?.state)) {
+      again = false
+      nextMove = ts + 1000 / tuning.render.fps.moving - slackMs
+    }
     // The animation's next render: another frame if it falls before the one after this, else a timer.
+    // The animator is asked again no sooner than its frame rate allows after it was last asked (or the last render): one
+    // that answers "again at once, nothing changed" (a zzz burst between its steps) would otherwise run every display
+    // frame without drawing anything (M9).
     const renderTs = render ? ts : this.lastRenderTs
+    const asked = this.lastAnimTs !== null && (renderTs === null || this.lastAnimTs > renderTs) ? this.lastAnimTs : renderTs
     const animating = this.deps.animate !== undefined && this.states.length > 0 && !this.contextLost
     const nextAnim = !animating
       ? null
       : this.animDirty
         ? nextAnimationAt(ts, renderTs, this.animFps, slackMs)
-        : nextAnimationAt(this.animWakeAt, renderTs, this.animFps, slackMs)
+        : nextAnimationAt(this.animWakeAt, asked, this.animFps, slackMs)
     if (!again && nextAnim !== null && nextAnim <= ts + FRAME_MS) again = true
-    const wakeAt = !again && nextAnim !== null ? nextAnim : null
+    const wakeAt = again ? null : nextAnim === null ? nextMove : nextMove === null ? nextAnim : Math.min(nextAnim, nextMove)
     this.lastFrameTs = again ? ts : null
     return { transform, render, reveal, again, wakeAt }
   }
@@ -955,8 +974,11 @@ export class OverlayModel {
     const changed = this.animInput === null || !sameAnimInput(input, this.animInput)
     if (changed) this.animDirty = true
     const due = this.animDirty || (this.animWakeAt !== null && ts + FRAME_MS / 2 >= this.animWakeAt)
-    const fps = changed ? tuning.render.fps.moving : this.animFps
+    const fps = changed ? tuning.render.fps.display : this.animFps
     if (!due || !renderAllowed(this.lastRenderTs, ts, fps, slackMs)) return
+    // A wake (not a change of input) waits its frame rate after the animator was last asked, too (see frame()).
+    if (!changed && !this.animDirty && !renderAllowed(this.lastAnimTs, ts, fps, slackMs)) return
+    this.lastAnimTs = ts
     const result = animate(input, ts)
     this.animInput = input
     this.animDirty = false
@@ -1091,8 +1113,8 @@ export class OverlayModel {
   }
 }
 
-/** One display frame at tuning.render.fps.moving, ms. */
-const FRAME_MS = 1000 / tuning.render.fps.moving
+/** One display frame at tuning.render.fps.display, ms. */
+const FRAME_MS = 1000 / tuning.render.fps.display
 
 /** The contact shadow with its strength scaled (an animation lifting the pet off its surface). */
 function scaledShadow(shadow: ContactShadowParams, scale: number): ContactShadowParams {

@@ -143,8 +143,10 @@ const POSE_KEYS = Object.keys(REST) as (keyof Pose)[]
 
 /** States that follow the idle style. */
 const IDLE_LIKE: ReadonlySet<BehaviorState> = new Set(['idle', 'sit', 'sleep'])
-/** States that move all the time while they last (rendered every frame, at tuning.render.fps.moving). */
+/** States that move all the time while they last (rendered every frame, at tuning.render.fps.moving; DIRECT ones at fps.display). */
 const MOVING: ReadonlySet<BehaviorState> = new Set(['walk', 'run', 'jump', 'climb', 'eat', 'fall', 'land', 'held', 'celebrate'])
+/** Moving states the user caused (dragged, thrown, landing): at the display's rate (tuning.render.fps.display). */
+const DIRECT: ReadonlySet<BehaviorState> = new Set(['held', 'fall', 'land'])
 /** States whose pose moves all the time (MOVING, and Greet's wave); Peek holds its pose. */
 const CONTINUOUS: ReadonlySet<BehaviorState> = new Set([...MOVING, 'greet'])
 
@@ -763,7 +765,7 @@ export class Animator {
     if (o?.mouth) mouth = o.mouth
     const list = o?.overlays ? [...o.overlays] : [...overlays]
     const animated = list.some((x) => (ANIMATED_FACE_OVERLAYS as readonly string[]).includes(x))
-    const frame = animated ? Math.floor(t * T.face.frameHz) : 0
+    const frame = animated ? Math.floor(t * this.faceHz()) : 0
     return { eyes, mouth, overlays: list, frame }
   }
 
@@ -793,15 +795,17 @@ export class Animator {
       if (this.nextEvent === 0) this.nextEvent = t + this.between(T.event.gapS)
       if (!this.event && t >= this.nextEvent) {
         const r = this.random()
-        const kind = r < 0.4 ? 'glance' : r < 0.75 ? 'breath' : 'wiggle'
+        const mix = T.event.mix
+        const kind = r < mix.glance ? 'glance' : r < mix.glance + mix.breath ? 'breath' : 'wiggle'
         const length = kind === 'glance' ? this.between(T.event.glanceS) : kind === 'breath' ? T.event.breathS : T.event.wiggleS
         this.event = { kind, start: t, end: t + length, pick: this.random() }
         this.nextEvent = this.event.end + this.between(T.event.gapS)
       }
     }
 
-    // Mood moments (none in the still style: nothing moves there but the eyes).
-    if (style === 'still') {
+    // Mood moments (none in the still style: nothing moves there but the eyes; none asleep: a sleeping pet holds still
+    // but for the zzz, M9).
+    if (style === 'still' || input.state === 'sleep') {
       this.moodEvent = null
       this.nextMoodEvent = 0
       this.moodFor = null
@@ -835,15 +839,25 @@ export class Animator {
   /** In event mode, the periodic bursts of animated cues (zzz, spinner, hungry light), counted from the state's start. */
   private burstOn(t: number): boolean {
     const e = this.T.event
-    const period = e.burstS + e.burstGapS
+    const period = e.burstS + this.burstGapS()
     return (t - this.stateStart) % period < e.burstS
   }
 
   private nextBurstEdge(t: number): number {
     const e = this.T.event
-    const period = e.burstS + e.burstGapS
+    const period = e.burstS + this.burstGapS()
     const into = (t - this.stateStart) % period
     return into < e.burstS ? t + (e.burstS - into) : t + (period - into)
+  }
+
+  /** Asleep the zzz bursts come less often (tuning.anim.event.sleepBurstGapS, M9). */
+  private burstGapS(): number {
+    return this.state === 'sleep' ? this.T.event.sleepBurstGapS : this.T.event.burstGapS
+  }
+
+  /** Animated face overlays step at face.frameHz; the zzz asleep at face.sleepFrameHz (calmer and cheaper, M9). */
+  private faceHz(): number {
+    return this.state === 'sleep' ? this.T.face.sleepFrameHz : this.T.face.frameHz
   }
 
   private between([lo, hi]: readonly [number, number]): number {
@@ -861,7 +875,7 @@ export class Animator {
     }
     if (moodGap(input.mood, this.T)) next.push(this.moodEvent ? this.moodEvent.end : this.nextMoodEvent)
     if (face.overlays.some((x) => (ANIMATED_FACE_OVERLAYS as readonly string[]).includes(x))) {
-      next.push((Math.floor(t * this.T.face.frameHz) + 1) / this.T.face.frameHz)
+      next.push((Math.floor(t * this.faceHz()) + 1) / this.faceHz())
     }
     const soonest = Math.min(...next.filter((x) => x > t))
     return Number.isFinite(soonest) ? soonest * 1000 : null
@@ -884,6 +898,7 @@ export class Animator {
   private fpsFor(state: BehaviorState): number {
     const fps = tuning.render.fps
     if (state === 'sleep') return fps.asleep
+    if (DIRECT.has(state)) return fps.display
     return MOVING.has(state) ? fps.moving : fps.idle
   }
 

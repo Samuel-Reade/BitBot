@@ -97,9 +97,11 @@ class Driver {
   dpr: number
   readonly model: OverlayModel
   private seq = 0
+  private readonly animated: boolean
 
   constructor(options: { dpr?: number; config?: Partial<PetConfig>; start?: boolean; animate?: OverlayModelDeps['animate'] } = {}) {
     this.dpr = options.dpr ?? 2
+    this.animated = options.animate !== undefined
     this.model = new OverlayModel(
       { edge: EDGE, anchor: ANCHOR, devicePixelRatio: this.dpr },
       {
@@ -147,13 +149,19 @@ class Driver {
     return plan
   }
 
-  /** Frames every `interval` ms from `ts` for as long as the model asks for them. */
+  /**
+   * Frames every `interval` ms from `ts` for as long as the model asks for them, following its wake timer while the pet
+   * moves on its own (a frame every 1000 / render.fps.moving, M9) when no animator is attached.
+   */
   run(ts: number, interval = 1000 / 60, max = 1000): FramePlan[] {
     const plans: FramePlan[] = []
-    for (let i = 0, t = ts; i < max; i++, t += interval) {
+    const moveMs = 1000 / tuning.render.fps.moving
+    for (let i = 0, t = ts; i < max; i++) {
       const plan = this.frame(t)
       plans.push(plan)
-      if (!plan.again) return plans
+      if (plan.again) t += interval
+      else if (!this.animated && plan.wakeAt !== null && plan.wakeAt - t <= moveMs + 1) t = Math.max(t + interval, plan.wakeAt)
+      else return plans
     }
     throw new Error('the frame loop never stopped')
   }
@@ -277,7 +285,7 @@ describe('placement rules', () => {
   })
 
   it('caps WebGL renders at render.fps.moving with a little vsync slack', () => {
-    const fps = tuning.render.fps.moving
+    const fps = tuning.render.fps.display
     const slack = O.renderIntervalSlackMs
     expect(renderAllowed(null, 123, fps, slack)).toBe(true)
     expect(renderAllowed(100, 99, fps, slack)).toBe(true) // a clock that went backwards never blocks rendering
@@ -403,9 +411,11 @@ describe('OverlayModel: placement and frames', () => {
     expect(d.frame(Driver.at(STEP / 2)).transform).toBe(transformAt({ x: 805, y: GROUND }))
     const mid = d.frame(Driver.at(1.5 * STEP))
     expect(mid.transform).toBe(transformAt({ x: 815, y: GROUND }))
-    // Moving the canvas is a compositor transform only: no WebGL render.
+    // Moving the canvas is a compositor transform only: no WebGL render. Moving on its own, the next frame comes on the
+    // wake timer at render.fps.moving (M9), not every display frame.
     expect(mid.render).toBeNull()
-    expect(mid.again).toBe(true)
+    expect(mid.again).toBe(false)
+    expect(mid.wakeAt).toBeCloseTo(Driver.at(1.5 * STEP) + 1000 / tuning.render.fps.moving - O.renderIntervalSlackMs, 6)
     const end = d.frame(Driver.at(2 * STEP))
     expect(end.transform).toBe(transformAt({ x: 820, y: GROUND }))
     // Past the newest state the loop stops until main sends something new.
@@ -987,8 +997,8 @@ describe('OverlayModel: dev stats', () => {
   it('counts frames, renders, hit tests and messages; samples intervals and input latency only with debug', () => {
     const d = placed({ config: { debug: true } })
     const frame60 = 1000 / 60
-    // placed() ran two frames of one run: one interval already.
-    expect(d.model.stats(0).rafIntervalsMs).toHaveLength(1)
+    // placed() settled on the wake timer (moving on its own, M9): frames outside a run record no interval.
+    expect(d.model.stats(0).rafIntervalsMs).toHaveLength(0)
     d.move(ON_PET, T)
     d.down(ON_PET, T + 1)
     for (let i = 1; i <= 5; i++) {
@@ -1007,7 +1017,7 @@ describe('OverlayModel: dev stats', () => {
     expect(stats.inputToFrameMs).toEqual([4, 4, 4, 4, 4, 4])
     // The press run: 5 frames 1/60 s apart, then a 40 ms one (the first frame of a run has no interval).
     const round = (v: number): number => +v.toFixed(6)
-    expect(stats.rafIntervalsMs.slice(1, 6).map(round)).toEqual([frame60, frame60, frame60, frame60, 40].map(round))
+    expect(stats.rafIntervalsMs.slice(0, 5).map(round)).toEqual([frame60, frame60, frame60, frame60, 40].map(round))
     expect(stats.longFrames).toBe(1)
     expect(stats.hoverMsgs).toBe(1)
     expect(stats.pointerMsgs).toBe(2)
@@ -1113,6 +1123,25 @@ describe('OverlayModel: animation', () => {
     const calls = fake.calls.length
     expect(d.frame(T + 100).render).toBeNull()
     expect(fake.calls.length).toBe(calls + 1)
+  })
+
+  it('an animator that answers "again at once, nothing changed" is asked at most at its frame rate (M9)', () => {
+    const fake = new FakeAnimator()
+    const d = placed({ animate: fake.animate })
+    fake.result = { changed: false, wakeIn: 0, fps: 10 }
+    d.model.onDevPet({ face: null, idleMode: 'event' }) // new input: asks the animator, which keeps saying "now"
+    const P = 1000 / 60
+    let ts = Math.ceil(T / P) * P
+    const calls = fake.calls.length
+    let frames = 0
+    for (; ts < T + 1000; frames++) {
+      const plan = d.frame(ts)
+      if (plan.again) ts += P
+      else if (plan.wakeAt !== null) ts = Math.max(ts + P, plan.wakeAt + tuning.overlay.frameRequestAfterMs)
+      else break
+    }
+    expect(fake.calls.length - calls).toBeLessThanOrEqual(11)
+    expect(frames).toBeLessThanOrEqual(12)
   })
 
   it('one frame per animation render on the page’s real schedule (vsync frames, the wake timer; M9)', () => {
@@ -1382,7 +1411,7 @@ describe('OverlayModel: the speech bubble (§9.4)', () => {
     expect(d.frameRequests).toBeGreaterThan(0)
     d.state(STEP, 900)
     d.run(Driver.at(STEP))
-    expect(d.model.bubbleLayout?.rect.x).toBe(800)
+    expect(d.model.bubbleLayout?.rect.x).toBeCloseTo(800, 6)
     d.model.setBubble(null)
     expect(d.model.bubbleLayout).toBeNull()
     expect(d.model.bubbleId).toBeNull()
