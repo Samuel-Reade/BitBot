@@ -30,7 +30,7 @@ import { Animator } from './character/animator'
 import { createBubble } from './bubble'
 import { visibilityStyle, type FadeStyle } from './fade'
 import { openGrabArea, type GrabArea } from './hitWindow'
-import { frameRequestAt, OverlayModel, STANDING_SHADOW, type ContactShadowParams } from './placement'
+import { OverlayModel, STANDING_SHADOW, timerFrameTs, type ContactShadowParams } from './placement'
 import type { PetScene } from './scene'
 import { backingSize, drawWorldView, petBoxRect, worldViewShapes } from './worldView'
 
@@ -93,18 +93,21 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
     if (rafId === null) rafId = requestAnimationFrame(onFrame)
   }
   /**
-   * No frames until `at` (renderer ms; `frameTs` the current frame's vsync time): a timer asks for a frame just after
-   * the vsync before the one `at` falls in, so exactly that frame runs (asking a whole frame early ran an empty frame
-   * before every animation render: M9).
+   * No frames until `at` (renderer ms): a timer asks for the frame then. That frame runs at once but is stamped with
+   * the start of the display interval it was asked in (measured on Electron 44, M9), up to a frame before `at`, so it
+   * is judged at the time it actually runs (timerFrameTs): otherwise it renders nothing and asks for another frame,
+   * two frames per animation render.
    */
-  const wakeAt = (at: number, frameTs: number): void => {
+  let timerFrame = false
+  const wakeAt = (at: number): void => {
     clearWake()
     wakeTimer = setTimeout(
       () => {
         wakeTimer = null
+        timerFrame = true
         requestFrame()
       },
-      Math.max(0, frameRequestAt(at, frameTs, 1000 / tuning.render.fps.moving, tuning.overlay.frameRequestMarginMs) - performance.now()),
+      Math.max(0, at - performance.now() + tuning.overlay.frameRequestAfterMs),
     )
   }
   const animator = new Animator(pet.rig, { ptPerUnit: pet.ptPerUnit })
@@ -144,8 +147,10 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
     }
   }
 
-  function onFrame(ts: number): void {
+  function onFrame(stamp: number): void {
     rafId = null
+    const ts = timerFrameTs(stamp, performance.now(), timerFrame)
+    timerFrame = false
     guarded('frame', () => {
       const plan = model.frame(ts, performance.now(), pixelRatio())
       if (plan.transform !== null) canvas.style.transform = plan.transform
@@ -155,7 +160,7 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
       // Only in frames that run anyway, and nothing at all while the debug view is off.
       if (worldView.shown) worldView.petMoved()
       if (plan.again) requestFrame()
-      else if (plan.wakeAt !== null) wakeAt(plan.wakeAt, ts)
+      else if (plan.wakeAt !== null) wakeAt(plan.wakeAt)
     })
   }
 

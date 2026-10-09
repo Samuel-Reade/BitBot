@@ -125,6 +125,11 @@ export interface BitbotAppOptions {
    * already onboarded pet every run, and nothing written.
    */
   persist?: boolean
+  /**
+   * Seconds since the user's last input (default powerMonitor.getSystemIdleTime). The dev check passes its own, so the
+   * pet doesn't fall asleep because the user stepped away while it runs.
+   */
+  systemIdleS?: () => number
 }
 
 /**
@@ -171,6 +176,8 @@ export interface BitbotInspection {
   displayedPoint: Point
   /** Shows or hides the pet as the tray / ⌥⌘B would. */
   setVisible(visible: boolean): void
+  /** The pet sleeps for real (§9.3: the computer idle, the brain's sleep activity), not just a forced look. */
+  sleeping: boolean
   /** The screen locks or unlocks, as powerMonitor's lock-screen / unlock-screen would (§8.6). */
   setLocked(locked: boolean): void
   /** A change as the settings window would send it (§15.4); its notice, or null. */
@@ -389,7 +396,7 @@ export class BitbotApp {
       brain: this.brain,
       nutritionLifetime: () => this.economy.snapshot().nutritionLifetime,
       dayKey: () => this.economy.snapshot().day,
-      systemIdleS: () => powerMonitor.getSystemIdleTime(),
+      systemIdleS: options.systemIdleS ?? (() => powerMonitor.getSystemIdleTime()),
       wallNowMs: () => Date.now(),
       react: (kind) => this.react(kind),
     })
@@ -397,7 +404,7 @@ export class BitbotApp {
       sink: this.economy,
       scheduler: globalScheduler,
       cursor: options.cursor ?? (() => screen.getCursorScreenPoint()),
-      systemIdleS: () => powerMonitor.getSystemIdleTime(),
+      systemIdleS: options.systemIdleS ?? (() => powerMonitor.getSystemIdleTime()),
       cursorPollHz: tuning.economy.cursorPollHz,
       cursorStillHz: tuning.economy.cursorStillHz,
       cursorStillAfterMs: tuning.economy.cursorStillAfterMs,
@@ -837,6 +844,7 @@ export class BitbotApp {
       statesSent: this.states.sent,
       displayedPoint: drawnPoint(this.presented, clock.now(), this.heldPoint()),
       setVisible: (visible) => (visible ? this.showPet('dev check') : this.hidePet('dev check')),
+      sleeping: this.life.asleep && this.life.activity === 'sleep',
       setLocked: (locked) => (locked ? this.onLock() : this.onUnlock()),
       applySetting: (change) => this.applySetting(change),
       setDevOverrides: (set) => this.applyDevPanelSet(set),

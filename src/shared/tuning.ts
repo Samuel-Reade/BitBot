@@ -95,7 +95,7 @@ export const tuning = {
     /** Simulation rate, Hz. Higher = smoother physics and tighter dragging, more main-process wake-ups. */
     hz: 30,
     /** A wake that owes more steps than this drops the excess time instead of replaying it in a burst (after a stall or sleep). */
-    maxStepsPerWake: 5,
+    maxStepsPerWake: 10,
     /**
      * Steps are computed up to this many ms before their nominal time, so main-process timer lateness below it never
      * starves the overlay, which renders one step behind real time. SPEC-DEVIATION (§5.1 computes a step once its
@@ -110,8 +110,8 @@ export const tuning = {
     wake: {
       /** Awake and idle: 30 Hz / 3 = 10 wakes a second. */
       idleStride: 3,
-      /** Asleep: 30 Hz / 5 = 6 wakes a second. */
-      asleepStride: 5,
+      /** Asleep: 30 Hz / 10 = 3 wakes a second. */
+      asleepStride: 10,
       /** The full rate starts once the cursor is this close to the pet's box, pt (≫ hitArea.nearMarginPt). */
       approachPt: 160,
     },
@@ -178,8 +178,8 @@ export const tuning = {
      */
     fadeMs: 300,
     fadeEasing: 'ease-in-out',
-    /** An animation frame is asked for this long after the vsync before the one it should run in, ms (M9: one frame per render). */
-    frameRequestMarginMs: 3,
+    /** The animation's wake timer asks for its frame this long after the render is due, ms (M9; timers may fire early). */
+    frameRequestAfterMs: 1,
   },
 
   /**
@@ -733,7 +733,7 @@ export const tuning = {
      * unchanged: distance is summed between samples). On battery with the pet asleep, cursorPausedHz.
      */
     cursorStillAfterMs: 500,
-    cursorStillHz: 4,
+    cursorStillHz: 2,
     cursorPausedHz: 1,
     /**
      * Dev panel injections (§14.1) when DevInject.amount is absent: keys, clicks, scroll ticks, pt of mouse travel, and
@@ -1062,6 +1062,8 @@ export const tuning = {
         drag600: 12,
         roam: 60,
       },
+      /** The asleep phases: falling asleep (walking home first) and waking may take this long, ms. */
+      sleepTimeoutMs: 30_000,
       /**
        * Walk under a parked cursor: the pet walks ±this many pt around its home at tuning.move.walkSpeed, the cursor parked
        * at its home x. More than the silhouette's half-width (so the cursor is clear of it at the turns) and less than

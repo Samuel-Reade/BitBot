@@ -32,7 +32,7 @@ import {
   snapToDevicePixels,
   insideBox,
   nextAnimationAt,
-  frameRequestAt,
+  timerFrameTs,
   anchorForTurn,
   anchorsFor,
   wallSide,
@@ -1050,17 +1050,11 @@ class FakeAnimator {
 }
 
 describe('animation scheduling rules', () => {
-  it('frameRequestAt: asks just after the vsync before the frame `at` falls in (one frame per render, M9)', () => {
-    const P = 1000 / 60
-    // 30 fps animation: the next render is due 33.3 ms (less 4 slack) after this frame: the 2nd frame from now.
-    expect(frameRequestAt(1000 + 29.3, 1000, P, 3)).toBeCloseTo(1000 + P + 3, 6)
-    // 10 fps asleep: the 6th frame.
-    expect(frameRequestAt(1000 + 96, 1000, P, 3)).toBeCloseTo(1000 + 5 * P + 3, 6)
-    // Due within the next frame, or already: ask now (it runs at the next vsync).
-    expect(frameRequestAt(1000 + 10, 1000, P, 3)).toBe(1003)
-    expect(frameRequestAt(990, 1000, P, 3)).toBe(1003)
-    // Exactly on a vsync: that frame, not the one after.
-    expect(frameRequestAt(1000 + 2 * P, 1000, P, 3)).toBeCloseTo(1000 + P + 3, 6)
+  it('timerFrameTs: a frame the wake timer asked for counts from when it runs; others keep their stamp (M9)', () => {
+    expect(timerFrameTs(1000, 1012, true)).toBe(1012)
+    expect(timerFrameTs(1000, 1012, false)).toBe(1000)
+    expect(timerFrameTs(1000, 990, true)).toBe(1000) // never earlier than its stamp
+    expect(timerFrameTs(1000, Number.NaN, true)).toBe(1000)
   })
 
   it('nextAnimationAt: the wake time, but not before the frame-rate cap allows a render', () => {
@@ -1119,6 +1113,34 @@ describe('OverlayModel: animation', () => {
     const calls = fake.calls.length
     expect(d.frame(T + 100).render).toBeNull()
     expect(fake.calls.length).toBe(calls + 1)
+  })
+
+  it('one frame per animation render on the page’s real schedule (vsync frames, the wake timer; M9)', () => {
+    const P = 1000 / 60
+    for (const fps of [30, 10]) {
+      const fake = new FakeAnimator()
+      fake.result = { changed: true, wakeIn: 0, fps }
+      const d = placed({ animate: fake.animate })
+      // Frames fall on vsyncs; `again` asks for the next one, a wake time asks at frameRequestAt (overlay.ts).
+      let ts = Math.ceil(T / P) * P
+      d.model.onRedraw()
+      let frames = 0
+      let renders = 0
+      for (let i = 0; i < 400; i++) {
+        const plan = d.frame(ts)
+        frames++
+        if (plan.render) renders++
+        if (plan.again) ts += P
+        else if (plan.wakeAt !== null) {
+          // The timer fires at wakeAt (+ afterMs); its frame runs at once, stamped with the interval's start (Electron 44),
+          // and is judged at when it runs (timerFrameTs, as overlay.ts does).
+          const runs = Math.max(ts + 1, plan.wakeAt + tuning.overlay.frameRequestAfterMs)
+          ts = timerFrameTs(Math.floor(runs / P) * P, runs, true)
+        } else break
+      }
+      expect(renders, `${fps} fps`).toBeGreaterThan(20)
+      expect(frames / renders, `${fps} fps: ${frames} frames for ${renders} renders`).toBeLessThan(1.1)
+    }
   })
 
   it('continuous animation renders at most at the state’s frame rate, waiting between renders on a timer', () => {

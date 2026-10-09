@@ -91,6 +91,20 @@ if (mode === 'snapshot') {
     renderMs += performance.now() - b
     poseMs += b - a
   }
+  const loop = Number(params.get('loop') ?? '0')
+  if (loop > 0) {
+    // dev (M9): keep rendering the walking pet at `loop` fps, optionally moving the canvas (move=1) as the overlay does.
+    const move = params.get('move') === '1'
+    canvas.style.willChange = 'transform'
+    let i = 0
+    setInterval(() => {
+      requestAnimationFrame((ts) => {
+        animator.update(ts, input)
+        if (move) canvas.style.transform = `translate(${(i++ % 200) + 100}px, 300px)`
+        pet.render()
+      })
+    }, 1000 / loop)
+  }
   const info = pet.renderer.info.render
   console.log(
     `[bench] ${count} renders: pose ${(poseMs / count).toFixed(3)} ms, render ${(renderMs / count).toFixed(3)} ms, ` +

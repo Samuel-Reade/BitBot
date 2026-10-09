@@ -278,6 +278,8 @@ class OverlayCheck {
   private cursorFn: ((nowMs: number) => Point) | null = null
   private mover: ((tMs: number) => Point | null) | null = null
   private popupCalls = 0
+  /** The system idle time Bitbot is told, s (the asleep phases make the pet fall asleep for real). */
+  private idleS = 0
   private closeMenu: (() => void) | null = null
   /** Cursor minus the pet's ground-contact point at the current synthetic press (where the overlay draws a held pet). */
   private pressOffset: Point | null = null
@@ -334,6 +336,8 @@ class OverlayCheck {
 
     const bitbot = new BitbotApp({
       persist: false, // a fresh, onboarded pet every run; nothing written
+      // "Active" unless a phase says otherwise: the user stepping away must not put the pet to sleep mid-check.
+      systemIdleS: () => this.idleS,
       cursor: () => this.cursorNow(),
       popupMenu: (onClose) => {
         this.popupCalls++
@@ -858,11 +862,20 @@ class OverlayCheck {
     if (want('idle')) await this.phase('idle', T.phaseS.idle)
     style({ idleMode: 'continuous' })
     if (want('idleContinuous')) await this.phase('idleContinuous', T.phaseS.idleContinuous)
-    style({ state: 'sleep', idleMode: 'event' })
-    if (want('sleepEvent')) await this.phase('sleepEvent', T.phaseS.sleepEvent)
-    style({ idleMode: 'continuous' })
-    if (want('sleepContinuous')) await this.phase('sleepContinuous', T.phaseS.sleepContinuous)
-    style({ state: null, idleMode: 'still' })
+    if (want('sleepEvent') || want('sleepContinuous')) {
+      // Asleep for real (§9.3): the computer idle long enough, the pet goes home and sleeps (1 Hz snapshots, the
+      // asleep wake rate), as it does at a real desk.
+      style({ state: null, idleMode: 'event', wander: true })
+      this.idleS = tuning.needs.sleepAfterIdleMin * 60 + 60
+      await this.until('asleep: the computer idle, the pet goes home and sleeps (§9.3)', () => this.i().sleeping && this.state().behavior === 'idle', T.sleepTimeoutMs)
+      if (want('sleepEvent')) await this.phase('sleepEvent', T.phaseS.sleepEvent)
+      style({ idleMode: 'continuous' })
+      if (want('sleepContinuous')) await this.phase('sleepContinuous', T.phaseS.sleepContinuous)
+      this.idleS = 0
+      await this.until('…and wakes when the user is back', () => !this.i().sleeping, T.sleepTimeoutMs)
+      style({ state: null, idleMode: 'still', wander: false })
+      await this.goTo(home)
+    }
 
     // §11's "while roaming": the brain picks what to do (walks, sits, peeks...) with the calm event idle style.
     if (want('roam')) {

@@ -152,14 +152,13 @@ export function nextAnimationAt(wakeAt: number | null, lastRenderTs: number | nu
 }
 
 /**
- * When to ask for an animation frame so that the frame which runs is the first one at or after `at` (renderer ms):
- * `marginMs` after the vsync before it. rAF runs a callback at the vsync after the request, and frame timestamps are
- * vsync times, so the frames fall on frameTs + k·periodMs. A request at or before now runs at the next vsync.
+ * The time a frame is judged at (renderer ms): its rAF stamp, except for a frame the animation's wake timer asked for,
+ * which runs at once stamped with the start of the display interval it was asked in (up to a frame earlier; measured
+ * on Electron 44, M9): that one counts from when it runs, so the render it was asked for is due and allowed. Frames
+ * that move the pet keep their vsync stamps (their interpolation stays on the display's beat).
  */
-export function frameRequestAt(at: number, frameTs: number, periodMs: number, marginMs: number): number {
-  if (!(periodMs > 0) || !Number.isFinite(at) || !Number.isFinite(frameTs)) return at
-  const k = Math.max(1, Math.ceil((at - frameTs) / periodMs - 1e-6))
-  return frameTs + (k - 1) * periodMs + marginMs
+export function timerFrameTs(stamp: number, now: number, fromTimer: boolean): number {
+  return fromTimer && Number.isFinite(now) ? Math.max(stamp, now) : stamp
 }
 
 /**
