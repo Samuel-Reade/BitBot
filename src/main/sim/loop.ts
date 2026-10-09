@@ -8,6 +8,11 @@
 // finds no step due (its timer fired early) calls nothing and re-arms. stop() parks the loop; start() re-anchors the
 // grid at the current time, so time spent parked is skipped, never replayed in a burst.
 //
+// Stride (M9, §11 budgets): the loop may wake only every `stride` steps (setStride), running every step that came due
+// in one wake, so nothing about the steps themselves changes — only how often main wakes. The app keeps the stride at
+// 1 whenever anything moves or the cursor is near, and raises it while the pet idles or sleeps. hurry() wakes at the
+// next step (something happened outside the loop: a press, a command). A stride never exceeds maxStepsPerWake.
+//
 // SPEC-DEVIATION: §5.1 computes a step once real time has reached it. Electron main-process timers
 // run several ms late, which starved presentation (rendered one step behind real time) in 4-8 % of
 // frames in Spike A, so steps are computed up to leadMs early; they keep their nominal times and the
@@ -93,6 +98,10 @@ export class SimLoop {
   private armedToken = 0
   private tokenSeq = 0
   private timerHandle: unknown = undefined
+  /** Wake every this many steps (setStride). */
+  private stride = 1
+  /** When the armed timer fires (clock ms); NaN: unknown. */
+  private armedFor = Number.NaN
 
   constructor(opts: SimLoopOptions) {
     if (!(Number.isFinite(opts.leadMs) && opts.leadMs >= 0)) throw new RangeError('SimLoop: leadMs must be a finite number >= 0')
@@ -143,6 +152,30 @@ export class SimLoop {
     return this.isRunning
   }
 
+  /** Wakes every `steps` steps from the next wake on (1..maxStepsPerWake; see the header). */
+  setStride(steps: number): void {
+    const n = Number.isFinite(steps) ? Math.min(this.maxStepsPerWake, Math.max(1, Math.floor(steps))) : 1
+    const lower = n < this.stride
+    this.stride = n
+    if (lower) this.hurry()
+  }
+
+  get currentStride(): number {
+    return this.stride
+  }
+
+  /** Something happened outside the loop: wake at the next step instead of later in the stride (no-op while parked). */
+  hurry(): void {
+    if (!this.isRunning || this.armedToken === 0) return
+    const now = this.readClock()
+    if (!Number.isFinite(now)) return
+    const next = now + Math.ceil(this.grid.msUntilNextStep(now + this.leadMs))
+    if (Number.isFinite(this.armedFor) && this.armedFor <= next) return
+    this.scheduler.clearTimeout(this.timerHandle)
+    this.armedToken = 0
+    this.arm(true)
+  }
+
   /** Steps run (onStep called, whether or not it threw), over every run. */
   get stepCount(): number {
     return this.steps
@@ -168,12 +201,15 @@ export class SimLoop {
     return this.emptyWakes
   }
 
-  private arm(): void {
+  /** Arms the next wake: at the stride's last step, or (`soon`) at the next step. */
+  private arm(soon = false): void {
     const now = this.readClock()
     // A broken clock reading must neither stop the loop nor make it spin: try again a step later.
-    const ms = Math.ceil(Number.isFinite(now) ? this.grid.msUntilNextStep(now + this.leadMs) : this.stepMs)
+    const later = soon ? 0 : (this.stride - 1) * this.stepMs // the stride's last step, not its first
+    const ms = Math.ceil(Number.isFinite(now) ? this.grid.msUntilNextStep(now + this.leadMs) + later : this.stepMs)
     const token = ++this.tokenSeq
     this.armedToken = token
+    this.armedFor = Number.isFinite(now) ? now + ms : Number.NaN
     this.timerHandle = this.scheduler.setTimeout(() => this.wake(token), ms)
   }
 

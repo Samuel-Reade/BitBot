@@ -174,6 +174,7 @@ type PhaseName =
   | 'chase'
   | 'drag120'
   | 'drag600'
+  | 'roam'
 
 const PHASE_TITLES: Record<PhaseName, string> = {
   idle: 'idle, event style (cursor far)',
@@ -187,6 +188,7 @@ const PHASE_TITLES: Record<PhaseName, string> = {
   chase: `chase ${T.chase.speed} pt/s, cursor near`,
   drag120: `drag patrol ${T.dragPatrol.speeds.slow} pt/s`,
   drag600: `drag patrol ${T.dragPatrol.speeds.fast} pt/s`,
+  roam: 'roaming (the brain acts by itself, event style, cursor far)',
 }
 
 interface Coverage {
@@ -861,6 +863,14 @@ class OverlayCheck {
     style({ idleMode: 'continuous' })
     if (want('sleepContinuous')) await this.phase('sleepContinuous', T.phaseS.sleepContinuous)
     style({ state: null, idleMode: 'still' })
+
+    // §11's "while roaming": the brain picks what to do (walks, sits, peeks...) with the calm event idle style.
+    if (want('roam')) {
+      style({ state: null, idleMode: 'event', wander: true })
+      await this.phase('roam', T.phaseS.roam)
+      style({ idleMode: 'still', wander: false })
+      await this.goTo(home)
+    }
 
     if (want('hidden')) {
       this.i().setVisible(false)
@@ -1586,6 +1596,10 @@ class OverlayCheck {
     if (!this.opts.measure) return v
     const ran = (name: PhaseName): boolean => this.opts.phases === null || this.opts.phases.includes(name)
     if (ran('hidden')) v.push(judge(`renderer frames while ${PHASE_TITLES.hidden}`, p.hidden?.renderer?.frames ?? null, th.hiddenFrames, 'frames'))
+    // §11 CPU budgets: all Bitbot processes (Electron's and the helper), % of one core.
+    if (ran('roam')) v.push(judge(`CPU total, ${PHASE_TITLES.roam} (§11)`, p.roam?.cpu.total ?? null, th.roamCpuPct, '%'))
+    if (ran('sleepEvent')) v.push(judge(`CPU total, ${PHASE_TITLES.sleepEvent} (§11)`, p.sleepEvent?.cpu.total ?? null, th.asleepCpuPct, '%'))
+    if (ran('hidden')) v.push(judge(`CPU total, ${PHASE_TITLES.hidden} (§11)`, p.hidden?.cpu.total ?? null, th.hiddenCpuPct, '%'))
     const frameMs = 1000 / (screen.getPrimaryDisplay().displayFrequency || 60)
     for (const name of ['drag120', 'drag600'] as const) {
       if (!ran(name)) continue

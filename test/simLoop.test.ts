@@ -537,6 +537,59 @@ describe('SimLoop', () => {
     expect(steps.length).toBeGreaterThan(healthy + 25)
   })
 
+  it('a stride wakes every N steps and still runs every step, none skipped or repeated (M9)', () => {
+    const time = new FakeTime()
+    const { loop, steps, calls } = makeLoop(time)
+    loop.setStride(3)
+    loop.start()
+    time.runUntil(3000)
+    const wakes = calls.filter((c) => c.startsWith('after')).length
+    expect(steps.length).toBeGreaterThanOrEqual(88)
+    expect(wakes).toBeLessThanOrEqual(Math.ceil(steps.length / 3) + 1)
+    for (let i = 1; i < steps.length; i++) expect(steps[i]!.t - steps[i - 1]!.t).toBeCloseTo(STEP, 6)
+    // Each wake runs the steps that came due: three at a time (the first wake may run fewer).
+    const perWake = calls.filter((c) => c.startsWith('after')).map((c) => Number(c.split(' ')[2]))
+    expect(perWake.slice(1).every((n) => n === 3)).toBe(true)
+  })
+
+  it('a stride never exceeds maxStepsPerWake, and lowering it wakes at the next step', () => {
+    const time = new FakeTime()
+    const { loop, steps } = makeLoop(time)
+    loop.setStride(99)
+    expect(loop.currentStride).toBe(MAX_STEPS)
+    loop.start()
+    time.runUntil(1000)
+    const before = steps.length
+    loop.setStride(1) // hurries
+    expect(time.nextDue).toBeLessThanOrEqual(time.now() + STEP + 1)
+    time.runUntil(2000)
+    expect(steps.length - before).toBeGreaterThanOrEqual(29)
+    expect(loop.droppedSteps).toBe(0)
+  })
+
+  it('hurry() wakes at the next step, and only re-arms when that is sooner', () => {
+    const time = new FakeTime()
+    const { loop, calls } = makeLoop(time)
+    loop.setStride(5)
+    loop.start()
+    time.runUntil(500)
+    const due = time.nextDue as number
+    loop.hurry()
+    const hurried = time.nextDue as number
+    expect(hurried).toBeLessThanOrEqual(due)
+    expect(hurried - time.now()).toBeLessThanOrEqual(STEP + 1)
+    expect(time.pending).toBe(1)
+    loop.hurry() // already next: nothing changes
+    expect(time.nextDue).toBe(hurried)
+    expect(time.pending).toBe(1)
+    const n = calls.length
+    time.fireNext()
+    expect(calls.length).toBeGreaterThan(n)
+    loop.stop()
+    loop.hurry() // parked: no timer
+    expect(time.pending).toBe(0)
+  })
+
   it('works on the global timers by default', () => {
     vi.useFakeTimers()
     const clock: Clock = { now: () => Date.now(), wallNow: () => Date.now() }

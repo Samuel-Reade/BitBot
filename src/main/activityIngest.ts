@@ -3,7 +3,10 @@
 // - Keys, clicks and scrolls: bitbot-helper's listen-only tap (decided: Input Monitoring only; without it nothing is
 //   counted from them). Key codes and buttons go straight to the economy's in-memory anti-gaming and nowhere else:
 //   never logged, never kept (§2).
-// - Mouse travel: the cursor sampled at tuning.economy.cursorPollHz (no permission needed).
+// - Mouse travel: the cursor sampled at tuning.economy.cursorPollHz while it moves (no permission needed). M9 (§11):
+//   once it has not moved for cursorStillAfterMs, cursorStillHz (distance is summed between samples, so the first
+//   sample of the next move still counts all of it); on battery with the pet asleep (§11 "pause the cursor-distance
+//   poll"), cursorPausedHz.
 // - App launches and activations: the helper's NSWorkspace notifications (bundle IDs only; Bitbot's own ignored).
 // - Breaks: the system idle time every tuning.economy.activity.idlePollS.
 // - Wake: Bitbot starting, the Mac waking, the screen unlocking.
@@ -35,6 +38,12 @@ export interface ActivityIngestOptions {
   /** Seconds since the last user input, system-wide (powerMonitor.getSystemIdleTime). */
   systemIdleS(): number
   cursorPollHz: number
+  /** M9: the poll rate once the cursor has been still for cursorStillAfterMs, Hz. Default: cursorPollHz. */
+  cursorStillHz?: number
+  cursorStillAfterMs?: number
+  /** M9: the rate while cursorPaused() (on battery, the pet asleep), Hz. Default: cursorStillHz. */
+  cursorPausedHz?: number
+  cursorPaused?(): boolean
   idlePollS: number
   /** Bitbot's own bundle ID and pid: its own launches and activations are not activity. */
   ownBundleId: string | null
@@ -45,6 +54,9 @@ export interface ActivityIngestOptions {
 
 export class ActivityIngest {
   private cursorTimer: unknown = null
+  /** The newest cursor sample, and how many polls in a row found it there (the still rate after cursorStillAfterMs). */
+  private lastCursor: Point | null = null
+  private stillPolls = 0
   private idleTimer: unknown = null
   private running = false
 
@@ -113,14 +125,32 @@ export class ActivityIngest {
     return bundleId !== null && bundleId !== '' && pid !== this.opts.ownPid && bundleId !== this.opts.ownBundleId
   }
 
+  /** The cursor poll's rate now (see the header). */
+  cursorHz(): number {
+    const o = this.opts
+    const still = o.cursorStillHz ?? o.cursorPollHz
+    let paused = false
+    try {
+      paused = o.cursorPaused?.() === true
+    } catch {
+      paused = false
+    }
+    if (paused) return o.cursorPausedHz ?? still
+    return this.stillPolls * (1000 / o.cursorPollHz) >= (o.cursorStillAfterMs ?? Infinity) ? still : o.cursorPollHz
+  }
+
   private scheduleCursor(): void {
-    const ms = 1000 / this.opts.cursorPollHz
+    const ms = 1000 / this.cursorHz()
     this.cursorTimer = this.opts.scheduler.setTimeout(() => {
       this.cursorTimer = null
       if (!this.running) return
       this.safely('cursor', () => {
         const p = this.opts.cursor()
-        if (Number.isFinite(p.x) && Number.isFinite(p.y)) this.opts.sink.cursor(p.x, p.y)
+        if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return
+        const last = this.lastCursor
+        this.stillPolls = last && last.x === p.x && last.y === p.y ? this.stillPolls + 1 : 0
+        this.lastCursor = { x: p.x, y: p.y }
+        this.opts.sink.cursor(p.x, p.y)
       })
       this.scheduleCursor()
     }, ms)

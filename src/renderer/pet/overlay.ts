@@ -30,7 +30,7 @@ import { Animator } from './character/animator'
 import { createBubble } from './bubble'
 import { visibilityStyle, type FadeStyle } from './fade'
 import { openGrabArea, type GrabArea } from './hitWindow'
-import { OverlayModel, STANDING_SHADOW, type ContactShadowParams } from './placement'
+import { frameRequestAt, OverlayModel, STANDING_SHADOW, type ContactShadowParams } from './placement'
 import type { PetScene } from './scene'
 import { backingSize, drawWorldView, petBoxRect, worldViewShapes } from './worldView'
 
@@ -92,14 +92,20 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
     clearWake()
     if (rafId === null) rafId = requestAnimationFrame(onFrame)
   }
-  /** No frames until `at` (renderer ms): a timer asks for the frame just before it (the frame lands on the next vsync). */
-  const wakeAt = (at: number): void => {
+  /**
+   * No frames until `at` (renderer ms; `frameTs` the current frame's vsync time): a timer asks for a frame just after
+   * the vsync before the one `at` falls in, so exactly that frame runs (asking a whole frame early ran an empty frame
+   * before every animation render: M9).
+   */
+  const wakeAt = (at: number, frameTs: number): void => {
     clearWake()
-    const delay = Math.max(0, at - performance.now() - 1000 / tuning.render.fps.moving)
-    wakeTimer = setTimeout(() => {
-      wakeTimer = null
-      requestFrame()
-    }, delay)
+    wakeTimer = setTimeout(
+      () => {
+        wakeTimer = null
+        requestFrame()
+      },
+      Math.max(0, frameRequestAt(at, frameTs, 1000 / tuning.render.fps.moving, tuning.overlay.frameRequestMarginMs) - performance.now()),
+    )
   }
   const animator = new Animator(pet.rig, { ptPerUnit: pet.ptPerUnit })
   const model = new OverlayModel(
@@ -149,7 +155,7 @@ export function startOverlay(pet: PetScene, query: OverlayQuery): void {
       // Only in frames that run anyway, and nothing at all while the debug view is off.
       if (worldView.shown) worldView.petMoved()
       if (plan.again) requestFrame()
-      else if (plan.wakeAt !== null) wakeAt(plan.wakeAt)
+      else if (plan.wakeAt !== null) wakeAt(plan.wakeAt, ts)
     })
   }
 

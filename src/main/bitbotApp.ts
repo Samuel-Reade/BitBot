@@ -69,6 +69,7 @@ import { Economy } from './economy/economy'
 import { InputTap } from './inputTap'
 import { WorldDriver } from './sim/worldDriver'
 import { worldParamsFor } from './sim/world/worldModel'
+import { wakeStride } from './sim/wakeRate'
 import { ThrottledLog } from './throttledLog'
 import { ElectronHitWindow, type HitWindowCounters } from './windows/hitWindow'
 import { windowNumber, windowOnScreen } from './windows/onScreen'
@@ -226,6 +227,8 @@ export class BitbotApp {
   private readonly settingsWindow: SettingsWindow
   /** When Bitbot's hotkeys were paused for the settings page's recorder (wall ms); null: not paused. */
   private hotkeysPausedAt: number | null = null
+  /** The dev check's scripted mover moved the pet in the newest step (full wake rate while it does). */
+  private moverActive = false
   /** A dev save action replaced the save and Bitbot relaunches: nothing more is written. */
   private savesStopped = false
   /** §15.1 first-launch onboarding (shown while the save's meta.onboardingComplete is false). */
@@ -396,6 +399,11 @@ export class BitbotApp {
       cursor: options.cursor ?? (() => screen.getCursorScreenPoint()),
       systemIdleS: () => powerMonitor.getSystemIdleTime(),
       cursorPollHz: tuning.economy.cursorPollHz,
+      cursorStillHz: tuning.economy.cursorStillHz,
+      cursorStillAfterMs: tuning.economy.cursorStillAfterMs,
+      cursorPausedHz: tuning.economy.cursorPausedHz,
+      // §11 "pause the cursor-distance poll … when on battery and the pet is asleep".
+      cursorPaused: () => this.life.asleep && powerMonitor.isOnBatteryPower(),
       idlePollS: tuning.economy.activity.idlePollS,
       ownBundleId: BUNDLE_ID,
       ownPid: process.pid,
@@ -497,6 +505,7 @@ export class BitbotApp {
         this.interaction.tick(wakeMs)
         this.observe()
         this.devPanel?.refresh()
+        this.loop.setStride(this.wakeStrideNow()) // M9: fewer wakes while nothing moves
       },
       onError: (err, where) => this.failClosed(`the simulation's ${where} hook threw`, err),
     })
@@ -522,10 +531,12 @@ export class BitbotApp {
         hover: (msg) => {
           this.interaction.handleHover(msg)
           this.observe()
+          this.loop.hurry()
         },
         pointer: (msg) => {
           this.interaction.handlePointer(msg)
           this.observe()
+          this.loop.hurry()
         },
         stats: (msg) => {
           for (const waiter of [...this.statsWaiters]) waiter(msg)
@@ -565,7 +576,11 @@ export class BitbotApp {
       ? new DevPanel({
           status: () => this.devPanelStatus(),
           apply: (set) => this.applyDevPanelSet(set),
-          action: (action) => (SAVE_ACTIONS.includes(action) ? this.saveAction(action) : this.worldDriver.action(action, this.loco)),
+          action: (action) => {
+            if (SAVE_ACTIONS.includes(action)) return this.saveAction(action)
+            this.worldDriver.action(action, this.loco)
+            this.loop.hurry()
+          },
           inject: (i) => this.ingest.inject(i),
           requestOverlayStats: (timeoutMs) => this.requestOverlayStats(timeoutMs),
           log: (line) => this.log(line),
@@ -844,6 +859,7 @@ export class BitbotApp {
     const mover = this.opts.devMover
     if (mover) {
       const p = mover(t)
+      this.moverActive = p !== null
       if (p) loco.teleport(p)
     }
     loco.step(dtS, this.held)
@@ -1041,6 +1057,7 @@ export class BitbotApp {
           this.pendingSend = null
           loco.teleport(this.modes.defaultHomePoint(this.spotLookup(loco.area)))
           this.life.interaction('command')
+          this.loop.hurry()
         }
         break
       }
@@ -1230,7 +1247,41 @@ export class BitbotApp {
     this.life.interaction('command')
     const ok = loco.goTo(p)
     this.pendingSend = ok ? null : { ...p }
+    this.loop.hurry()
     if (this.dev) this.log(`[bitbot] ${why}: ${ok ? 'on its way' : 'it goes once it can'}`)
+  }
+
+  /** A window snapshot: the world follows; a pet it set moving (riding, falling) wakes the loop at once. */
+  private onSnapshot(windows: readonly HelperWindow[]): void {
+    this.worldDriver.onSnapshot(this.worldWindows(windows), clock.now(), this.loco)
+    const s = this.loco?.state
+    if (s && (s.behavior !== 'idle' || this.worldDriver.snapshotHz === tuning.world.snapshotHz.attached)) this.loop.hurry()
+  }
+
+  /** M9: wake every how many steps now (sim/wakeRate.ts). */
+  private wakeStrideNow(): number {
+    const loco = this.loco
+    const box = this.ready?.petBox
+    if (!loco || !box) return 1
+    const s = loco.state
+    const b = boxFor(box, s.attach)
+    const activity = this.life.activity
+    return wakeStride(
+      {
+        behavior: s.behavior,
+        hasGoal: loco.goal !== null,
+        pendingSend: this.pendingSend !== null,
+        interaction: this.interaction.label,
+        cursor: this.wakeCursor,
+        petBox: { left: s.x + b.left, top: s.y + b.top, right: s.x + b.right, bottom: s.y + b.bottom },
+        asleep: this.life.asleep || activity === 'sleep' || this.shownFields().state === 'sleep',
+        busy:
+          this.moverActive ||
+          this.summary?.showing === true ||
+          this.worldDriver.snapshotHz === tuning.world.snapshotHz.attached,
+      },
+      tuning.sim.wake,
+    )
   }
 
   /** Asks the helper for a snapshot now (the pet was shown or created: the world may be stale), off the push schedule. */
@@ -1238,7 +1289,7 @@ export class BitbotApp {
     const helper = this.helper
     if (!helper?.isRunning) return
     helper.snapshot().then(
-      (m) => this.guarded('window snapshot', () => this.worldDriver.onSnapshot(this.worldWindows(m.windows), clock.now(), this.loco)),
+      (m) => this.guarded('window snapshot', () => this.onSnapshot(m.windows)),
       (err: unknown) => this.throttled.log('world refresh', `[bitbot] window snapshot failed: ${errorText(err)}`),
     )
   }
@@ -1522,7 +1573,7 @@ export class BitbotApp {
       this.rememberAppName(m.bundleId, m.appName)
     })
     // The world (§8): pushed at the rate WorldDriver sets (none until the pet exists, none while hidden).
-    helper.on('snapshot', (m) => this.guarded('window snapshot', () => this.worldDriver.onSnapshot(this.worldWindows(m.windows), clock.now(), this.loco)))
+    helper.on('snapshot', (m) => this.guarded('window snapshot', () => this.onSnapshot(m.windows)))
     this.helper = helper
     helper.start()
   }
@@ -1739,6 +1790,7 @@ export class BitbotApp {
 
   /** A validated debug:panel-set. pet:state carries the change with the next step (or the snap when shown again). */
   private applyDevPanelSet(set: DevPanelSet): void {
+    this.loop.hurry()
     const change = this.overrides.apply(set)
     if (change.petChanged) this.sendDevPet()
     this.applyOverridesToWorld()

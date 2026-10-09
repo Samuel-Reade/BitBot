@@ -152,6 +152,17 @@ export function nextAnimationAt(wakeAt: number | null, lastRenderTs: number | nu
 }
 
 /**
+ * When to ask for an animation frame so that the frame which runs is the first one at or after `at` (renderer ms):
+ * `marginMs` after the vsync before it. rAF runs a callback at the vsync after the request, and frame timestamps are
+ * vsync times, so the frames fall on frameTs + k·periodMs. A request at or before now runs at the next vsync.
+ */
+export function frameRequestAt(at: number, frameTs: number, periodMs: number, marginMs: number): number {
+  if (!(periodMs > 0) || !Number.isFinite(at) || !Number.isFinite(frameTs)) return at
+  const k = Math.max(1, Math.ceil((at - frameTs) / periodMs - 1e-6))
+  return frameTs + (k - 1) * periodMs + marginMs
+}
+
+/**
  * Where the ground-contact point is drawn in a width × height canvas for each attach: `anchor` standing, and
  * tuning.render.climbAnchor on a wall.
  */

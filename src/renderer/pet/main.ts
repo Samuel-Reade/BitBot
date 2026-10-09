@@ -17,9 +17,10 @@ import { createPetScene } from './scene'
 //   (no mode)      the overlay: the production pet page (overlay.ts); main passes size and palette
 //   mode=snapshot  render one frame for the PNG dev tool (see src/main/dev/snapshot.ts)
 //   mode=spike     hand over to the Spike A renderer harness
+//   mode=bench     dev: renders the walking pet `n` times (default 300) and logs draw calls and ms per render (M9)
 const params = new URLSearchParams(location.search)
 const mode = params.get('mode') ?? 'overlay'
-const isOverlay = mode !== 'snapshot' && mode !== 'spike'
+const isOverlay = mode !== 'snapshot' && mode !== 'spike' && mode !== 'bench'
 // Before anything can throw (creating the WebGL context), so main hears about it.
 if (isOverlay) installOverlayErrorReporting()
 const paletteParam = params.get('palette')
@@ -73,6 +74,28 @@ if (mode === 'snapshot') {
   if (show.has('measure')) logSnapshotMeasurements()
   // Give the compositor a moment to present the frame before the main process captures it.
   setTimeout(() => window.bitbot.send(IPC.snapshotReady), tuning.dev.snapshotPresentDelayMs)
+} else if (mode === 'bench') {
+  // M9: what one render costs (draw calls, triangles, ms of the page's own time per render).
+  const n = Number(params.get('n') ?? '300')
+  const animator = new Animator(pet.rig, { ptPerUnit: pet.ptPerUnit })
+  const input: AnimInput = { state: 'walk', mood: 'content', dust: 0, facing: 1, look: null, attach: 'floor', held: null, faceOverride: null, idleMode: 'continuous' }
+  let poseMs = 0
+  let renderMs = 0
+  const count = Number.isFinite(n) && n > 0 ? n : 300
+  for (let i = 0; i < count; i++) {
+    const a = performance.now()
+    animator.update(i * (1000 / 60), input)
+    const b = performance.now()
+    pet.render()
+    pet.renderer.getContext().finish()
+    renderMs += performance.now() - b
+    poseMs += b - a
+  }
+  const info = pet.renderer.info.render
+  console.log(
+    `[bench] ${count} renders: pose ${(poseMs / count).toFixed(3)} ms, render ${(renderMs / count).toFixed(3)} ms, ` +
+      `draw calls ${info.calls}, triangles ${info.triangles}, pixel ratio ${pet.renderer.getPixelRatio()}`,
+  )
 } else if (mode === 'spike') {
   void import('../spike/petSpike').then(({ startPetSpike }) => startPetSpike(pet, params))
 } else {

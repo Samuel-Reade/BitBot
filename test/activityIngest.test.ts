@@ -34,7 +34,7 @@ class ManualTimers implements Scheduler {
   }
 }
 
-function setup() {
+function setup(extra: Partial<ConstructorParameters<typeof ActivityIngest>[0]> = {}) {
   const calls: string[] = []
   const sink: ActivitySink = {
     key: (code, down, repeat) => calls.push(`key ${code} ${down} ${repeat}`),
@@ -62,6 +62,7 @@ function setup() {
     ownBundleId: 'com.bitbot.desktop',
     ownPid: 42,
     onError: (_err, where) => errors.push(where),
+    ...extra,
   })
   return {
     ingest,
@@ -86,6 +87,40 @@ describe('ActivityIngest', () => {
     t.setIdle(400)
     t.timers.advance(5000)
     expect(t.calls.filter((c) => c.startsWith('idle'))).toEqual(['idle 3', 'idle 400'])
+  })
+
+  it('polls a still cursor at cursorStillHz after cursorStillAfterMs, and at full rate again once it moves (M9)', () => {
+    const t = setup({ cursorStillHz: 4, cursorStillAfterMs: 500 })
+    t.ingest.start()
+    t.timers.advance(1000) // still from the start: 20 Hz for 0.5 s, then 4 Hz
+    const first = t.calls.filter((c) => c.startsWith('cursor')).length
+    expect(first).toBeGreaterThanOrEqual(11)
+    expect(first).toBeLessThanOrEqual(13)
+    t.calls.length = 0
+    t.timers.advance(2000)
+    expect(t.calls.filter((c) => c.startsWith('cursor'))).toHaveLength(8)
+    t.setCursor({ x: 300, y: 400 }) // a move: the next sample sees all of it, then full rate
+    t.calls.length = 0
+    t.timers.advance(250)
+    t.calls.length = 0
+    t.setCursor({ x: 320, y: 400 })
+    t.timers.advance(400)
+    const moving = t.calls.filter((c) => c.startsWith('cursor'))
+    expect(moving.length).toBeGreaterThanOrEqual(7)
+    expect(moving[0]).toBe('cursor 320,400')
+  })
+
+  it('on battery with the pet asleep the poll drops to cursorPausedHz (§11)', () => {
+    let paused = true
+    const t = setup({ cursorStillHz: 4, cursorStillAfterMs: 500, cursorPausedHz: 1, cursorPaused: () => paused })
+    t.ingest.start()
+    t.timers.advance(3000)
+    expect(t.calls.filter((c) => c.startsWith('cursor'))).toHaveLength(3)
+    paused = false
+    t.calls.length = 0
+    t.setCursor({ x: 1, y: 2 })
+    t.timers.advance(2000) // the pending 1 Hz poll first, then the moving cursor at full rate
+    expect(t.calls.filter((c) => c.startsWith('cursor')).length).toBeGreaterThan(10)
   })
 
   it('passes keys, clicks and scrolls through as they are', () => {

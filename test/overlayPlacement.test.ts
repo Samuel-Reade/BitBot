@@ -32,6 +32,7 @@ import {
   snapToDevicePixels,
   insideBox,
   nextAnimationAt,
+  frameRequestAt,
   anchorForTurn,
   anchorsFor,
   wallSide,
@@ -1049,6 +1050,19 @@ class FakeAnimator {
 }
 
 describe('animation scheduling rules', () => {
+  it('frameRequestAt: asks just after the vsync before the frame `at` falls in (one frame per render, M9)', () => {
+    const P = 1000 / 60
+    // 30 fps animation: the next render is due 33.3 ms (less 4 slack) after this frame: the 2nd frame from now.
+    expect(frameRequestAt(1000 + 29.3, 1000, P, 3)).toBeCloseTo(1000 + P + 3, 6)
+    // 10 fps asleep: the 6th frame.
+    expect(frameRequestAt(1000 + 96, 1000, P, 3)).toBeCloseTo(1000 + 5 * P + 3, 6)
+    // Due within the next frame, or already: ask now (it runs at the next vsync).
+    expect(frameRequestAt(1000 + 10, 1000, P, 3)).toBe(1003)
+    expect(frameRequestAt(990, 1000, P, 3)).toBe(1003)
+    // Exactly on a vsync: that frame, not the one after.
+    expect(frameRequestAt(1000 + 2 * P, 1000, P, 3)).toBeCloseTo(1000 + P + 3, 6)
+  })
+
   it('nextAnimationAt: the wake time, but not before the frame-rate cap allows a render', () => {
     expect(nextAnimationAt(null, 100, 30, 2)).toBeNull()
     expect(nextAnimationAt(500, null, 30, 2)).toBe(500)

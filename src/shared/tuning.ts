@@ -102,6 +102,19 @@ export const tuning = {
      * time has passed): measured in Spike A, see src/main/sim/loop.ts.
      */
     leadMs: 8,
+    /**
+     * M9 (§11 budgets): wake every this many steps while nothing moves (sim/wakeRate.ts; every step still runs).
+     * Higher = cheaper idling; the eyes follow the cursor and a press is noticed less often (a press or a command wakes
+     * the loop at once anyway). ≤ maxStepsPerWake.
+     */
+    wake: {
+      /** Awake and idle: 30 Hz / 3 = 10 wakes a second. */
+      idleStride: 3,
+      /** Asleep: 30 Hz / 5 = 6 wakes a second. */
+      asleepStride: 5,
+      /** The full rate starts once the cursor is this close to the pet's box, pt (≫ hitArea.nearMarginPt). */
+      approachPt: 160,
+    },
   },
 
   /** The overlay renderer (approach B, docs/decisions/overlay.md). */
@@ -165,6 +178,8 @@ export const tuning = {
      */
     fadeMs: 300,
     fadeEasing: 'ease-in-out',
+    /** An animation frame is asked for this long after the vsync before the one it should run in, ms (M9: one frame per render). */
+    frameRequestMarginMs: 3,
   },
 
   /**
@@ -714,6 +729,13 @@ export const tuning = {
     /** Mouse travel is sampled this often (§7.1: 20 Hz), Hz. Higher = finer mileage, more main-process wake-ups. */
     cursorPollHz: 20,
     /**
+     * M9 (§11): once the cursor has been still this long, ms, it is polled at cursorStillHz until it moves (mileage is
+     * unchanged: distance is summed between samples). On battery with the pet asleep, cursorPausedHz.
+     */
+    cursorStillAfterMs: 500,
+    cursorStillHz: 4,
+    cursorPausedHz: 1,
+    /**
      * Dev panel injections (§14.1) when DevInject.amount is absent: keys, clicks, scroll ticks, pt of mouse travel, and
      * the length of an injected break, min (10: long enough for welcome back and a healthy session).
      */
@@ -1038,6 +1060,7 @@ export const tuning = {
         chase: 15,
         drag120: 12,
         drag600: 12,
+        roam: 60,
       },
       /**
        * Walk under a parked cursor: the pet walks ±this many pt around its home at tuning.move.walkSpeed, the cursor parked
@@ -1097,6 +1120,10 @@ export const tuning = {
          * (M1's 210 was a regression guard set from its 185 MB; the GPU process alone swings 40–105 MB between runs.)
          */
         footprintMB: 290,
+        /** §11 CPU, all Bitbot processes, % of one core: while roaming (the roam phase), asleep (event style), hidden. */
+        roamCpuPct: 3,
+        asleepCpuPct: 1,
+        hiddenCpuPct: 1,
       },
     },
   },
